@@ -206,6 +206,76 @@ def cloudflare_is_admin_create_path(path):
     return str(path or "").rstrip("/").lower() == "/admin/new_address"
 
 
+# 迈巢 MailNest ： https://mailnest.top
+MAILNEST_API_BASE = "https://mailnest.top"
+
+
+def get_mailnest_api_key():
+    mailnest_api_key = config.get("mailnest_api_key", "")
+    if not mailnest_api_key:
+        raise Exception(f'请在配置文件中配置 mailnest_api_key | 注册网址：{MAILNEST_API_BASE}')
+    return mailnest_api_key
+
+
+def get_mailnest_project_code():
+    mailnest_project_code = config.get("mailnest_project_code", "")
+    if not mailnest_project_code:
+        raise Exception(f'请在配置文件中配置 mailnest_project_code | 项目网址：https://mailnest.top/buy-email')
+    return mailnest_project_code
+
+
+def mailnest_buy_email():
+    resp = requests.post(
+        f"{MAILNEST_API_BASE}/api/v1/email/temporary/buy",
+        headers={
+            "Authorization": f"Bearer {get_mailnest_api_key()}",
+        },
+        json={
+            "project_code": get_mailnest_project_code(),
+            "count": 1,
+        },
+        timeout=30,
+        verify=False
+    )
+    resp_json = resp.json()
+    if resp_json['code'] != '00000':
+        return Exception(resp.text)
+    email = resp.json()["data"][0]['email']
+    print(f'获取到邮箱 | email={email}')
+    return email
+
+
+def mailnest_receive_email(email):
+    resp = requests.post(
+        f"{MAILNEST_API_BASE}/api/v1/email/receive",
+        headers={
+            "Authorization": f"Bearer {get_mailnest_api_key()}",
+        },
+        json={
+            "email": email,
+        },
+        timeout=30,
+        verify=False
+    )
+    if resp.json()['code'] != '00000':
+        return Exception(resp.text)
+    return resp.json()["data"]
+
+
+def mailnest_get_code(email):
+    for i in range(30):
+        print(f'第 {i + 1} 次收件')
+        mails = mailnest_receive_email(email)
+        if mails:
+            print(mails[0])
+            match = re.search(r'\b([A-Z0-9]{3}-[A-Z0-9]{3})\b', mails[0]['body_preview'])
+            if match:
+                return match.group(1)
+            raise Exception('收件失败')
+        time.sleep(3)
+    raise Exception('收件失败')
+
+
 def _pick_list_payload(data):
     if isinstance(data, list):
         return data
@@ -886,6 +956,8 @@ def get_email_and_token(api_key=None):
             if not token:
                 raise Exception("获取 Cloudflare 邮箱 token 失败")
             return address, token
+    if provider == 'mailnest':
+        return mailnest_buy_email(), '_'
     key = api_key or get_duckmail_api_key()
     domain = pick_domain(api_key=key)
     username = generate_username(10)
@@ -928,6 +1000,8 @@ def get_oai_code(
             cancel_callback=cancel_callback,
             resend_callback=resend_callback,
         )
+    if provider == "mailnest":
+        return mailnest_get_code(email)
     return duckmail_get_oai_code(
         dev_token,
         email,
@@ -2510,7 +2584,7 @@ class GrokRegisterGUI:
 
         add_label(0, 0, "邮箱服务商:")
         self.email_provider_var = tk.StringVar(value=config.get("email_provider", "duckmail"))
-        self.email_provider_combo = tk_option_menu(config_frame, self.email_provider_var, ["duckmail", "yyds", "cloudflare"], width=12)
+        self.email_provider_combo = tk_option_menu(config_frame, self.email_provider_var, ["duckmail", "yyds", "cloudflare", "mailnest"], width=12)
         add_field(self.email_provider_combo, 0, 1, sticky=tk.W)
 
         add_label(0, 2, "注册数量:")
