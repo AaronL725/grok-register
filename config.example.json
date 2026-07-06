@@ -20,5 +20,7 @@
   "defaultDomains": "example.com",
   "email_provider": "cloudflare",
   "yyds_api_key": "",
-  "yyds_jwt": ""
+  "yyds_jwt": "",
+  "mailnest_api_key": "",
+  "mailnest_project_code": "x-ai001"
 }

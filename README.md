@@ -91,7 +91,7 @@ cp config.example.json config.json
 
 | 配置项 | 说明 |
 | --- | --- |
-| `email_provider` | 邮箱服务商：`duckmail`、`yyds`、`cloudflare` |
+| `email_provider` | 邮箱服务商：`duckmail`、`yyds`、`cloudflare`、`mailnest` |
 | `register_count` | 本次目标注册数量 |
 | `proxy` | 代理地址，可留空 |
 | `enable_nsfw` | 注册后是否尝试开启 NSFW |
@@ -108,6 +108,8 @@ cp config.example.json config.json
 | `grok2api_auto_add_remote` | 是否写入远端 grok2api |
 | `grok2api_remote_base` | 远端 grok2api 地址，可填站点根地址或 `/admin/api` 管理 API 地址 |
 | `grok2api_remote_app_key` | 远端 grok2api app key |
+| `mailnest_api_key` | outlook 临时邮箱提供商[迈巢](https://mailnest.top/)的 `api-key` |
+| `mailnest_project_code` | outlook 临时邮箱提供商[迈巢](https://mailnest.top/)中`x.ai`项目的[项目代码](https://mailnest.top/buy-email)，默认为 `x-ai001` |
 
 ### Cloudflare 临时邮箱匿名模式（默认）
 
@@ -157,6 +159,22 @@ cp config.example.json config.json
 ```bash
 python cf_mail_debug.py --api-base "https://你的-worker-api-域名" --auth-mode x-admin-auth --api-key "你的 ADMIN_PASSWORD" --create-path /admin/new_address --domain "你的收信域名.com"
 ```
+
+### 迈巢 MailNest 临时邮箱
+
+`outlook`邮箱提供商[迈巢](https://mailnest.top/)，其临时邮箱采用项目制模式，因此除了在配置文件中配置`api-key`，还需配置项目代码`mailnest_project_code`，项目代码默认为`x-ai001`：
+
+```json
+{
+      "mailnest_api_key": "",
+      "mailnest_project_code": "x-ai001"
+}
+```
+
+- `api-key`获取页面：https://mailnest.top/account
+- 项目代码`mailnest_project_code`获取页面：https://mailnest.top/buy-email。默认为`x-ai001`，可以直接使用
+
+配置后，即可在`qt`界面的邮箱服务商选择`mailnest`进行使用。
 
 ### grok2api 远端入池配置
 
