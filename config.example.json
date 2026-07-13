@@ -7,6 +7,10 @@
   "cloudflare_path_accounts": "/api/new_address",
   "cloudflare_path_token": "/api/token",
   "cloudflare_path_messages": "/api/mails",
+  "cloudmail_url": "https://mail.example.com",
+  "cloudmail_admin_email": "admin@example.com",
+  "cloudmail_password": "",
+  "defaultDomains": "example.com",
   "proxy": "",
   "enable_nsfw": true,
   "register_count": 1,
@@ -17,7 +21,6 @@
   "grok2api_auto_add_remote": false,
   "grok2api_remote_base": "",
   "grok2api_remote_app_key": "",
-  "defaultDomains": "example.com",
   "email_provider": "cloudflare",
   "yyds_api_key": "",
   "yyds_jwt": ""

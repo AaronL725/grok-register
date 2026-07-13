@@ -21,3 +21,4 @@ config.local.json
 .vscode/
 DrissionPage/
 autoPortData/
+.venv/

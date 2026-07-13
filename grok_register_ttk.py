@@ -54,6 +54,10 @@ DEFAULT_CONFIG = {
     "cloudflare_path_accounts": "/api/new_address",
     "cloudflare_path_token": "/api/token",
     "cloudflare_path_messages": "/api/mails",
+    "cloudmail_url": "",
+    "cloudmail_admin_email": "",
+    "cloudmail_password": "",
+    "defaultDomains": "",
     "proxy": "http://127.0.0.1:7890",
     "enable_nsfw": True,
     "register_count": 1,
@@ -68,6 +72,9 @@ DEFAULT_CONFIG = {
 
 config = DEFAULT_CONFIG.copy()
 _cf_domain_index = 0
+# CloudMail 公开 token 单例（多线程共享，避免并发覆盖）
+_cloudmail_public_token = None
+_cloudmail_public_token_lock = threading.Lock()
 
 
 class RegistrationCancelled(Exception):
@@ -1131,14 +1138,233 @@ def pick_domain(api_key=None):
     raise Exception("DuckMail 鏃犲凡楠岃瘉鍩熷悕鍙敤")
 
 
+
+# ──────────────────────── CloudMail (maillab/cloud-mail) ────────────────────────
+# API 前缀: /api/（所有接口均挂载在 /api/ 下）
+# 公开 token 通过 /api/public/genToken 获取（需管理员账号）
+# catch-all：用 defaultDomains 随机生成地址，邮件走 /api/public/emailList
+
+
+def get_cloudmail_url():
+    return str(os.environ.get("CLOUDMAIL_URL") or config.get("cloudmail_url", "") or "").rstrip("/")
+
+
+def get_cloudmail_password():
+    return os.environ.get("CLOUDMAIL_PASSWORD") or config.get("cloudmail_password", "")
+
+
+def get_cloudmail_admin_email():
+    return str(os.environ.get("CLOUDMAIL_ADMIN_EMAIL") or config.get("cloudmail_admin_email", "") or "").strip()
+
+
+def cloudmail_login(url, email, password):
+    """POST /api/login -> JWT string"""
+    resp = http_post(
+        f"{url}/api/login",
+        json={"email": email, "password": password},
+        headers={"Content-Type": "application/json"},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict) and data.get("code") == 200:
+        token_data = data.get("data", {})
+        if isinstance(token_data, dict):
+            jwt = token_data.get("token")
+            if jwt:
+                return jwt
+    raise Exception(f"CloudMail 登录失败: {str(data)[:200]}")
+
+
+def cloudmail_register(url, email, password, turnstile_token=""):
+    """POST /api/register -> 注册用户+账号"""
+    payload = {"email": email, "password": password}
+    if turnstile_token:
+        payload["token"] = turnstile_token
+    resp = http_post(
+        f"{url}/api/register",
+        json=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict) and data.get("code") != 200:
+        raise Exception(f"CloudMail 注册失败: {data.get('message', str(data))}")
+    return data
+
+
+def cloudmail_gen_public_token(url, admin_email, admin_password):
+    """POST /api/public/genToken -> 公开 API token (UUID)"""
+    resp = http_post(
+        f"{url}/api/public/genToken",
+        json={"email": admin_email, "password": admin_password},
+        headers={"Content-Type": "application/json"},
+        proxies={},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict) and data.get("code") == 200:
+        token_data = data.get("data", {})
+        if isinstance(token_data, dict):
+            return token_data.get("token")
+    raise Exception(f"CloudMail 获取公开 token 失败: {str(data)[:200]}")
+
+
+def cloudmail_public_email_list(url, public_token, to_email="", size=20):
+    """POST /api/public/emailList -> 公开邮件查询（Authorization 为公开 token，无 Bearer 前缀）"""
+    payload = {"size": size}
+    if to_email:
+        payload["toEmail"] = to_email
+    resp = http_post(
+        f"{url}/api/public/emailList",
+        json=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": public_token,
+        },
+        proxies={},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict):
+        if data.get("code") == 200:
+            return data.get("data", []) or []
+        raise Exception(f"CloudMail 邮件查询失败: {data.get('message', str(data))}")
+    return []
+
+
+def _cloudmail_get_shared_token(force_refresh=False):
+    """获取或刷新共享的公开 token（线程安全单例）"""
+    global _cloudmail_public_token
+    with _cloudmail_public_token_lock:
+        if _cloudmail_public_token and not force_refresh:
+            return _cloudmail_public_token
+        url = get_cloudmail_url()
+        admin_email = get_cloudmail_admin_email()
+        admin_password = get_cloudmail_password()
+        if not url or not admin_email or not admin_password:
+            raise Exception("CloudMail 配置不完整：需要 cloudmail_url / cloudmail_admin_email / cloudmail_password")
+        token = cloudmail_gen_public_token(url, admin_email, admin_password)
+        if not token:
+            raise Exception("CloudMail 公开 token 为空")
+        _cloudmail_public_token = token
+        return token
+
+
+def cloudmail_get_oai_code(
+    dev_token,
+    email,
+    timeout=180,
+    poll_interval=3,
+    log_callback=None,
+    cancel_callback=None,
+    resend_callback=None,
+):
+    """轮询 CloudMail 公开邮件列表，提取 xAI 验证码。"""
+    try:
+        poll_interval = max(0.1, float(poll_interval if poll_interval is not None else 3))
+    except (TypeError, ValueError):
+        poll_interval = 3.0
+    url = get_cloudmail_url()
+    if not url:
+        raise Exception("CloudMail URL 未配置")
+    try:
+        public_token = _cloudmail_get_shared_token()
+    except Exception as exc:
+        raise Exception(f"CloudMail 获取公开 token 失败: {exc}")
+    if log_callback:
+        log_callback("[Debug] CloudMail 公开 token 获取成功")
+    deadline = time.time() + timeout
+    seen_attempts = {}
+    next_resend_at = time.time() + 60
+    while time.time() < deadline:
+        raise_if_cancelled(cancel_callback)
+        if resend_callback and time.time() >= next_resend_at:
+            try:
+                resend_callback()
+                if log_callback:
+                    log_callback("[*] 已触发重新发送验证码")
+            except Exception as exc:
+                if log_callback:
+                    log_callback(f"[Debug] 触发重发验证码失败: {exc}")
+            next_resend_at = time.time() + 60
+        try:
+            messages = cloudmail_public_email_list(url, public_token, to_email=email, size=20)
+        except Exception as exc:
+            err_msg = str(exc)
+            if log_callback:
+                log_callback(f"[Debug] CloudMail 邮件查询失败: {err_msg}")
+            if "token" in err_msg.lower() or "401" in err_msg:
+                try:
+                    public_token = _cloudmail_get_shared_token(force_refresh=True)
+                    if log_callback:
+                        log_callback("[Debug] CloudMail 公开 token 已刷新")
+                except Exception:
+                    pass
+            sleep_with_cancel(poll_interval, cancel_callback)
+            continue
+        if log_callback:
+            log_callback(f"[Debug] CloudMail 本轮邮件数量: {len(messages)}")
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            msg_id = msg.get("emailId") or msg.get("id") or msg.get("messageId")
+            if not msg_id:
+                continue
+            attempt = int(seen_attempts.get(msg_id, 0))
+            if attempt >= 5:
+                continue
+            seen_attempts[msg_id] = attempt + 1
+            parts = []
+            for field in ("content", "text", "textContent", "text_content", "body", "snippet", "intro"):
+                value = msg.get(field)
+                if isinstance(value, str) and value.strip():
+                    parts.append(value)
+            html_val = msg.get("html") or msg.get("htmlContent") or msg.get("html_content")
+            if isinstance(html_val, str):
+                parts.append(re.sub(r"<[^>]+>", " ", html_val))
+            elif isinstance(html_val, list):
+                for h in html_val:
+                    if isinstance(h, str):
+                        parts.append(re.sub(r"<[^>]+>", " ", h))
+            subject = str(msg.get("subject", "") or "")
+            combined = "\n".join(parts)
+            if log_callback:
+                log_callback(f"[Debug] CloudMail 收到邮件: {subject}")
+            code = extract_verification_code(combined, subject)
+            if code:
+                if log_callback:
+                    log_callback(f"[*] CloudMail 从邮件中提取到验证码: {code}")
+                return code
+            if log_callback:
+                log_callback(f"[Debug] 邮件已解析但未提取到验证码 id={msg_id} attempt={seen_attempts[msg_id]}")
+        sleep_with_cancel(poll_interval, cancel_callback)
+    raise Exception(f"CloudMail 在 {timeout}s 内未收到验证码邮件")
+
+
 def get_email_provider():
-    return config.get("email_provider", "duckmail")
+    return str(config.get("email_provider", "duckmail") or "duckmail").strip().lower()
 
 
 def get_email_and_token(api_key=None):
     provider = get_email_provider()
     if provider == "yyds":
         return yyds_get_email_and_token(api_key=api_key, jwt=get_yyds_jwt())
+    if provider == "cloudmail":
+        # CloudMail catch-all：直接生成随机邮箱，无需在 CloudMail 侧注册
+        raw = str(config.get("defaultDomains", "") or "")
+        domains = [x.strip() for x in re.split(r"[,，\s]+", raw) if x.strip()]
+        if not domains:
+            raise Exception("CloudMail 需要在 defaultDomains 中配置可用域名")
+        if not get_cloudmail_url():
+            raise Exception("CloudMail URL 未配置")
+        if not get_cloudmail_admin_email() or not get_cloudmail_password():
+            raise Exception("CloudMail 需要配置管理员邮箱与密码（用于公开 API token）")
+        global _cf_domain_index
+        domain = domains[_cf_domain_index % len(domains)]
+        _cf_domain_index += 1
+        username = generate_username(10)
+        address = f"{username}@{domain}"
+        return address, "cloudmail_catch_all"
     if provider == "cloudflare":
         api_base = get_cloudflare_api_base()
         if not api_base:
@@ -1198,6 +1424,16 @@ def get_oai_code(
             log_callback=log_callback,
             jwt=get_yyds_jwt(),
             cancel_callback=cancel_callback,
+        )
+    if provider == "cloudmail":
+        return cloudmail_get_oai_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
         )
     if provider == "cloudflare":
         return cloudflare_get_oai_code(
@@ -2826,7 +3062,7 @@ class GrokRegisterGUI:
 
         add_label(0, 0, "邮箱服务商:")
         self.email_provider_var = tk.StringVar(value=config.get("email_provider", "duckmail"))
-        self.email_provider_combo = tk_option_menu(config_frame, self.email_provider_var, ["duckmail", "yyds", "cloudflare"], width=12)
+        self.email_provider_combo = tk_option_menu(config_frame, self.email_provider_var, ["duckmail", "yyds", "cloudflare", "cloudmail"], width=12)
         add_field(self.email_provider_combo, 0, 1, sticky=tk.W)
 
         add_label(0, 2, "注册数量:")
@@ -2893,37 +3129,57 @@ class GrokRegisterGUI:
         self.cloudflare_paths_entry = tk_entry(config_frame, textvariable=self.cloudflare_paths_var, width=34)
         add_field(self.cloudflare_paths_entry, 4, 3)
 
-        add_label(5, 0, "grok2api 本地入池:")
+        add_label(5, 0, "CloudMail URL:")
+        self.cloudmail_url_var = tk.StringVar(value=str(config.get("cloudmail_url", "")))
+        self.cloudmail_url_entry = tk_entry(config_frame, textvariable=self.cloudmail_url_var, width=72)
+        add_field(self.cloudmail_url_entry, 5, 1, columnspan=3)
+
+        add_label(6, 0, "CloudMail 管理员邮箱:")
+        self.cloudmail_admin_email_var = tk.StringVar(value=str(config.get("cloudmail_admin_email", "")))
+        self.cloudmail_admin_email_entry = tk_entry(config_frame, textvariable=self.cloudmail_admin_email_var, width=34)
+        add_field(self.cloudmail_admin_email_entry, 6, 1)
+
+        add_label(6, 2, "CloudMail 密码:")
+        self.cloudmail_password_var = tk.StringVar(value=str(config.get("cloudmail_password", "")))
+        self.cloudmail_password_entry = tk_entry(config_frame, textvariable=self.cloudmail_password_var, width=34, show="*")
+        add_field(self.cloudmail_password_entry, 6, 3)
+
+        add_label(7, 0, "defaultDomains:")
+        self.default_domains_var = tk.StringVar(value=str(config.get("defaultDomains", "")))
+        self.default_domains_entry = tk_entry(config_frame, textvariable=self.default_domains_var, width=72)
+        add_field(self.default_domains_entry, 7, 1, columnspan=3)
+
+        add_label(8, 0, "grok2api 本地入池:")
         self.grok2api_local_auto_var = tk.BooleanVar(value=bool(config.get("grok2api_auto_add_local", True)))
         self.grok2api_local_auto_check = tk_checkbutton(config_frame, variable=self.grok2api_local_auto_var)
-        add_field(self.grok2api_local_auto_check, 5, 1, sticky=tk.W)
+        add_field(self.grok2api_local_auto_check, 8, 1, sticky=tk.W)
 
-        add_label(5, 2, "grok2api 池名:")
+        add_label(8, 2, "grok2api 池名:")
         self.grok2api_pool_name_var = tk.StringVar(value=str(config.get("grok2api_pool_name", "ssoBasic")))
         self.grok2api_pool_name_combo = tk_option_menu(
             config_frame, self.grok2api_pool_name_var, ["ssoBasic", "ssoSuper"], width=12
         )
-        add_field(self.grok2api_pool_name_combo, 5, 3, sticky=tk.W)
+        add_field(self.grok2api_pool_name_combo, 8, 3, sticky=tk.W)
 
-        add_label(6, 0, "本地 token.json:")
+        add_label(9, 0, "本地 token.json:")
         self.grok2api_local_file_var = tk.StringVar(value=str(config.get("grok2api_local_token_file", "")))
         self.grok2api_local_file_entry = tk_entry(config_frame, textvariable=self.grok2api_local_file_var, width=72)
-        add_field(self.grok2api_local_file_entry, 6, 1, columnspan=3)
+        add_field(self.grok2api_local_file_entry, 9, 1, columnspan=3)
 
-        add_label(7, 0, "grok2api 远端入池:")
+        add_label(10, 0, "grok2api 远端入池:")
         self.grok2api_remote_auto_var = tk.BooleanVar(value=bool(config.get("grok2api_auto_add_remote", False)))
         self.grok2api_remote_auto_check = tk_checkbutton(config_frame, variable=self.grok2api_remote_auto_var)
-        add_field(self.grok2api_remote_auto_check, 7, 1, sticky=tk.W)
+        add_field(self.grok2api_remote_auto_check, 10, 1, sticky=tk.W)
 
-        add_label(8, 0, "grok2api 远端 Base:")
+        add_label(11, 0, "grok2api 远端 Base:")
         self.grok2api_remote_base_var = tk.StringVar(value=str(config.get("grok2api_remote_base", "")))
         self.grok2api_remote_base_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_base_var, width=72)
-        add_field(self.grok2api_remote_base_entry, 8, 1, columnspan=3)
+        add_field(self.grok2api_remote_base_entry, 11, 1, columnspan=3)
 
-        add_label(9, 0, "grok2api 远端 app_key:")
+        add_label(12, 0, "grok2api 远端 app_key:")
         self.grok2api_remote_key_var = tk.StringVar(value=str(config.get("grok2api_remote_app_key", "")))
         self.grok2api_remote_key_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_key_var, width=72)
-        add_field(self.grok2api_remote_key_entry, 9, 1, columnspan=3)
+        add_field(self.grok2api_remote_key_entry, 12, 1, columnspan=3)
 
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
@@ -3008,6 +3264,10 @@ class GrokRegisterGUI:
         config["cloudflare_api_base"] = self.cloudflare_api_base_var.get().strip()
         config["cloudflare_api_key"] = self.cloudflare_api_key_var.get().strip()
         config["cloudflare_auth_mode"] = self.cloudflare_auth_mode_var.get().strip() or "none"
+        config["cloudmail_url"] = self.cloudmail_url_var.get().strip().rstrip("/")
+        config["cloudmail_admin_email"] = self.cloudmail_admin_email_var.get().strip()
+        config["cloudmail_password"] = self.cloudmail_password_var.get().strip()
+        config["defaultDomains"] = self.default_domains_var.get().strip()
         config["grok2api_auto_add_local"] = bool(self.grok2api_local_auto_var.get())
         config["grok2api_local_token_file"] = self.grok2api_local_file_var.get().strip()
         config["grok2api_pool_name"] = self.grok2api_pool_name_var.get().strip() or "ssoBasic"
@@ -3024,6 +3284,16 @@ class GrokRegisterGUI:
         if config["email_provider"] == "cloudflare" and not config["cloudflare_api_base"]:
             self.log("[!] Cloudflare 模式需要先填写 Cloudflare API Base")
             return
+        if config["email_provider"] == "cloudmail":
+            if not config.get("cloudmail_url"):
+                self.log("[!] CloudMail 模式需要填写 CloudMail URL")
+                return
+            if not config.get("cloudmail_admin_email") or not config.get("cloudmail_password"):
+                self.log("[!] CloudMail 模式需要填写管理员邮箱与密码")
+                return
+            if not config.get("defaultDomains"):
+                self.log("[!] CloudMail 模式需要填写 defaultDomains（catch-all 域名）")
+                return
         try:
             count = int(self.count_var.get())
         except Exception:

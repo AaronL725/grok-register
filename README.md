@@ -49,7 +49,7 @@ Grok Register 是一个面向自动化流程研究、测试环境验证和个人
 - 支持 GUI 图形界面运行。
 - 支持 CLI 终端运行，不启动 Tk GUI。
 - 注册流程使用 Chromium/Chrome 浏览器页面完成。
-- 支持 DuckMail、YYDS、Cloudflare 临时邮箱接口。
+- 支持 DuckMail、YYDS、Cloudflare 临时邮箱，以及 CloudMail（maillab/cloud-mail）catch-all 收信。
 - 支持验证码邮件轮询和解析。
 - 支持成功账号实时写入 `accounts_*.txt`。
 - 支持将 SSO token 写入 grok2api 本地或远端池。
@@ -91,7 +91,7 @@ cp config.example.json config.json
 
 | 配置项 | 说明 |
 | --- | --- |
-| `email_provider` | 邮箱服务商：`duckmail`、`yyds`、`cloudflare` |
+| `email_provider` | 邮箱服务商：`duckmail`、`yyds`、`cloudflare`、`cloudmail` |
 | `register_count` | 本次目标注册数量 |
 | `proxy` | 代理地址，可留空 |
 | `enable_nsfw` | 注册后是否尝试开启 NSFW |
@@ -102,7 +102,10 @@ cp config.example.json config.json
 | `cloudflare_path_accounts` | Cloudflare 创建邮箱路径；默认匿名模式用 `/api/new_address`，admin 模式用 `/admin/new_address` |
 | `cloudflare_path_token` | Cloudflare token 路径；默认 `/api/token` |
 | `cloudflare_path_messages` | Cloudflare 收件列表路径；默认 `/api/mails` |
-| `defaultDomains` | Cloudflare 临时邮箱默认域名 |
+| `defaultDomains` | 默认/轮询域名；Cloudflare 与 **CloudMail catch-all** 都会用到 |
+| `cloudmail_url` | CloudMail 管理端根 URL（如 `https://mail.example.com`） |
+| `cloudmail_admin_email` | CloudMail 管理员邮箱（用于 `/api/public/genToken`） |
+| `cloudmail_password` | CloudMail 管理员密码 |
 | `grok2api_auto_add_local` | 是否写入本地 grok2api token 池 |
 | `grok2api_local_token_file` | 本地 grok2api token 文件路径 |
 | `grok2api_auto_add_remote` | 是否写入远端 grok2api |
@@ -157,6 +160,38 @@ cp config.example.json config.json
 ```bash
 python cf_mail_debug.py --api-base "https://你的-worker-api-域名" --auth-mode x-admin-auth --api-key "你的 ADMIN_PASSWORD" --create-path /admin/new_address --domain "你的收信域名.com"
 ```
+
+### CloudMail（maillab/cloud-mail）
+
+用于自建 **CloudMail** catch-all：程序只随机生成 `user@你的域名`，不在 CloudMail 侧再注册邮箱；收信走公开 API。
+
+1. 管理员账号调用 `POST /api/public/genToken` 拿到公开 token（多线程共享，失效会刷新）
+2. 用 `POST /api/public/emailList` + `toEmail` 轮询验证码邮件
+3. 邮件内容里解析 xAI `XXX-XXX` 验证码
+
+配置示例：
+
+```json
+{
+  "email_provider": "cloudmail",
+  "cloudmail_url": "https://mail.example.com",
+  "cloudmail_admin_email": "admin@example.com",
+  "cloudmail_password": "你的管理员密码",
+  "defaultDomains": "你的收信域名.com"
+}
+```
+
+也可用环境变量覆盖（优先级高于 `config.json`）：
+
+- `CLOUDMAIL_URL`
+- `CLOUDMAIL_ADMIN_EMAIL`
+- `CLOUDMAIL_PASSWORD`
+
+说明：
+
+- `defaultDomains` 支持逗号/中文逗号/空格分隔多域名轮换
+- CloudMail 管理端查询接口请求默认 **不走代理**（`proxies={}`），避免本机代理拦截内网/自建域名
+- 需要管理面板侧允许公开 token 查信；若开启注册 Turnstile，一般不影响本工具的 catch-all 路径（本路径不调用 `/api/register`）
 
 ### grok2api 远端入池配置
 
