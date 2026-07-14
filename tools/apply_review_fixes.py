@@ -151,7 +151,9 @@ app = one(app, '''        temp_path = token_file + ".tmp"
                     pass
 ''', "token mkstemp")
 
-app = one(app, "    pool = current.get(pool_name)\n    if pool is None:\n        pool = []\n    elif not isinstance(pool, list):\n        raise RuntimeError(f\"本地 token 池 {pool_name} 不是列表，拒绝覆盖\")\n", "    pool = current.get(pool_name)\n    if pool is None:\n        pool = []\n    elif not isinstance(pool, list):\n        raise RuntimeError(f\"远端 token 池 {pool_name} 不是列表，拒绝全量覆盖\")\n", "remote pool guard")
+remote_pool_new = "    pool = current.get(pool_name)\n    if pool is None:\n        pool = []\n    elif not isinstance(pool, list):\n        raise RuntimeError(f\"远端 token 池 {pool_name} 不是列表，拒绝全量覆盖\")\n"
+if remote_pool_new not in app:
+    app = one(app, "    pool = current.get(pool_name)\n    if not isinstance(pool, list):\n        pool = []\n", remote_pool_new, "remote pool guard")
 
 app = between(app, "def cleanup_runtime_memory(log_callback=None, reason=\"定期清理\"):\n", "def refresh_active_page():\n", '''def cleanup_runtime_memory(log_callback=None, reason="定期清理"):
     if log_callback:
