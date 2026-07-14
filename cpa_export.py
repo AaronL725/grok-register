@@ -86,6 +86,8 @@ def export_cpa_xai_for_account(
     proxy = str(cfg.get("cpa_proxy") or cfg.get("proxy") or "").strip()
     headless = bool(cfg.get("cpa_headless", False))
     timeout = float(cfg.get("cpa_mint_timeout_sec") or 300)
+    initial_request_timeout = float(cfg.get("cpa_oidc_initial_timeout_sec") or 15)
+    poll_request_timeout = float(cfg.get("cpa_oidc_poll_timeout_sec") or 12)
     base_url = str(cfg.get("cpa_base_url") or "https://cli-chat-proxy.grok.com/v1").strip()
     force_standalone = bool(cfg.get("cpa_force_standalone", True))
     cookie_inject = bool(cfg.get("cpa_mint_cookie_inject", True))
@@ -127,6 +129,8 @@ def export_cpa_xai_for_account(
         headless=headless,
         base_url=base_url,
         browser_timeout_sec=timeout,
+        initial_request_timeout_sec=initial_request_timeout,
+        poll_request_timeout_sec=poll_request_timeout,
         force_standalone=force_standalone,
         cookies=use_cookies,
         reuse_browser=True,
@@ -154,6 +158,8 @@ def export_cpa_xai_for_account(
         try:
             with open(str(fail_path), "a", encoding="utf-8") as handle:
                 handle.write("%s----%s----%s\n" % (email, result.get("error") or "unknown", int(time.time())))
-        except Exception:
-            pass
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception as exc:
+            log("[cpa] failed to persist failure marker %s: %s" % (fail_path, exc))
     return result
