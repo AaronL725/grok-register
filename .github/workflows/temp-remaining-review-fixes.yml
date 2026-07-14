@@ -35,7 +35,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f tools/apply_remaining_review_fixes.py .github/workflows/temp-remaining-review-fixes.yml
+          git rm -f tools/apply_remaining_review_fixes.py tools/review_fix_payloads.py .github/workflows/temp-remaining-review-fixes.yml
           git add -A
           git commit -m "fix: resolve remaining review findings"
           git push origin HEAD:fix/remaining-review-hardening
