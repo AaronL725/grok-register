@@ -162,7 +162,7 @@ def _require_string(cfg, key, path=False):
     return value
 
 
-def validate_config(raw):
+def validate_config_structure(raw):
     if not isinstance(raw, dict):
         raise ConfigError("config root must be a JSON object")
     cfg = {**DEFAULT_CONFIG, **raw}
@@ -216,6 +216,15 @@ def validate_config(raw):
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ConfigError(f"配置项 {key} 必须是有效的 http/https URL")
 
+    for key in path_keys:
+        value = cfg[key]
+        if value.startswith("~"):
+            cfg[key] = os.path.expanduser(value)
+    return cfg
+
+
+def validate_run_requirements(cfg):
+    cfg = validate_config_structure(cfg)
     provider = cfg["email_provider"]
     if provider == "cloudflare" and not cfg["cloudflare_api_base"]:
         raise ConfigError("Cloudflare 模式需要配置 cloudflare_api_base")
@@ -226,6 +235,8 @@ def validate_config(raw):
         ]
         if missing:
             raise ConfigError("Cloud Mail 模式缺少必需配置: " + ", ".join(missing))
+    if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
+        raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
     if cfg["grok2api_auto_add_remote"]:
         missing = [
             key for key in ("grok2api_remote_base", "grok2api_remote_app_key")
@@ -235,12 +246,12 @@ def validate_config(raw):
             raise ConfigError("远端 token 入池缺少必需配置: " + ", ".join(missing))
     if cfg["cpa_copy_to_hotload"] and not cfg["cpa_hotload_dir"]:
         raise ConfigError("启用 CPA 热加载复制时必须配置 cpa_hotload_dir")
-
-    for key in path_keys:
-        value = cfg[key]
-        if value.startswith("~"):
-            cfg[key] = os.path.expanduser(value)
     return cfg
+
+
+def validate_config(raw):
+    """Backward-compatible full validation used before a run or save."""
+    return validate_run_requirements(raw)
 
 
 def load_config():
@@ -249,19 +260,19 @@ def load_config():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            config = validate_config(loaded)
+            config = validate_config_structure(loaded)
         except ConfigError:
             raise
         except Exception as exc:
             raise ConfigError(f"配置文件解析失败: {CONFIG_FILE}: {exc}") from exc
     else:
-        config = validate_config(DEFAULT_CONFIG.copy())
+        config = validate_config_structure(DEFAULT_CONFIG.copy())
     return config
 
 
 def save_config():
     global config
-    config = validate_config(config)
+    config = validate_config_structure(config)
     config_dir = os.path.dirname(os.path.abspath(CONFIG_FILE))
     os.makedirs(config_dir, exist_ok=True)
     fd = None
@@ -3260,101 +3271,31 @@ def maybe_export_cpa_xai_after_success(email, password, sso="", log_callback=Non
 
 
 def _save_mail_credential(email, credential, log_callback=None):
-    path = os.path.join(os.path.dirname(__file__), "mail_credentials.txt")
+    from account_outputs import save_mail_credential
     try:
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(f"{email}\t{credential}\n")
-            handle.flush()
-        return True
+        return save_mail_credential(os.path.dirname(__file__), email, credential)
     except Exception as exc:
         log_exception("保存邮箱凭据失败", exc, log_callback)
         return False
 
 
 def _append_account_line(path, email, password, sso):
-    with open(path, "a", encoding="utf-8") as handle:
-        handle.write(f"{email}----{password}----{sso}\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    from account_outputs import append_account_line
+    return append_account_line(path, email, password, sso)
 
 
 def _queue_unsaved_account(path, payload, error, log_callback=None):
-    pending_path = path + ".pending.jsonl"
-    record = dict(payload)
-    record["save_error"] = str(error)
-    record["queued_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    from account_outputs import queue_unsaved_account
     try:
-        with open(pending_path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        try:
-            os.chmod(pending_path, 0o600)
-        except Exception:
-            pass
-        return True
+        return queue_unsaved_account(path, payload, error)
     except Exception as exc:
         log_exception("写入账号 pending 队列失败", exc, log_callback)
         return False
 
 
 def retry_pending_file(pending_path, output_path=None, log_callback=None):
-    logger = log_callback or (lambda message: None)
-    pending_path = os.path.abspath(os.path.expanduser(str(pending_path)))
-    if not os.path.isfile(pending_path):
-        raise FileNotFoundError(f"pending 文件不存在: {pending_path}")
-    suffix = ".pending.jsonl"
-    if output_path:
-        target_path = os.path.abspath(os.path.expanduser(str(output_path)))
-    elif pending_path.endswith(suffix):
-        target_path = pending_path[:-len(suffix)]
-    else:
-        target_path = pending_path + ".recovered.txt"
-    unresolved = []
-    restored = 0
-    with open(pending_path, "r", encoding="utf-8") as handle:
-        lines = handle.readlines()
-    for line_number, raw_line in enumerate(lines, 1):
-        stripped = raw_line.strip()
-        if not stripped:
-            continue
-        try:
-            record = json.loads(stripped)
-            if not isinstance(record, dict):
-                raise ValueError("record must be a JSON object")
-            email = str(record.get("email") or "").strip()
-            password = str(record.get("password") or "")
-            sso = str(record.get("sso") or "").strip()
-            if not email or not sso:
-                raise ValueError("record missing email or sso")
-            _append_account_line(target_path, email, password, sso)
-            restored += 1
-            logger(f"[+] 已恢复 pending 账号: {email}")
-        except Exception as exc:
-            unresolved.append(raw_line if raw_line.endswith("\n") else raw_line + "\n")
-            logger(f"[!] pending 第 {line_number} 行恢复失败: {exc}")
-    directory = os.path.dirname(pending_path) or "."
-    fd, temp_path = tempfile.mkstemp(prefix=".pending-retry-", suffix=".jsonl.tmp", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.writelines(unresolved)
-            handle.flush()
-            os.fsync(handle.fileno())
-        if unresolved:
-            os.replace(temp_path, pending_path)
-            temp_path = None
-            try:
-                os.chmod(pending_path, 0o600)
-            except Exception:
-                pass
-        else:
-            os.unlink(temp_path)
-            temp_path = None
-            os.unlink(pending_path)
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
-    return {"restored": restored, "remaining": len(unresolved), "output_path": target_path}
+    from account_outputs import retry_pending_file as _retry_pending_file
+    return _retry_pending_file(pending_path, output_path=output_path, log_callback=log_callback)
 
 
 def run_registration_common(count, log_callback, cancel_callback, accounts_output_file, observer):
@@ -3405,6 +3346,8 @@ class GrokRegisterGUI:
         self.batch_count = 0
         self.success_count = 0
         self.fail_count = 0
+        self.registered_unsaved_count = 0
+        self.postprocess_warning_count = 0
         self.results = []
         self.stop_requested = False
         self.ui_queue = queue.Queue()
@@ -3593,7 +3536,7 @@ class GrokRegisterGUI:
         tk_label(status_frame, text="状态: ").pack(side=tk.LEFT)
         self.status_label = tk.Label(status_frame, textvariable=self.status_var, bg=UI_BG, fg="green")
         self.status_label.pack(side=tk.LEFT)
-        self.stats_var = tk.StringVar(value="成功: 0 | 失败: 0")
+        self.stats_var = tk.StringVar(value="成功: 0 | 失败: 0 | 待恢复: 0 | 后处理警告: 0")
         tk.Label(status_frame, textvariable=self.stats_var, bg=UI_BG, fg=UI_FG).pack(side=tk.RIGHT)
         log_frame = tk.LabelFrame(
             main_frame,
@@ -3638,7 +3581,7 @@ class GrokRegisterGUI:
                 elif kind == "clear_log":
                     self.log_text.delete(1.0, tk.END)
                 elif kind == "stats":
-                    self.stats_var.set(f"成功: {event[1]} | 失败: {event[2]}")
+                    self.stats_var.set(f"成功: {event[1]} | 失败: {event[2]} | 待恢复: {event[3]} | 后处理警告: {event[4]}")
                 elif kind == "running":
                     running = bool(event[1])
                     self.start_btn.config(state=tk.DISABLED if running else tk.NORMAL)
@@ -3667,7 +3610,7 @@ class GrokRegisterGUI:
         self.ui_queue.put(("clear_log",))
 
     def update_stats(self):
-        self.ui_queue.put(("stats", self.success_count, self.fail_count))
+        self.ui_queue.put(("stats", self.success_count, self.fail_count, self.registered_unsaved_count, self.postprocess_warning_count))
 
     def _set_running_ui(self, running):
         self.is_running = bool(running)
@@ -3707,34 +3650,14 @@ class GrokRegisterGUI:
             config["cloudflare_path_token"] = raw_paths[2] if raw_paths[2].startswith("/") else ("/" + raw_paths[2])
             config["cloudflare_path_messages"] = raw_paths[3] if raw_paths[3].startswith("/") else ("/" + raw_paths[3])
         try:
-            save_config()
-        except ConfigError as exc:
-            self.log(f"[!] 配置保存失败: {exc}")
-            return
-        if config["email_provider"] == "cloudflare" and not config["cloudflare_api_base"]:
-            self.log("[!] Cloudflare 模式需要先填写 Cloudflare API Base")
-            return
-        if config["email_provider"] == "cloudmail":
-            missing = []
-            if not config["cloudmail_api_base"]:
-                missing.append("API Base")
-            if not config["cloudmail_public_token"]:
-                missing.append("Public Token")
-            if not config["cloudmail_domains"]:
-                missing.append("域名")
-            if missing:
-                self.log(f"[!] Cloud Mail 模式缺少配置: {', '.join(missing)}")
-                return
-        try:
             count = int(self.count_var.get())
-        except Exception:
-            self.log("[!] 注册数量无效")
-            return
-        config["register_count"] = count
-        try:
+            config["register_count"] = count
+            validated = validate_run_requirements(config)
+            config.clear()
+            config.update(validated)
             save_config()
-        except ConfigError as exc:
-            self.log(f"[!] 配置保存失败: {exc}")
+        except (ValueError, ConfigError) as exc:
+            self.log(f"[!] 配置无效或保存失败: {exc}")
             return
         self.stop_requested = False
         self.success_count = 0
@@ -3762,6 +3685,8 @@ class GrokRegisterGUI:
         def observer(batch, account, output):
             self.success_count = batch.success_count
             self.fail_count = batch.fail_count
+            self.registered_unsaved_count = batch.registered_unsaved_count
+            self.postprocess_warning_count = batch.postprocess_warning_count
             if account is not None:
                 self.results.append({"email": account.email, "sso": account.sso, "profile": account.profile, "output": output})
             self.update_stats()
@@ -3775,6 +3700,9 @@ class GrokRegisterGUI:
             )
             self.success_count = batch.success_count
             self.fail_count = batch.fail_count
+            self.registered_unsaved_count = batch.registered_unsaved_count
+            self.postprocess_warning_count = batch.postprocess_warning_count
+            self.update_stats()
         except Exception as exc:
             log_exception("任务异常", exc, self.log)
         finally:
@@ -3808,11 +3736,13 @@ def run_registration_cli(count):
     )
     cli_log(f"[*] 终端模式启动，目标数量: {count}")
     cli_log(f"[*] 成功账号将实时保存到: {accounts_output_file}")
-    last_stats = {"success": 0, "fail": 0}
+    last_stats = {"success": 0, "fail": 0, "pending": 0, "warnings": 0}
     def observer(batch, account, output):
         last_stats["success"] = batch.success_count
         last_stats["fail"] = batch.fail_count
-        cli_log(f"[*] 当前统计: 成功 {batch.success_count} | 失败 {batch.fail_count}")
+        last_stats["pending"] = batch.registered_unsaved_count
+        last_stats["warnings"] = batch.postprocess_warning_count
+        cli_log(f"[*] 当前统计: 成功 {batch.success_count} | 失败 {batch.fail_count} | 待恢复 {batch.registered_unsaved_count} | 后处理警告 {batch.postprocess_warning_count}")
     try:
         batch = run_registration_common(
             count=count,
@@ -3823,18 +3753,27 @@ def run_registration_cli(count):
         )
         last_stats["success"] = batch.success_count
         last_stats["fail"] = batch.fail_count
+        last_stats["pending"] = batch.registered_unsaved_count
+        last_stats["warnings"] = batch.postprocess_warning_count
     except KeyboardInterrupt:
         controller.stop()
         cli_log("[!] 收到 Ctrl+C，正在停止并清理")
     except Exception as exc:
         log_exception("任务异常", exc, cli_log)
     finally:
-        cli_log(f"[*] 任务结束。成功 {last_stats['success']} | 失败 {last_stats['fail']}")
+        cli_log(f"[*] 任务结束。成功 {last_stats['success']} | 失败 {last_stats['fail']} | 待恢复 {last_stats['pending']} | 后处理警告 {last_stats['warnings']}")
 
 
 def main_cli():
     try:
         load_config()
+    except ConfigError as exc:
+        cli_log(f"[!] {exc}")
+        return
+    try:
+        validated = validate_run_requirements(config)
+        config.clear()
+        config.update(validated)
     except ConfigError as exc:
         cli_log(f"[!] {exc}")
         return

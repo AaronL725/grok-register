@@ -134,25 +134,52 @@ def persist_account_result(result, callbacks, ops):
     except Exception as exc:
         saved = False
         save_error = str(exc)
-        pending_saved = ops.queue_unsaved_result(
-            {
-                "email": result.email,
-                "password": result.password,
-                "sso": result.sso,
-                "profile": result.profile,
-            },
-            save_error,
-        )
+        try:
+            pending_saved = bool(
+                ops.queue_unsaved_result(
+                    {
+                        "email": result.email,
+                        "password": result.password,
+                        "sso": result.sso,
+                        "profile": result.profile,
+                    },
+                    save_error,
+                )
+            )
+        except Exception as pending_exc:
+            pending_saved = False
+            callbacks.log(f"[!] pending 队列写入异常: {pending_exc}")
         callbacks.log(f"[!] 账号已注册但主结果文件保存失败: {save_error}")
         if pending_saved:
             callbacks.log("[!] 未保存账号已写入 pending 队列，等待人工重试")
         else:
             callbacks.log("[!] pending 队列也写入失败，请立即复制当前账号信息")
-    pools = ops.add_tokens(result.sso, result.email)
+
+    try:
+        pools = ops.add_tokens(result.sso, result.email)
+        if not isinstance(pools, dict):
+            raise TypeError("token pool result must be a dict")
+    except Exception as exc:
+        callbacks.log(f"[!] token 入池后处理异常，账号结果已保留: {exc}")
+        pools = {
+            "internal": {
+                "enabled": True,
+                "ok": False,
+                "error": str(exc),
+            }
+        }
     for name, state in pools.items():
-        if state.get("enabled") and not state.get("ok"):
+        if isinstance(state, dict) and state.get("enabled") and not state.get("ok"):
             callbacks.log(f"[!] grok2api {name} 入池失败: {state.get('error')}")
-    cpa = ops.export_cpa(result.email, result.password, result.sso)
+
+    try:
+        cpa = ops.export_cpa(result.email, result.password, result.sso)
+        if not isinstance(cpa, dict):
+            raise TypeError("CPA result must be a dict")
+    except Exception as exc:
+        callbacks.log(f"[!] CPA 导出后处理异常，账号结果已保留: {exc}")
+        cpa = {"ok": False, "skipped": False, "error": str(exc)}
+
     return OutputResult(
         registered=True,
         saved=saved,
@@ -170,15 +197,44 @@ def _notify_observer(observer, result, account, output, callbacks):
         callbacks.log(f"[Debug] observer 执行失败: {exc}")
 
 
+def _run_cleanup_safely(ops, callbacks, reason):
+    try:
+        ops.cleanup(reason)
+        return True
+    except Exception as exc:
+        callbacks.log(f"[!] 清理失败，已忽略且不影响账号统计: {reason}: {exc}")
+        return False
+
+
+def _prepare_next_account(result, settings, callbacks, ops):
+    if result.processed_count >= settings.count:
+        return False
+    if callbacks.cancelled():
+        result.cancelled = True
+        return False
+    try:
+        if ops.browser_missing():
+            ops.start_browser()
+        else:
+            ops.restart_browser()
+        ops.sleep(1)
+        return True
+    except ops.cancelled_exception:
+        result.cancelled = True
+        callbacks.log("[!] 已在账号间准备阶段停止")
+        return False
+
+
 def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interval=5,
-              max_slot_retry=3, max_mail_retry=3):
-    settings = RegistrationSettings(
-        count=int(count),
-        enable_nsfw=bool(enable_nsfw),
-        cleanup_interval=int(cleanup_interval),
-        max_slot_retry=int(max_slot_retry),
-        max_mail_retry=int(max_mail_retry),
-    )
+              max_slot_retry=3, max_mail_retry=3, settings=None):
+    if settings is None:
+        settings = RegistrationSettings(
+            count=int(count),
+            enable_nsfw=bool(enable_nsfw),
+            cleanup_interval=int(cleanup_interval),
+            max_slot_retry=int(max_slot_retry),
+            max_mail_retry=int(max_mail_retry),
+        )
     result = BatchResult()
     retry_count_for_slot = 0
     last_cleanup_success_count = 0
@@ -192,6 +248,7 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
             callbacks.log(f"--- 开始第 {result.processed_count + 1}/{settings.count} 个账号 ---")
             account = None
             output = None
+            continue_batch = True
             try:
                 account = register_one_account(
                     callbacks,
@@ -212,14 +269,18 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
                         and result.success_count != last_cleanup_success_count
                         and result.processed_count < settings.count
                     ):
-                        ops.cleanup(f"已成功 {result.success_count} 个账号，执行定期清理")
+                        _run_cleanup_safely(
+                            ops,
+                            callbacks,
+                            f"已成功 {result.success_count} 个账号，执行定期清理",
+                        )
                         last_cleanup_success_count = result.success_count
                 else:
                     result.fail_count += 1
                     result.registered_unsaved_count += 1
                     callbacks.log(f"[-] 注册成功但持久化未完成: {account.email}")
                 pool_warning = any(
-                    state.get("enabled") and not state.get("ok")
+                    isinstance(state, dict) and state.get("enabled") and not state.get("ok")
                     for state in output.pools.values()
                 )
                 cpa_warning = bool(output.cpa and not output.cpa.get("ok") and not output.cpa.get("skipped"))
@@ -228,7 +289,7 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
             except ops.cancelled_exception:
                 result.cancelled = True
                 callbacks.log("[!] 注册被停止")
-                break
+                continue_batch = False
             except ops.retry_exception as exc:
                 retry_count_for_slot += 1
                 if retry_count_for_slot <= settings.max_slot_retry:
@@ -247,16 +308,12 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
                 callbacks.log(f"[-] 注册失败: {exc}")
             finally:
                 _notify_observer(observer, result, account, output, callbacks)
-                if callbacks.cancelled():
-                    result.cancelled = True
-                    break
-                if result.processed_count < settings.count:
-                    if ops.browser_missing():
-                        ops.start_browser()
-                    else:
-                        ops.restart_browser()
-                    ops.sleep(1)
+
+            if not continue_batch or result.cancelled:
+                break
+            if not _prepare_next_account(result, settings, callbacks, ops):
+                break
     finally:
-        ops.cleanup("任务结束")
+        _run_cleanup_safely(ops, callbacks, "任务结束")
     return result
 

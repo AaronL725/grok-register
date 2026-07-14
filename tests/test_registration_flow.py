@@ -113,6 +113,48 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(batch.success_count, 1)
         self.assertTrue(any("observer 执行失败" in line for line in logs))
 
+    def test_cleanup_failure_does_not_change_success_statistics(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        def cleanup(reason):
+            if "已成功" in reason:
+                raise RuntimeError("cleanup failed")
+            fake.events.append(("cleanup", reason))
+        ops.cleanup = cleanup
+        batch = run_batch(2, self.callbacks(), lambda *args: None, ops, cleanup_interval=1)
+        self.assertEqual(batch.success_count, 2)
+        self.assertEqual(batch.fail_count, 0)
+        self.assertEqual(batch.processed_count, 2)
+
+    def test_cancel_during_between_account_sleep_ends_normally(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        ops.sleep = lambda seconds: (_ for _ in ()).throw(Cancelled())
+        batch = run_batch(2, self.callbacks(), lambda *args: None, ops)
+        self.assertTrue(batch.cancelled)
+        self.assertEqual(batch.success_count, 1)
+        self.assertEqual(batch.processed_count, 1)
+
+    def test_final_cleanup_failure_does_not_hide_original_error(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        ops.start_browser = lambda: (_ for _ in ()).throw(RuntimeError("original start error"))
+        ops.cleanup = lambda reason: (_ for _ in ()).throw(RuntimeError("cleanup error"))
+        logs = []
+        with self.assertRaisesRegex(RuntimeError, "original start error"):
+            run_batch(1, self.callbacks(logs), lambda *args: None, ops)
+        self.assertTrue(any("清理失败" in line for line in logs))
+
+    def test_postprocessing_exceptions_become_warnings(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        ops.add_tokens = lambda sso, email: (_ for _ in ()).throw(RuntimeError("pool down"))
+        ops.export_cpa = lambda email, password, sso: (_ for _ in ()).throw(RuntimeError("cpa down"))
+        batch = run_batch(1, self.callbacks(), lambda *args: None, ops)
+        self.assertEqual(batch.success_count, 1)
+        self.assertEqual(batch.fail_count, 0)
+        self.assertEqual(batch.postprocess_warning_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
