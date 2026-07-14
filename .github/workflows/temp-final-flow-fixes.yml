@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - tools/apply_final_flow_fixes.py
+      - tools/fix_final_flow_test_generation.py
       - .github/workflows/temp-final-flow-fixes.yml
   workflow_dispatch:
 
@@ -15,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Repair focused test generation
+        run: python tools/fix_final_flow_test_generation.py
       - name: Apply final flow fixes
         run: python tools/apply_final_flow_fixes.py
       - name: Verify syntax
@@ -25,7 +28,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f tools/apply_final_flow_fixes.py .github/workflows/temp-final-flow-fixes.yml
+          git rm -f tools/apply_final_flow_fixes.py tools/fix_final_flow_test_generation.py .github/workflows/temp-final-flow-fixes.yml
           git add -A
           git commit -m "fix: finish shared registration flow hardening"
           git push
