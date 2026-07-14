@@ -1,0 +1,41 @@
+name: Temporary remaining review fixes
+
+on:
+  push:
+    branches:
+      - fix/remaining-review-hardening
+    paths:
+      - tools/apply_remaining_review_fixes.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/remaining-review-hardening
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Apply remaining review fixes
+        run: python tools/apply_remaining_review_fixes.py
+      - name: Compile
+        run: python -m compileall -q grok_register_ttk.py registration_core.py cpa_export.py cpa_xai tests
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Check diff
+        run: git diff --check
+      - name: Commit and clean temporary tooling
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f tools/apply_remaining_review_fixes.py .github/workflows/temp-remaining-review-fixes.yml
+          git add -A
+          git commit -m "fix: resolve remaining review findings"
+          git push origin HEAD:fix/remaining-review-hardening
