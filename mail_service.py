@@ -449,7 +449,7 @@ def duckmail_get_oai_code(
     cancel_callback=None,
 ):
     deadline = time.time() + timeout
-    seen_ids = set()
+    seen_attempts = {}
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
         try:
@@ -461,12 +461,15 @@ def duckmail_get_oai_code(
             continue
         for msg in messages:
             msg_id = msg.get("id") or msg.get("msgid")
-            if not msg_id or msg_id in seen_ids:
+            if not msg_id:
                 continue
-            seen_ids.add(msg_id)
             recipients = [t.get("address", "").lower() for t in (msg.get("to") or [])]
             if email.lower() not in recipients:
                 continue
+            attempt = int(seen_attempts.get(msg_id, 0))
+            if attempt >= 5:
+                continue
+            seen_attempts[msg_id] = attempt + 1
             try:
                 detail = get_message_detail(dev_token, msg_id)
             except Exception as exc:
@@ -790,7 +793,7 @@ def yyds_get_oai_code(
     cancel_callback=None,
 ):
     deadline = time.time() + timeout
-    seen_ids = set()
+    seen_attempts = {}
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
         try:
@@ -802,12 +805,15 @@ def yyds_get_oai_code(
             continue
         for msg in messages:
             msg_id = msg.get("id")
-            if not msg_id or msg_id in seen_ids:
+            if not msg_id:
                 continue
-            seen_ids.add(msg_id)
             to_addrs = [t.get("address", "").lower() for t in (msg.get("to") or [])]
             if address.lower() not in to_addrs:
                 continue
+            attempt = int(seen_attempts.get(msg_id, 0))
+            if attempt >= 5:
+                continue
+            seen_attempts[msg_id] = attempt + 1
             try:
                 detail = yyds_get_message_detail(msg_id, token=token, jwt=jwt)
             except Exception as exc:

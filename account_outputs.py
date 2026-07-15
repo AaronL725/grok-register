@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import time
+from contextlib import ExitStack
 from datetime import datetime, timezone
 
 from filelock import FileLock
@@ -67,8 +68,13 @@ def retry_pending_file(pending_path, output_path=None, log_callback=None):
     if os.path.normcase(pending_path) == os.path.normcase(target_path):
         raise ValueError("pending 输入文件与输出文件不能是同一个文件")
 
-    lock_path = pending_path + ".lock"
-    with FileLock(lock_path, timeout=30):
+    lock_paths = sorted(
+        {pending_path + ".lock", target_path + ".lock"},
+        key=lambda value: os.path.normcase(os.path.abspath(value)),
+    )
+    with ExitStack() as stack:
+        for lock_path in lock_paths:
+            stack.enter_context(FileLock(lock_path, timeout=30))
         if not os.path.isfile(pending_path):
             return {"restored": 0, "remaining": 0, "output_path": target_path}
         with open(pending_path, "r", encoding="utf-8") as handle:

@@ -53,7 +53,7 @@ import browser_runtime as _browser_runtime
 import mail_service as _mail_service
 import registration_browser as _registration_browser
 from app_config import (
-    CONFIG_FILE, DEFAULT_CONFIG, ConfigError, config, load_config, save_config,
+    DEFAULT_CONFIG, ConfigError, config, load_config, save_config,
     validate_config, validate_config_structure, validate_run_requirements,
 )
 
@@ -299,6 +299,10 @@ for _name in ['generate_random_birthdate', 'response_preview', 'is_cloudflare_bl
 
 
 def __getattr__(name):
+    if name == "CONFIG_FILE":
+        return _app_config.CONFIG_FILE
+    if name == "SIGNUP_URL":
+        return _registration_browser.SIGNUP_URL
     if name in {"browser", "page", "browser_proxy_bridge", "browser_started_with_proxy", "cf_clearance"}:
         return getattr(_registration_browser, name)
     if name in {"_cf_domain_index", "_cloudmail_domain_index"}:
@@ -308,6 +312,14 @@ def __getattr__(name):
 
 class _CompatibilityModule(types.ModuleType):
     def __setattr__(self, name, value):
+        if name == "CONFIG_FILE":
+            _app_config.CONFIG_FILE = str(value)
+            self.__dict__.pop(name, None)
+            return
+        if name == "SIGNUP_URL":
+            _registration_browser.SIGNUP_URL = str(value)
+            self.__dict__.pop(name, None)
+            return
         if name == "config":
             if value is not _app_config.config:
                 if not isinstance(value, dict):
@@ -585,7 +597,11 @@ def maybe_export_cpa_xai_after_success(email, password, sso="", log_callback=Non
     if result.get("ok"):
         exported_path = result.get("hotload_path") or result.get("path") or ""
         suffix = f": {exported_path}" if exported_path else ""
-        logger(f"[+] CPA OIDC 导出成功{suffix}")
+        if result.get("warning") or result.get("partial") or result.get("cpa_copy_error"):
+            detail = result.get("cpa_copy_error") or "后处理未完整完成"
+            logger(f"[!] CPA OIDC 凭证已生成，但存在后处理警告{suffix}: {detail}")
+        else:
+            logger(f"[+] CPA OIDC 导出成功{suffix}")
     elif not result.get("skipped"):
         logger(f"[!] CPA OIDC 导出失败，账号已保留: {result.get('error') or result}")
     return result

@@ -111,11 +111,14 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
     sso = ops.wait_for_sso_cookie()
     if enable_nsfw:
         callbacks.log("[*] 6. 开启 NSFW")
-        nsfw_ok, nsfw_msg = ops.enable_nsfw(sso)
-        if nsfw_ok:
-            callbacks.log(f"[+] NSFW 开启成功: {nsfw_msg}")
-        else:
-            callbacks.log(f"[!] NSFW 未开启，继续保存账号: {nsfw_msg}")
+        try:
+            nsfw_ok, nsfw_msg = ops.enable_nsfw(sso)
+            if nsfw_ok:
+                callbacks.log(f"[+] NSFW 开启成功: {nsfw_msg}")
+            else:
+                callbacks.log(f"[!] NSFW 未开启，继续保存账号: {nsfw_msg}")
+        except Exception as exc:
+            callbacks.log(f"[!] NSFW 开启异常，继续保存账号: {exc}")
     return RegistrationResult(
         ok=True,
         email=email,
@@ -283,7 +286,15 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
                     isinstance(state, dict) and state.get("enabled") and not state.get("ok")
                     for state in output.pools.values()
                 )
-                cpa_warning = bool(output.cpa and not output.cpa.get("ok") and not output.cpa.get("skipped"))
+                cpa_warning = bool(
+                    output.cpa
+                    and not output.cpa.get("skipped")
+                    and (
+                        not output.cpa.get("ok")
+                        or output.cpa.get("warning")
+                        or output.cpa.get("cpa_copy_error")
+                    )
+                )
                 if pool_warning or cpa_warning:
                     result.postprocess_warning_count += 1
             except ops.cancelled_exception:

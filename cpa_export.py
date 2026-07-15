@@ -176,6 +176,8 @@ def export_cpa_xai_for_account(email, password, page=None, cookies=None, sso=Non
             log("[cpa] hotload copy -> %s" % target)
         except Exception as exc:
             result["cpa_copy_error"] = str(exc)
+            result["warning"] = True
+            result["partial"] = True
             log("[cpa] hotload copy failed: %s" % exc)
     if not result.get("ok"):
         fail_path = settings.auth_dir / "cpa_auth_failed.txt"
