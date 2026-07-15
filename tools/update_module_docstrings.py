@@ -25,6 +25,7 @@ DESCRIPTIONS = {
     "cpa_xai/mint.py": "协调浏览器授权、OAuth 轮询和 CPA 凭证导出流程。",
     "cpa_xai/schema.py": "定义并规范化 CPA xAI 凭证文件的数据结构。",
     "cpa_xai/writer.py": "将 CPA xAI 凭证安全写入本地 JSON 文件。",
+    "tests/__init__.py": "标记测试包并集中承载项目测试模块。",
     "tests/test_cloudflare_admin_api.py": "验证 Cloudflare 临时邮箱 admin 创建和鉴权接口行为。",
     "tests/test_browser_session.py": "验证 CPA 浏览器会话的复用、取消、代理和清理行为。",
     "tests/test_pending_recovery.py": "验证 pending 账号恢复的去重、锁、原子更新和异常处理。",
