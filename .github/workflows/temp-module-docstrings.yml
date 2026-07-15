@@ -45,12 +45,14 @@ jobs:
         run: |
           python -m compileall -q .
           python -m unittest discover -s tests -p 'test_*.py'
-      - name: Commit verified documentation-only changes
+      - name: Commit verified module header changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f tools/update_module_docstrings.py .github/workflows/temp-module-docstrings.yml
-          git add -A
+          git add \
+            account_outputs.py app_config.py browser_runtime.py cf_mail_debug.py \
+            cpa_export.py grok_register_ttk.py mail_service.py \
+            registration_browser.py registration_flow.py cpa_xai tests
           git diff --cached --check
           git commit -m "docs: clarify Python module responsibilities"
           git push origin HEAD:${{ github.head_ref }}
