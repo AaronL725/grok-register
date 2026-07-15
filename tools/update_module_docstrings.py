@@ -73,7 +73,7 @@ def replace_docstring(path, description):
             insert_at = 1
         if insert_at < len(lines) and "coding" in lines[insert_at][:80]:
             insert_at += 1
-        lines[insert_at:insert_at] = [replacement, "\n"]
+        lines[insert_at:insert_at] = [replacement] if not lines else [replacement, "\n"]
 
     updated = "".join(lines)
     parsed = ast.parse(updated, filename=str(path))
