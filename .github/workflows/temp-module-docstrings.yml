@@ -6,10 +6,11 @@ on:
     paths:
       - tools/update_module_docstrings.py
       - .github/workflows/temp-module-docstrings.yml
-  workflow_dispatch:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   update-and-test:
@@ -17,14 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ github.head_ref }}
           fetch-depth: 1
           show-progress: false
-      - name: Show tracked Python inventory
+      - name: Publish tracked Python inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
+          python3 - <<'PY' > /tmp/python-inventory.txt
           import subprocess
           files = subprocess.check_output(["git", "ls-files", "*.py"], text=True).splitlines()
-          print("PYFILES=" + repr(files))
-          raise SystemExit(1)
+          print("Tracked Python files:\n\n```text")
+          print("\n".join(files))
+          print("```")
           PY
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/python-inventory.txt
+          exit 1
