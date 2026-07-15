@@ -1,0 +1,55 @@
+name: Temporary module docstring refresh
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - tools/update_module_docstrings.py
+      - .github/workflows/temp-module-docstrings.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Update headers and test on Python 3.9
+        run: |
+          python -m py_compile tools/update_module_docstrings.py
+          python tools/update_module_docstrings.py
+          python -m compileall -q .
+          python -m unittest discover -s tests -p 'test_*.py'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies on Python 3.12
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Test on Python 3.12
+        run: |
+          python -m compileall -q .
+          python -m unittest discover -s tests -p 'test_*.py'
+      - name: Commit verified documentation-only changes
+        if: github.event_name == 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f tools/update_module_docstrings.py .github/workflows/temp-module-docstrings.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "docs: clarify Python module responsibilities"
+          git push origin HEAD:${{ github.head_ref }}
