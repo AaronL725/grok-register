@@ -22,14 +22,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
+      - name: Verify inventory and update module headers
+        run: |
+          python -m py_compile tools/update_module_docstrings.py
+          python tools/update_module_docstrings.py
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Update headers and test on Python 3.9
+      - name: Test on Python 3.9
         run: |
-          python -m py_compile tools/update_module_docstrings.py
-          python tools/update_module_docstrings.py
           python -m compileall -q .
           python -m unittest discover -s tests -p 'test_*.py'
       - uses: actions/setup-python@v5
