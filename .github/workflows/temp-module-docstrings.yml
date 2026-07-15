@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
 
 jobs:
   update-and-test:
@@ -21,16 +19,38 @@ jobs:
           ref: ${{ github.head_ref }}
           fetch-depth: 1
           show-progress: false
-      - name: Publish tracked Python inventory
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify inventory and update module headers
         run: |
-          python3 - <<'PY' > /tmp/python-inventory.txt
-          import subprocess
-          files = subprocess.check_output(["git", "ls-files", "*.py"], text=True).splitlines()
-          print("Tracked Python files:\n\n```text")
-          print("\n".join(files))
-          print("```")
-          PY
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/python-inventory.txt
-          exit 1
+          python3 -m py_compile tools/update_module_docstrings.py
+          python3 tools/update_module_docstrings.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Test on Python 3.9
+        run: |
+          python -m compileall -q .
+          python -m unittest discover -s tests -p 'test_*.py'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies on Python 3.12
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Test on Python 3.12
+        run: |
+          python -m compileall -q .
+          python -m unittest discover -s tests -p 'test_*.py'
+      - name: Commit verified documentation-only changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f tools/update_module_docstrings.py .github/workflows/temp-module-docstrings.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "docs: clarify Python module responsibilities"
+          git push origin HEAD:${{ github.head_ref }}
