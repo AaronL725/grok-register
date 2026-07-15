@@ -22,7 +22,7 @@
   "grok2api_remote_base": "",
   "grok2api_remote_app_key": "",
   "api_reverse_tools": "",
-  "cpa_export_enabled": false,
+  "cpa_export_enabled": true,
   "cpa_auth_dir": "./cpa_auths",
   "cpa_copy_to_hotload": false,
   "cpa_hotload_dir": "",
