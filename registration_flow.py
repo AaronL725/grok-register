@@ -1,4 +1,4 @@
-"""Shared registration workflow used by both GUI and CLI adapters."""
+"""编排 GUI 与 CLI 共用的单账号注册和批量执行流程。"""
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
 

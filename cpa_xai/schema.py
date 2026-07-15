@@ -1,4 +1,4 @@
-"""Build CLIProxyAPI-compatible xAI OAuth auth payloads."""
+"""定义并规范化 CPA xAI 凭证文件的数据结构。"""
 
 import base64
 import json

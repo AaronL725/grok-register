@@ -1,4 +1,4 @@
-"""Atomic write of xAI auth files."""
+"""将 CPA xAI 凭证安全写入本地 JSON 文件。"""
 
 import json
 import os

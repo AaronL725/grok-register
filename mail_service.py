@@ -1,4 +1,4 @@
-"""Temporary-mail providers shared by GUI, CLI, and debug tooling."""
+"""接入临时邮箱服务并负责邮箱创建、邮件轮询和验证码提取。"""
 import re
 import secrets
 import string

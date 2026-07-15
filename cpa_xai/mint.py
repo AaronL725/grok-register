@@ -1,4 +1,4 @@
-"""High-level OIDC mint + export pipeline."""
+"""协调浏览器授权、OAuth 轮询和 CPA 凭证导出流程。"""
 
 from .browser_confirm import mint_with_browser
 from .schema import DEFAULT_BASE_URL, build_cpa_xai_auth

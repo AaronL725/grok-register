@@ -1,9 +1,4 @@
-"""Approve xAI device-code in Chromium (DrissionPage).
-
-Paths resolve relative to the project root.
-Token polling is the source of truth; browser automation is only used to
-log in and approve the device authorization page.
-"""
+"""自动完成 xAI 登录、设备授权确认和相关页面交互。"""
 
 from __future__ import annotations
 

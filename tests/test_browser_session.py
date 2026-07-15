@@ -1,3 +1,5 @@
+"""验证 CPA 浏览器会话的复用、取消、代理和清理行为。"""
+
 import unittest
 from cpa_xai import browser_session
 

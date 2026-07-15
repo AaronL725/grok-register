@@ -1,4 +1,4 @@
-"""Account result persistence and pending recovery helpers."""
+"""负责账号结果、pending 恢复以及 grok2api token 池的安全持久化。"""
 import json
 import os
 import tempfile

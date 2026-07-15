@@ -1,4 +1,4 @@
-"""Registration browser lifecycle and page automation."""
+"""管理主注册浏览器生命周期并实现注册页面自动化操作。"""
 import gc
 import random
 import re

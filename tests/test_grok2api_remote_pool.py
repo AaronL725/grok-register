@@ -1,3 +1,5 @@
+"""验证 grok2api 远端 token 入池及并发安全回退逻辑。"""
+
 import sys
 import types
 import unittest

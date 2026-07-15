@@ -1,3 +1,5 @@
+"""验证 OAuth Device Authorization 的发现、重试、轮询和错误处理。"""
+
 import json
 import unittest
 from unittest.mock import patch

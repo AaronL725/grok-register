@@ -1,3 +1,5 @@
+"""验证共享注册流程的重试、统计、取消、清理和后处理边界。"""
+
 import unittest
 
 from registration_flow import (

@@ -1,3 +1,5 @@
+"""验证模块化改造后的配置、浏览器、邮箱和兼容性回归。"""
+
 import json
 import tempfile
 import unittest

@@ -1,4 +1,4 @@
-"""Shared HTTP, proxy, and Chromium option helpers."""
+"""提供共享的 HTTP 请求、代理处理和 Chromium 启动参数。"""
 import os
 import urllib.parse
 

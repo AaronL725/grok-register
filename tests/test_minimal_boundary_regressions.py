@@ -1,3 +1,5 @@
+"""验证后处理警告、邮件重试、目标锁和常量兼容边界。"""
+
 import json
 import tempfile
 import unittest

@@ -1,4 +1,4 @@
-"""Application configuration loading, normalization, and validation."""
+"""负责应用配置的默认值、加载保存、规范化和运行前校验。"""
 import json
 import os
 import tempfile

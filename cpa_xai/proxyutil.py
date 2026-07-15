@@ -1,11 +1,4 @@
-"""Proxy helpers for CPA/OIDC export.
-
-The OAuth HTTP calls can use ``http://user:pass@host:port`` directly, but
-Chromium cannot reliably use proxy credentials embedded in --proxy-server.
-When an authenticated HTTP/HTTPS proxy is configured we start a tiny localhost
-bridge that injects Proxy-Authorization for Chromium, matching the main
-registration browser behavior.
-"""
+"""解析认证代理并为 CPA 浏览器提供本地代理桥。"""
 
 import base64
 import os

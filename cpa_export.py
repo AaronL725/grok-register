@@ -1,4 +1,4 @@
-"""Optional post-registration CPA/OIDC export hook."""
+"""在注册成功后可选生成 CPA xAI OIDC 凭证并复制到热加载目录。"""
 from dataclasses import dataclass
 import importlib.util
 import os

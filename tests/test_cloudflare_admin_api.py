@@ -1,3 +1,5 @@
+"""验证 Cloudflare 临时邮箱 admin 创建和鉴权接口行为。"""
+
 import unittest
 from unittest.mock import patch
 

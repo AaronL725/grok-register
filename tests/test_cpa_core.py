@@ -1,3 +1,5 @@
+"""验证 CPA 凭证结构、写入和核心 mint 流程。"""
+
 import tempfile
 import unittest
 from pathlib import Path

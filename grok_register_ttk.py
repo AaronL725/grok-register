@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-Grok 注册机 - TTK GUI 版本
-整合 DrissionPage_example.py, openai_register.py, batch_open_nsfw.py
-"""
+"""GUI 与 CLI 主入口，并为拆分后的注册模块保留兼容适配。"""
 
 try:
     import tkinter as tk

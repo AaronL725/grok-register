@@ -1,4 +1,4 @@
-"""xAI OAuth device-code flow for Build/CLI credentials."""
+"""实现 OAuth Device Authorization 的发现、启动和 token 轮询。"""
 
 import json
 import time
