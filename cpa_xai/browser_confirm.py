@@ -154,10 +154,22 @@ def _norm(text: str) -> str:
 
 
 def _find_button_exact(page: Any, label: str) -> Optional[Any]:
+    # Exact text match first.
     try:
-        return page.ele(
+        target = page.ele(
             "xpath://button[normalize-space()='%s'] | //*[@role='button' and normalize-space()='%s'] | //a[normalize-space()='%s'] | //input[@type='submit' and @value='%s']"
             % (label, label, label, label),
+            timeout=0.4,
+        )
+        if target:
+            return target
+    except Exception:
+        pass
+    # Contains match (xAI cookie banner uses multi-word labels like "接受所有 Cookie").
+    try:
+        return page.ele(
+            "xpath:(//button[contains(normalize-space(), '%s')] | //*[@role='button' and contains(normalize-space(), '%s')] | //a[contains(normalize-space(), '%s')])[1]"
+            % (label, label, label),
             timeout=0.4,
         )
     except Exception:
@@ -167,17 +179,82 @@ def _find_button_exact(page: Any, label: str) -> Optional[Any]:
 def _cookie_banner_visible(text: str) -> bool:
     source = text or ""
     lower = source.lower()
-    return any(
-        needle in source or needle in lower
-        for needle in ("全部允许", "隐私偏好", "cookie", "privacy preference", "allow all")
+    needles = (
+        # legacy
+        "全部允许",
+        "隐私偏好",
+        "cookie",
+        "privacy preference",
+        "allow all",
+        # current xAI / OneTrust-style banner (issue #21)
+        "接受所有 cookie",
+        "接受所有cookie",
+        "全部拒绝",
+        "cookie 设置",
+        "cookie设置",
+        "accept all cookies",
+        "reject all",
+        "cookie settings",
+        "we use cookies",
+        "我们使用 cookie",
+        "我们使用cookie",
     )
+    return any(needle in source or needle in lower for needle in needles)
 
 
 def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
-    for label in ("全部允许", "Allow all", "接受", "Accept"):
-        if _click_exact(page, [label], log, real=True):
-            log("cookie banner dismissed: %s" % label)
+    # Prefer accept/allow labels so consent can proceed. Order matters.
+    labels = (
+        # current (issue #21)
+        "接受所有 Cookie",
+        "接受所有Cookie",
+        "Accept all cookies",
+        "Accept All Cookies",
+        "Allow all cookies",
+        "Allow All Cookies",
+        # legacy
+        "全部允许",
+        "Allow all",
+        "Allow All",
+        "接受全部",
+        "全部接受",
+        "Accept all",
+        "Accept All",
+        "接受",
+        "Accept",
+    )
+    if _click_exact(page, list(labels), log, real=True):
+        log("cookie banner dismissed via label click")
+        return True
+
+    # JS fallback: click any button whose text looks like accept-all cookies.
+    try:
+        clicked = page.run_js(
+            """
+            const texts = [
+              '接受所有 Cookie', '接受所有Cookie', '全部允许', '接受全部', '全部接受',
+              'Accept all cookies', 'Accept All Cookies', 'Allow all cookies',
+              'Allow all', 'Accept all', 'Accept'
+            ];
+            const nodes = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="submit"]'));
+            for (const node of nodes) {
+              const t = ((node.innerText || node.value || node.getAttribute('aria-label') || '') + '').replace(/\\s+/g, ' ').trim();
+              if (!t) continue;
+              for (const label of texts) {
+                if (t === label || t.includes(label)) {
+                  node.click();
+                  return t;
+                }
+              }
+            }
+            return '';
+            """
+        )
+        if clicked:
+            log("cookie banner dismissed via js: %s" % clicked)
             return True
+    except Exception as exc:
+        log("cookie banner js dismiss failed: %s" % exc)
     return False
 
 
@@ -386,7 +463,7 @@ def approve_device_code(
                     }) || document.querySelector('form');
                     if (!form) return;
                     const formText = (form.innerText || '');
-                    if (formText.includes('隐私偏好') || formText.includes('全部允许') || /cookie/i.test(formText)) return;
+                    if (formText.includes('隐私偏好') || formText.includes('全部允许') || formText.includes('接受所有 Cookie') || formText.includes('全部拒绝') || formText.includes('Cookie 设置') || /cookie/i.test(formText)) return;
                     let actionInput = form.querySelector('input[name=action]');
                     if (!actionInput) {
                       actionInput = document.createElement('input');
