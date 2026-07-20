@@ -1,0 +1,36 @@
+name: Temporary cookie label upgrade
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - tools/apply_cookie_label_upgrade.py
+      - .github/workflows/temp-cookie-label-upgrade.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 1
+          show-progress: false
+      - name: Apply exact cookie label upgrade
+        run: |
+          python3 -m py_compile tools/apply_cookie_label_upgrade.py
+          python3 tools/apply_cookie_label_upgrade.py
+          python3 -m py_compile cpa_xai/browser_confirm.py
+          changed="$(git diff --name-only)"
+          test "$changed" = "cpa_xai/browser_confirm.py"
+          git diff --check
+      - name: Commit verified target file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cpa_xai/browser_confirm.py
+          git commit -m "fix: support current Chinese cookie consent labels"
+          git push origin HEAD:${{ github.head_ref }}
