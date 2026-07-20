@@ -174,7 +174,14 @@ def _cookie_banner_visible(text: str) -> bool:
 
 
 def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
-    for label in ("全部允许", "Allow all", "接受", "Accept"):
+    for label in (
+        "全部允许",
+        "Allow all",
+        "Accept All Cookies",
+        "Accept all cookies",
+        "接受",
+        "Accept",
+    ):
         if _click_exact(page, [label], log, real=True):
             log("cookie banner dismissed: %s" % label)
             return True
