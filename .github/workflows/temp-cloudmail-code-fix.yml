@@ -31,7 +31,7 @@ jobs:
           python -m py_compile tools/apply_cloudmail_code_fix.py
           python tools/apply_cloudmail_code_fix.py
           python -m compileall -q .
-          python -m unittest tests.test_mail_code_extraction
+          python -m unittest discover -s tests -p 'test_mail_code_extraction.py'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -42,7 +42,7 @@ jobs:
       - name: Test on Python 3.12
         run: |
           python -m compileall -q .
-          python -m unittest tests.test_mail_code_extraction
+          python -m unittest discover -s tests -p 'test_mail_code_extraction.py'
       - name: Commit verified changes to fix branch
         if: github.event_name == 'pull_request'
         run: |
