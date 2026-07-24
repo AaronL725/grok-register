@@ -1,0 +1,55 @@
+name: Temporary Cloud Mail code fix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - tools/apply_cloudmail_code_fix.py
+      - .github/workflows/temp-cloudmail-code-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Apply fix and test on Python 3.9
+        run: |
+          python -m py_compile tools/apply_cloudmail_code_fix.py
+          python tools/apply_cloudmail_code_fix.py
+          python -m compileall -q .
+          python -m unittest tests.test_mail_code_extraction
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies on Python 3.12
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Test on Python 3.12
+        run: |
+          python -m compileall -q .
+          python -m unittest tests.test_mail_code_extraction
+      - name: Commit verified changes to fix branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mail_service.py tests/test_mail_code_extraction.py
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: safely extract Cloud Mail verification codes"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
