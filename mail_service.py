@@ -398,12 +398,12 @@ def cloudmail_get_oai_code(
                 continue
             code_value = str(msg.get("code", "") or "").strip()
             combined = normalize_mail_body(msg)
-            if code_value:
-                combined = f"verification code: {code_value}\n{combined}"
             subject = str(msg.get("subject", "") or "")
             if log_callback:
                 log_callback(f"[Debug] Cloud Mail 收到邮件: {subject}")
             code = extract_verification_code(combined, subject)
+            if not code and code_value:
+                code = extract_verification_code(f"verification code: {code_value}")
             if code:
                 if log_callback:
                     log_callback(f"[*] Cloud Mail 从邮件中提取到验证码: {code}")
@@ -490,9 +490,14 @@ def duckmail_get_oai_code(
 
 def extract_verification_code(text, subject=""):
     if subject:
-        match = re.search(r"(?:^|(?:confirmation|verification)\s+code:\s*)([A-Z0-9]{3}-[A-Z0-9]{3})(?:\s+xAI)?", subject, re.IGNORECASE)
-        if match:
-            return match.group(1)
+        subject_patterns = [
+            r"^([A-Z0-9]{3}-[A-Z0-9]{3})\s+xAI\b",
+            r"\b(?:confirmation|verification)\s+code\s*:\s*([A-Z0-9]{3}-[A-Z0-9]{3})\b",
+        ]
+        for pattern in subject_patterns:
+            match = re.search(pattern, subject, re.IGNORECASE)
+            if match:
+                return match.group(1)
     match = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b", text, re.IGNORECASE)
     if match:
         return match.group(1)
