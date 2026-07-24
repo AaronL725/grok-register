@@ -74,7 +74,14 @@ def patch_mail_service():
 
 def patch_tests():
     source = TEST_PATH.read_text(encoding="utf-8")
+    if "import mail_service\n" not in source:
+        source = source.replace(
+            "import grok_register_ttk as app\n",
+            "import grok_register_ttk as app\nimport mail_service\n",
+            1,
+        )
     if "test_cloudflare_fallback_reports_both_errors" in source:
+        TEST_PATH.write_text(source, encoding="utf-8")
         return
     marker = '\n\nif __name__ == "__main__":\n'
     insert_at = source.index(marker)
@@ -87,20 +94,20 @@ def patch_tests():
             "cloudflare_auth_mode": "none",
             "cloudflare_path_accounts": "/api/new_address",
         })
-        with patch.object(
-            app, "cloudflare_create_temp_address",
+        with patch.object(mail_service, "config", app.config), patch.object(
+            mail_service, "cloudflare_create_temp_address",
             side_effect=RuntimeError("primary failed"),
         ), patch.object(
-            app, "cloudflare_get_domains",
+            mail_service, "cloudflare_get_domains",
             return_value=[{"domain": "example.com", "isVerified": True}],
         ), patch.object(
-            app, "generate_username", return_value="testuser",
+            mail_service, "generate_username", return_value="testuser",
         ), patch.object(
-            app, "cloudflare_create_account", return_value={},
+            mail_service, "cloudflare_create_account", return_value={},
         ), patch.object(
-            app, "cloudflare_get_token", return_value="fallback-token",
+            mail_service, "cloudflare_get_token", return_value="fallback-token",
         ):
-            address, token = app.get_email_and_token()
+            address, token = mail_service.get_email_and_token()
 
         self.assertEqual(address, "testuser@example.com")
         self.assertEqual(token, "fallback-token")
@@ -113,15 +120,15 @@ def patch_tests():
             "cloudflare_auth_mode": "x-admin-auth",
             "cloudflare_path_accounts": "/admin/new_address",
         })
-        with patch.object(
-            app, "cloudflare_create_temp_address",
+        with patch.object(mail_service, "config", app.config), patch.object(
+            mail_service, "cloudflare_create_temp_address",
             side_effect=RuntimeError("primary 401"),
         ), patch.object(
-            app, "cloudflare_get_domains",
+            mail_service, "cloudflare_get_domains",
             side_effect=RuntimeError("fallback 403"),
         ):
             with self.assertRaises(RuntimeError) as caught:
-                app.get_email_and_token()
+                mail_service.get_email_and_token()
 
         message = str(caught.exception)
         self.assertIn("/admin/new_address", message)
