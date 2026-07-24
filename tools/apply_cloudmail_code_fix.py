@@ -89,7 +89,9 @@ class VerificationCodeExtractionTests(unittest.TestCase):
             "code": "PER-110",
             "text": "Your xAI confirmation email",
         }
-        with patch.object(mail_service, "cloudmail_get_messages", return_value=[message]):
+        with patch.object(mail_service, "raise_if_cancelled", return_value=None, create=True), patch.object(
+            mail_service, "cloudmail_get_messages", return_value=[message]
+        ):
             self.assertEqual(
                 mail_service.cloudmail_get_oai_code(
                     "unused",
