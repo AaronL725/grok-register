@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - tools/apply_cloudflare_fallback_error_fix.py
       - .github/workflows/fix-cloudflare-fallback-error.yml
 
 permissions:
@@ -22,156 +23,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Apply minimal fix and regression tests
-        shell: python
-        run: |
-          from pathlib import Path
-
-          mail_path = Path("mail_service.py")
-          source = mail_path.read_text(encoding="utf-8")
-          old = '''    if provider == "cloudflare":
-              api_base = get_cloudflare_api_base()
-              if not api_base:
-                  raise Exception("Cloudflare API Base 未配置")
-              try:
-                  # cloudflare_temp_email 专用模式
-                  return cloudflare_create_temp_address(api_base)
-              except Exception as primary_exc:
-                  # 兜底回退到 Mail.tm 风格
-                  key = api_key or get_cloudflare_api_key()
-                  domains = cloudflare_get_domains(api_base, api_key=key)
-                  if not domains:
-                      raise Exception(f"Cloudflare 创建邮箱失败: {primary_exc}")
-                  verified = [d for d in domains if d.get("isVerified")]
-                  target = verified[0] if verified else domains[0]
-                  domain = target.get("domain")
-                  if not domain:
-                      raise Exception("Cloudflare 域名数据格式错误，缺少 domain 字段")
-                  username = generate_username(10)
-                  address = f"{username}@{domain}"
-                  password = secrets.token_urlsafe(12)
-                  cloudflare_create_account(
-                      api_base, address, password, api_key=key, expires_in=0
-                  )
-                  token = cloudflare_get_token(api_base, address, password, api_key=key)
-                  if not token:
-                      raise Exception("获取 Cloudflare 邮箱 token 失败")
-                  return address, token
-          '''
-          new = '''    if provider == "cloudflare":
-              api_base = get_cloudflare_api_base()
-              if not api_base:
-                  raise Exception("Cloudflare API Base 未配置")
-              create_path = get_cloudflare_path(
-                  "cloudflare_path_accounts", "/api/new_address"
-              )
-              try:
-                  # cloudflare_temp_email 专用模式
-                  return cloudflare_create_temp_address(api_base)
-              except Exception as primary_exc:
-                  # 保留现有 Mail.tm 风格回退；仅在回退也失败时补充两次异常。
-                  fallback_stage = "获取域名列表"
-                  try:
-                      key = api_key or get_cloudflare_api_key()
-                      domains = cloudflare_get_domains(api_base, api_key=key)
-                      if not domains:
-                          raise Exception("兼容接口未返回可用域名")
-                      fallback_stage = "选择可用域名"
-                      verified = [d for d in domains if d.get("isVerified")]
-                      target = verified[0] if verified else domains[0]
-                      domain = target.get("domain")
-                      if not domain:
-                          raise Exception("Cloudflare 域名数据格式错误，缺少 domain 字段")
-                      username = generate_username(10)
-                      address = f"{username}@{domain}"
-                      password = secrets.token_urlsafe(12)
-                      fallback_stage = "创建兼容邮箱账户"
-                      cloudflare_create_account(
-                          api_base, address, password, api_key=key, expires_in=0
-                      )
-                      fallback_stage = "获取兼容邮箱 token"
-                      token = cloudflare_get_token(
-                          api_base, address, password, api_key=key
-                      )
-                      if not token:
-                          raise Exception("获取 Cloudflare 邮箱 token 失败")
-                      return address, token
-                  except Exception as fallback_exc:
-                      raise RuntimeError(
-                          "Cloudflare 创建邮箱失败；"
-                          f"主接口 {create_path}: "
-                          f"{primary_exc.__class__.__name__}: {primary_exc}；"
-                          f"兼容回退（{fallback_stage}）: "
-                          f"{fallback_exc.__class__.__name__}: {fallback_exc}"
-                      ) from fallback_exc
-          '''
-          if source.count(old) != 1:
-              raise SystemExit("mail_service.py target block not found exactly once")
-          mail_path.write_text(source.replace(old, new, 1), encoding="utf-8")
-
-          test_path = Path("tests/test_cloudflare_admin_api.py")
-          tests = test_path.read_text(encoding="utf-8")
-          marker = '''
-
-          if __name__ == "__main__":
-              unittest.main()
-          '''
-          additions = '''
-              def test_cloudflare_fallback_still_succeeds(self):
-                  app.config.update({
-                      "email_provider": "cloudflare",
-                      "cloudflare_api_base": "https://temp-mail.example.com",
-                      "cloudflare_api_key": "",
-                      "cloudflare_auth_mode": "none",
-                      "cloudflare_path_accounts": "/api/new_address",
-                  })
-                  with patch.object(
-                      app, "cloudflare_create_temp_address",
-                      side_effect=RuntimeError("primary failed"),
-                  ), patch.object(
-                      app, "cloudflare_get_domains",
-                      return_value=[{"domain": "example.com", "isVerified": True}],
-                  ), patch.object(
-                      app, "generate_username", return_value="testuser",
-                  ), patch.object(
-                      app, "cloudflare_create_account", return_value={},
-                  ), patch.object(
-                      app, "cloudflare_get_token", return_value="fallback-token",
-                  ):
-                      address, token = app.get_email_and_token()
-
-                  self.assertEqual(address, "testuser@example.com")
-                  self.assertEqual(token, "fallback-token")
-
-              def test_cloudflare_fallback_reports_both_errors(self):
-                  app.config.update({
-                      "email_provider": "cloudflare",
-                      "cloudflare_api_base": "https://temp-mail.example.com",
-                      "cloudflare_api_key": "admin-secret",
-                      "cloudflare_auth_mode": "x-admin-auth",
-                      "cloudflare_path_accounts": "/admin/new_address",
-                  })
-                  with patch.object(
-                      app, "cloudflare_create_temp_address",
-                      side_effect=RuntimeError("primary 401"),
-                  ), patch.object(
-                      app, "cloudflare_get_domains",
-                      side_effect=RuntimeError("fallback 403"),
-                  ):
-                      with self.assertRaises(RuntimeError) as caught:
-                          app.get_email_and_token()
-
-                  message = str(caught.exception)
-                  self.assertIn("/admin/new_address", message)
-                  self.assertIn("primary 401", message)
-                  self.assertIn("获取域名列表", message)
-                  self.assertIn("fallback 403", message)
-          '''
-          if tests.count(marker) != 1:
-              raise SystemExit("test insertion marker not found exactly once")
-          test_path.write_text(tests.replace(marker, additions + marker, 1), encoding="utf-8")
-
-          Path(".github/workflows/fix-cloudflare-fallback-error.yml").unlink()
+      - name: Apply scoped patch
+        run: python tools/apply_cloudflare_fallback_error_fix.py
 
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
@@ -179,10 +32,10 @@ jobs:
       - name: Run focused tests
         run: python -m unittest tests.test_cloudflare_admin_api
 
-      - name: Commit fix
+      - name: Commit verified fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add mail_service.py tests/test_cloudflare_admin_api.py .github/workflows/fix-cloudflare-fallback-error.yml
+          git add -A
           git commit -m "fix: preserve Cloudflare fallback errors"
           git push origin HEAD:${{ github.head_ref }}
