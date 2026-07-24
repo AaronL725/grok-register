@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import cf_mail_debug
 import grok_register_ttk as app
+import mail_service
 
 
 class DummyResponse:
@@ -127,6 +128,57 @@ class CloudflareAdminCreateTests(unittest.TestCase):
         })
         self.assertEqual(captured["headers"]["Content-Type"], "application/json")
         self.assertEqual(captured["headers"]["x-admin-auth"], "admin-secret")
+
+
+    def test_cloudflare_fallback_still_succeeds(self):
+        app.config.update({
+            "email_provider": "cloudflare",
+            "cloudflare_api_base": "https://temp-mail.example.com",
+            "cloudflare_api_key": "",
+            "cloudflare_auth_mode": "none",
+            "cloudflare_path_accounts": "/api/new_address",
+        })
+        with patch.object(mail_service, "config", app.config), patch.object(
+            mail_service, "cloudflare_create_temp_address",
+            side_effect=RuntimeError("primary failed"),
+        ), patch.object(
+            mail_service, "cloudflare_get_domains",
+            return_value=[{"domain": "example.com", "isVerified": True}],
+        ), patch.object(
+            mail_service, "generate_username", return_value="testuser",
+        ), patch.object(
+            mail_service, "cloudflare_create_account", return_value={},
+        ), patch.object(
+            mail_service, "cloudflare_get_token", return_value="fallback-token",
+        ):
+            address, token = mail_service.get_email_and_token()
+
+        self.assertEqual(address, "testuser@example.com")
+        self.assertEqual(token, "fallback-token")
+
+    def test_cloudflare_fallback_reports_both_errors(self):
+        app.config.update({
+            "email_provider": "cloudflare",
+            "cloudflare_api_base": "https://temp-mail.example.com",
+            "cloudflare_api_key": "admin-secret",
+            "cloudflare_auth_mode": "x-admin-auth",
+            "cloudflare_path_accounts": "/admin/new_address",
+        })
+        with patch.object(mail_service, "config", app.config), patch.object(
+            mail_service, "cloudflare_create_temp_address",
+            side_effect=RuntimeError("primary 401"),
+        ), patch.object(
+            mail_service, "cloudflare_get_domains",
+            side_effect=RuntimeError("fallback 403"),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                mail_service.get_email_and_token()
+
+        message = str(caught.exception)
+        self.assertIn("/admin/new_address", message)
+        self.assertIn("primary 401", message)
+        self.assertIn("获取域名列表", message)
+        self.assertIn("fallback 403", message)
 
 
 if __name__ == "__main__":
