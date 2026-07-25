@@ -283,7 +283,7 @@ for _name in ['get_configured_proxy', 'get_proxies', '_parse_proxy_url', '_safe_
         continue
     if _name != "LocalAuthProxyBridge":
         globals()[_name] = _make_compat_proxy(_browser_runtime, _name, _bind_browser_runtime)
-for _name in ['resolve_grok2api_local_token_file', '_normalize_sso_token', 'add_token_to_grok2api_local_pool', 'get_grok2api_remote_api_bases', 'add_token_to_grok2api_remote_pool', 'add_token_to_grok2api_pools']:
+for _name in ['resolve_grok2api_local_token_file', '_normalize_sso_token', 'add_token_to_grok2api_local_pool', 'get_grok2api_remote_api_bases', 'add_token_to_grok2api_remote_pool', 'get_grok2api_v3_api_base', 'add_token_to_grok2api_v3', 'add_token_to_grok2api_pools']:
     globals()[_name] = _make_compat_proxy(_account_outputs, _name, _bind_account_outputs)
 _MAIL_ORIGINALS = dict((name, getattr(_mail_service, name)) for name in ['_pick_list_payload', 'cloudflare_apply_auth_params', 'cloudflare_build_headers', 'cloudflare_create_account', 'cloudflare_create_temp_address', 'cloudflare_get_domains', 'cloudflare_get_message_detail', 'cloudflare_get_messages', 'cloudflare_get_oai_code', 'cloudflare_get_token', 'cloudflare_is_admin_create_path', 'cloudflare_next_default_domain', 'cloudmail_get_email_and_token', 'cloudmail_get_messages', 'cloudmail_get_oai_code', 'cloudmail_next_domain', 'create_account', 'duckmail_get_oai_code', 'extract_verification_code', 'generate_username', 'get_cloudflare_api_base', 'get_cloudflare_api_key', 'get_cloudflare_auth_mode', 'get_cloudflare_path', 'get_cloudmail_api_base', 'get_cloudmail_path', 'get_cloudmail_public_token', 'get_domains', 'get_duckmail_api_key', 'get_email_and_token', 'get_email_provider', 'get_message_detail', 'get_messages', 'get_oai_code', 'get_token', 'get_user_agent', 'get_yyds_api_key', 'get_yyds_jwt', 'pick_domain', 'yyds_create_account', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_message_detail', 'yyds_get_messages', 'yyds_get_oai_code', 'yyds_get_token', 'yyds_pick_domain'])
 _MAIL_COMPAT_PROXIES = dict()
@@ -846,15 +846,51 @@ class GrokRegisterGUI:
         self.grok2api_remote_key_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_key_var, width=72)
         add_field(self.grok2api_remote_key_entry, 11, 1, columnspan=3)
 
-        add_label(12, 0, "OIDC / CPA:")
+        add_label(12, 0, "新版 grok2api 自动导入:")
+        self.grok2api_v3_auto_var = tk.BooleanVar(value=bool(config.get("grok2api_v3_auto_import", False)))
+        self.grok2api_v3_auto_check = tk_checkbutton(config_frame, variable=self.grok2api_v3_auto_var)
+        add_field(self.grok2api_v3_auto_check, 12, 1, sticky=tk.W)
+
+        add_label(12, 2, "校验 TLS:")
+        self.grok2api_v3_verify_tls_var = tk.BooleanVar(value=bool(config.get("grok2api_v3_verify_tls", True)))
+        self.grok2api_v3_verify_tls_check = tk_checkbutton(config_frame, variable=self.grok2api_v3_verify_tls_var)
+        add_field(self.grok2api_v3_verify_tls_check, 12, 3, sticky=tk.W)
+
+        add_label(13, 0, "新版 grok2api Base:")
+        self.grok2api_v3_base_var = tk.StringVar(value=str(config.get("grok2api_v3_base_url", "")))
+        self.grok2api_v3_base_entry = tk_entry(config_frame, textvariable=self.grok2api_v3_base_var, width=72)
+        add_field(self.grok2api_v3_base_entry, 13, 1, columnspan=3)
+
+        add_label(14, 0, "新版管理员账号:")
+        self.grok2api_v3_username_var = tk.StringVar(value=str(config.get("grok2api_v3_admin_username", "")))
+        self.grok2api_v3_username_entry = tk_entry(config_frame, textvariable=self.grok2api_v3_username_var, width=34)
+        add_field(self.grok2api_v3_username_entry, 14, 1)
+
+        add_label(14, 2, "新版管理员密码:")
+        self.grok2api_v3_password_var = tk.StringVar(value=str(config.get("grok2api_v3_admin_password", "")))
+        self.grok2api_v3_password_entry = tk_entry(
+            config_frame, textvariable=self.grok2api_v3_password_var, width=34, show="*"
+        )
+        add_field(self.grok2api_v3_password_entry, 14, 3)
+
+        add_label(15, 0, "新版请求超时(秒):")
+        self.grok2api_v3_timeout_var = tk.StringVar(
+            value=str(config.get("grok2api_v3_request_timeout_sec", 60))
+        )
+        self.grok2api_v3_timeout_entry = tk_entry(
+            config_frame, textvariable=self.grok2api_v3_timeout_var, width=12
+        )
+        add_field(self.grok2api_v3_timeout_entry, 15, 1, sticky=tk.W)
+
+        add_label(16, 0, "OIDC / CPA:")
         self.cpa_export_var = tk.BooleanVar(value=bool(config.get("cpa_export_enabled", False)))
         self.cpa_export_check = tk_checkbutton(config_frame, text="注册成功后导出 CPA xAI OIDC", variable=self.cpa_export_var)
-        add_field(self.cpa_export_check, 12, 1, sticky=tk.W)
+        add_field(self.cpa_export_check, 16, 1, sticky=tk.W)
 
-        add_label(12, 2, "CPA 输出目录:")
+        add_label(16, 2, "CPA 输出目录:")
         self.cpa_auth_dir_var = tk.StringVar(value=str(config.get("cpa_auth_dir", "./cpa_auths")))
         self.cpa_auth_dir_entry = tk_entry(config_frame, textvariable=self.cpa_auth_dir_var, width=34)
-        add_field(self.cpa_auth_dir_entry, 12, 3)
+        add_field(self.cpa_auth_dir_entry, 16, 3)
 
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
@@ -982,6 +1018,15 @@ class GrokRegisterGUI:
         config["grok2api_auto_add_remote"] = bool(self.grok2api_remote_auto_var.get())
         config["grok2api_remote_base"] = self.grok2api_remote_base_var.get().strip()
         config["grok2api_remote_app_key"] = self.grok2api_remote_key_var.get().strip()
+        config["grok2api_v3_auto_import"] = bool(self.grok2api_v3_auto_var.get())
+        config["grok2api_v3_base_url"] = self.grok2api_v3_base_var.get().strip()
+        config["grok2api_v3_admin_username"] = self.grok2api_v3_username_var.get().strip()
+        config["grok2api_v3_admin_password"] = self.grok2api_v3_password_var.get()
+        config["grok2api_v3_verify_tls"] = bool(self.grok2api_v3_verify_tls_var.get())
+        try:
+            config["grok2api_v3_request_timeout_sec"] = int(self.grok2api_v3_timeout_var.get())
+        except ValueError:
+            config["grok2api_v3_request_timeout_sec"] = self.grok2api_v3_timeout_var.get()
         config["cpa_export_enabled"] = bool(self.cpa_export_var.get())
         config["cpa_auth_dir"] = self.cpa_auth_dir_var.get().strip() or "./cpa_auths"
         raw_paths = [x.strip() for x in self.cloudflare_paths_var.get().split(",") if x.strip()]
