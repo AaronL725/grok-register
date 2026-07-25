@@ -29,6 +29,12 @@ DEFAULT_CONFIG = {
     "grok2api_auto_add_remote": False,
     "grok2api_remote_base": "",
     "grok2api_remote_app_key": "",
+    "grok2api_v3_auto_import": False,
+    "grok2api_v3_base_url": "",
+    "grok2api_v3_admin_username": "",
+    "grok2api_v3_admin_password": "",
+    "grok2api_v3_verify_tls": True,
+    "grok2api_v3_request_timeout_sec": 60,
     "api_reverse_tools": "",
     "cpa_export_enabled": True,
     "cpa_auth_dir": "./cpa_auths",
@@ -90,6 +96,7 @@ def validate_config_structure(raw):
     cfg = {**DEFAULT_CONFIG, **raw}
     bool_keys = (
         "enable_nsfw", "grok2api_auto_add_local", "grok2api_auto_add_remote",
+        "grok2api_v3_auto_import", "grok2api_v3_verify_tls",
         "grok2api_allow_legacy_full_save", "cpa_export_enabled",
         "cpa_copy_to_hotload", "cpa_headless", "cpa_force_standalone",
         "cpa_mint_cookie_inject",
@@ -100,6 +107,9 @@ def validate_config_structure(raw):
     cfg["cpa_mint_timeout_sec"] = _require_int(cfg, "cpa_mint_timeout_sec", 30, 1800)
     cfg["cpa_oidc_request_timeout_sec"] = _require_int(cfg, "cpa_oidc_request_timeout_sec", 3, 120)
     cfg["cpa_oidc_poll_timeout_sec"] = _require_int(cfg, "cpa_oidc_poll_timeout_sec", 3, 120)
+    cfg["grok2api_v3_request_timeout_sec"] = _require_int(
+        cfg, "grok2api_v3_request_timeout_sec", 5, 300
+    )
     string_keys = tuple(key for key, value in DEFAULT_CONFIG.items() if isinstance(value, str))
     path_keys = {"grok2api_local_token_file", "api_reverse_tools", "cpa_auth_dir", "cpa_hotload_dir"}
     for key in string_keys:
@@ -128,7 +138,7 @@ def validate_config_structure(raw):
 
     url_keys = {
         "cloudflare_api_base", "cloudmail_api_base",
-        "grok2api_remote_base", "cpa_base_url",
+        "grok2api_remote_base", "grok2api_v3_base_url", "cpa_base_url",
     }
     for key in url_keys:
         value = cfg[key]
@@ -166,6 +176,17 @@ def validate_run_requirements(cfg):
         ]
         if missing:
             raise ConfigError("远端 token 入池缺少必需配置: " + ", ".join(missing))
+    if cfg["grok2api_v3_auto_import"]:
+        missing = [
+            key for key in (
+                "grok2api_v3_base_url",
+                "grok2api_v3_admin_username",
+                "grok2api_v3_admin_password",
+            )
+            if not cfg[key]
+        ]
+        if missing:
+            raise ConfigError("新版 grok2api 自动导入缺少必需配置: " + ", ".join(missing))
     if cfg["cpa_export_enabled"] and cfg["cpa_copy_to_hotload"] and not cfg["cpa_hotload_dir"]:
         raise ConfigError("启用 CPA 热加载复制时必须配置 cpa_hotload_dir")
     return cfg

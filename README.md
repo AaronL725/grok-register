@@ -272,6 +272,42 @@ Cloud Mail 模式直接生成随机地址，不预先创建邮箱账户。公共
 }
 ```
 
+### 新版 grok2api Grok Web 自动导入
+
+新版 Go 版 `chenyme/grok2api` 使用管理 API 和数据库保存 Provider 账号，不使用旧版
+`token.json`、`ssoBasic/ssoSuper` 或 `/admin/api/tokens/add`。启用下列配置后，每个注册成功
+的 SSO 会自动导入新版 grok2api 的 **Grok Web** Provider：
+
+| 配置项 | 说明 |
+|---|---|
+| `grok2api_v3_auto_import` | 是否启用新版 Grok Web 自动导入 |
+| `grok2api_v3_base_url` | 新版 grok2api 站点根地址，也接受 `/api/admin/v1` 地址 |
+| `grok2api_v3_admin_username` | 新版 grok2api 管理员账号 |
+| `grok2api_v3_admin_password` | 新版 grok2api 管理员密码 |
+| `grok2api_v3_verify_tls` | 是否校验 HTTPS 证书，远端部署应保持 `true` |
+| `grok2api_v3_request_timeout_sec` | 登录和导入请求超时，范围 5–300 秒 |
+
+示例：
+
+```json
+{
+  "grok2api_v3_auto_import": true,
+  "grok2api_v3_base_url": "https://你的-grok2api-域名",
+  "grok2api_v3_admin_username": "admin",
+  "grok2api_v3_admin_password": "你的管理员密码",
+  "grok2api_v3_verify_tls": true,
+  "grok2api_v3_request_timeout_sec": 60
+}
+```
+
+处理器调用 `/api/admin/v1/auth/login` 获取短期访问令牌，再将单条 SSO 作为 TXT 上传到
+`/api/admin/v1/accounts/web/import`。访问令牌会在有效期内复用；导入返回 `401` 时会自动
+重新登录一次。新版导入与旧版本地、远端 token 池可以分别启用，但通常只需选择与实际
+部署版本匹配的一种。
+
+> `config.json` 包含管理员密码，必须按敏感凭据保护。远端部署必须使用 HTTPS，不建议
+> 将 `grok2api_v3_verify_tls` 设为 `false`。
+
 ### CPA / xAI OIDC 导出
 
 | 配置项 | 说明 |
