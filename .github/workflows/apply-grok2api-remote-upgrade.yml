@@ -1,0 +1,382 @@
+name: Apply grok2api remote upgrade
+
+on:
+  push:
+    branches: [fix/upgrade-grok2api-remote]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/upgrade-grok2api-remote
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply focused changes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected one match, got {text.count(old)}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once('account_outputs.py',
+              'import json\nimport os\nimport tempfile\nimport time\nfrom contextlib import ExitStack\nfrom datetime import datetime, timezone\n',
+              'import hashlib\nimport json\nimport os\nimport tempfile\nimport threading\nimport time\nimport urllib.parse\nfrom contextlib import ExitStack\nfrom datetime import datetime, timedelta, timezone\n')
+
+          replace_once('account_outputs.py',
+              '_remote_compat_error = RuntimeError\n_remote_request_error = RuntimeError\n',
+              '_remote_compat_error = RuntimeError\n_remote_request_error = RuntimeError\n_grok2api_admin_lock = threading.Lock()\n_grok2api_admin_token = ""\n_grok2api_admin_expires_at = None\n_grok2api_admin_session_key = ""\n')
+
+          marker = 'def add_token_to_grok2api_remote_pool(raw_token, email="", log_callback=None):\n'
+          helpers = r'''def _grok2api_go_api_base(base):
+              normalized = str(base or "").strip().rstrip("/")
+              if not normalized:
+                  return ""
+              for suffix in ("/api/admin/v1", "/admin/api", "/admin"):
+                  if normalized.lower().endswith(suffix):
+                      normalized = normalized[:-len(suffix)].rstrip("/")
+                      break
+              parsed = urllib.parse.urlsplit(normalized)
+              host = (parsed.hostname or "").lower()
+              if parsed.scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
+                  raise RemoteTokenRequestError("新版 grok2api 远端管理接口必须使用 HTTPS")
+              return normalized + "/api/admin/v1"
+
+
+          def _clear_grok2api_admin_cache():
+              global _grok2api_admin_token, _grok2api_admin_expires_at, _grok2api_admin_session_key
+              with _grok2api_admin_lock:
+                  _grok2api_admin_token = ""
+                  _grok2api_admin_expires_at = None
+                  _grok2api_admin_session_key = ""
+
+
+          def _get_grok2api_admin_token(api_base, username, password, force=False):
+              global _grok2api_admin_token, _grok2api_admin_expires_at, _grok2api_admin_session_key
+              session_key = "%s\n%s\n%s" % (
+                  api_base, username, hashlib.sha256(password.encode("utf-8")).hexdigest()
+              )
+              with _grok2api_admin_lock:
+                  now = datetime.now(timezone.utc)
+                  if (
+                      not force
+                      and _grok2api_admin_session_key == session_key
+                      and _grok2api_admin_token
+                      and isinstance(_grok2api_admin_expires_at, datetime)
+                      and _grok2api_admin_expires_at > now + timedelta(seconds=30)
+                  ):
+                      return _grok2api_admin_token
+                  endpoint = api_base + "/auth/login"
+                  try:
+                      response = http_post(
+                          endpoint,
+                          headers={"Content-Type": "application/json"},
+                          json={"username": username, "password": password},
+                          timeout=60,
+                          proxies={},
+                          verify=True,
+                      )
+                  except Exception as exc:
+                      raise RemoteTokenRequestError(f"新版 grok2api 管理员登录请求失败: {endpoint}: {exc}") from exc
+                  status = int(getattr(response, "status_code", 0) or 0)
+                  if not 200 <= status < 300:
+                      raise RemoteTokenRequestError(f"新版 grok2api 管理员登录失败: {endpoint}: HTTP {status}")
+                  try:
+                      payload = response.json()
+                      tokens = payload.get("data", {}).get("tokens", {})
+                      token = str(tokens.get("accessToken") or "").strip()
+                      expiry = str(tokens.get("accessTokenExpiresAt") or "").strip()
+                  except Exception as exc:
+                      raise RemoteTokenCompatibilityError("新版 grok2api 登录响应格式不兼容") from exc
+                  if not token:
+                      raise RemoteTokenCompatibilityError("新版 grok2api 登录响应缺少 accessToken")
+                  try:
+                      expires_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+                      if expires_at.tzinfo is None:
+                          expires_at = expires_at.replace(tzinfo=timezone.utc)
+                  except (TypeError, ValueError):
+                      expires_at = now + timedelta(minutes=5)
+                  _grok2api_admin_token = token
+                  _grok2api_admin_expires_at = expires_at.astimezone(timezone.utc)
+                  _grok2api_admin_session_key = session_key
+                  return token
+
+
+          def _parse_grok2api_go_import(response, secrets=()):
+              text = str(getattr(response, "text", "") or "")
+              current_event = ""
+              completed = None
+              for raw_line in text.splitlines():
+                  line = raw_line.strip()
+                  if line.startswith("event:"):
+                      current_event = line[6:].strip()
+                  elif line.startswith("data:"):
+                      try:
+                          data = json.loads(line[5:].strip())
+                      except Exception:
+                          data = {"message": line[5:].strip()}
+                      if current_event == "error":
+                          message = str(data.get("message") or data.get("error") or "") if isinstance(data, dict) else ""
+                          for secret in secrets:
+                              if secret:
+                                  message = message.replace(str(secret), "[REDACTED]")
+                          raise RemoteTokenRequestError("新版 grok2api 导入失败" + (f": {message[:200]}" if message else ""))
+                      if current_event == "complete":
+                          completed = data if isinstance(data, dict) else {}
+              if completed is None:
+                  raise RemoteTokenCompatibilityError("新版 grok2api 导入响应缺少 complete 事件")
+              return completed
+
+
+          def _add_token_to_grok2api_go_remote_pool(token, email="", log_callback=None):
+              base = str(config.get("grok2api_remote_base", "") or "").strip()
+              username = str(config.get("grok2api_remote_admin_username", "") or "").strip()
+              password = str(config.get("grok2api_remote_admin_password", "") or "")
+              api_base = _grok2api_go_api_base(base)
+              endpoint = api_base + "/accounts/web/import"
+              try:
+                  from curl_cffi import CurlMime
+              except Exception as exc:
+                  raise RemoteTokenRequestError(f"无法创建新版 grok2api 导入表单: {exc}") from exc
+              for attempt in range(2):
+                  access_token = _get_grok2api_admin_token(api_base, username, password, force=attempt > 0)
+                  multipart = CurlMime()
+                  multipart.addpart(
+                      name="file", filename="grok-web-sso.txt",
+                      content_type="text/plain; charset=utf-8", data=(token + "\n").encode("utf-8")
+                  )
+                  try:
+                      response = http_post(
+                          endpoint,
+                          headers={"Authorization": f"Bearer {access_token}", "Accept": "text/event-stream"},
+                          multipart=multipart,
+                          timeout=60,
+                          proxies={},
+                          verify=True,
+                      )
+                  except Exception as exc:
+                      raise RemoteTokenRequestError(f"新版 grok2api SSO 导入请求失败: {endpoint}: {exc}") from exc
+                  finally:
+                      multipart.close()
+                  status = int(getattr(response, "status_code", 0) or 0)
+                  if status == 401 and attempt == 0:
+                      _clear_grok2api_admin_cache()
+                      continue
+                  if not 200 <= status < 300:
+                      raise RemoteTokenRequestError(f"新版 grok2api SSO 导入失败: {endpoint}: HTTP {status}")
+                  result = _parse_grok2api_go_import(response, (token, access_token))
+                  sync_failed = int(result.get("syncFailed") or 0)
+                  summary = ", ".join(
+                      f"{key}={result.get(key)}" for key in ("created", "updated", "skipped", "synced", "syncFailed")
+                      if result.get(key) is not None
+                  )
+                  if sync_failed:
+                      raise RemoteTokenRequestError("SSO 已导入，但初始同步失败" + (f": {summary}" if summary else ""))
+                  if log_callback:
+                      log_callback("[+] 已导入新版 grok2api Grok Web" + (f": {summary}" if summary else "") + (f" ({email})" if email else ""))
+                  return True
+              raise RemoteTokenRequestError("新版 grok2api 管理员认证已失效")
+
+
+          def add_token_to_grok2api_remote_pool(raw_token, email="", log_callback=None):
+              token = _normalize_sso_token(raw_token)
+              if not token:
+                  return False
+              username = str(config.get("grok2api_remote_admin_username", "") or "").strip()
+              password = str(config.get("grok2api_remote_admin_password", "") or "")
+              if username and password:
+                  return _add_token_to_grok2api_go_remote_pool(token, email=email, log_callback=log_callback)
+              return _add_token_to_grok2api_legacy_remote_pool(token, email=email, log_callback=log_callback)
+
+
+          def _add_token_to_grok2api_legacy_remote_pool(raw_token, email="", log_callback=None):
+          '''
+          helpers = '\n'.join(line[10:] if line.startswith('          ') else line for line in helpers.splitlines())
+          replace_once('account_outputs.py', marker, helpers)
+
+          replace_once('app_config.py',
+              '    "grok2api_remote_app_key": "",\n',
+              '    "grok2api_remote_app_key": "",\n    "grok2api_remote_admin_username": "",\n    "grok2api_remote_admin_password": "",\n')
+          replace_once('app_config.py',
+              '''    if cfg["grok2api_auto_add_remote"]:
+                  missing = [
+                      key for key in ("grok2api_remote_base", "grok2api_remote_app_key")
+                      if not cfg[key]
+                  ]
+                  if missing:
+                      raise ConfigError("远端 token 入池缺少必需配置: " + ", ".join(missing))
+          ''',
+              '''    if cfg["grok2api_auto_add_remote"]:
+                  if not cfg["grok2api_remote_base"]:
+                      raise ConfigError("远端 token 入池缺少必需配置: grok2api_remote_base")
+                  has_legacy = bool(cfg["grok2api_remote_app_key"])
+                  has_go = bool(cfg["grok2api_remote_admin_username"] and cfg["grok2api_remote_admin_password"])
+                  has_partial_go = bool(cfg["grok2api_remote_admin_username"] or cfg["grok2api_remote_admin_password"])
+                  if has_legacy and has_partial_go:
+                      raise ConfigError("旧版 app_key 与新版管理员账号密码不能同时配置")
+                  if has_partial_go and not has_go:
+                      raise ConfigError("新版 grok2api 必须同时配置管理员账号和密码")
+                  if not has_legacy and not has_go:
+                      raise ConfigError("远端 token 入池需要旧版 app_key 或新版管理员账号密码")
+          ''')
+
+          replace_once('config.example.json',
+              '  "grok2api_remote_app_key": "",\n',
+              '  "grok2api_remote_app_key": "",\n  "grok2api_remote_admin_username": "",\n  "grok2api_remote_admin_password": "",\n')
+
+          replace_once('grok_register_ttk.py',
+              '''        add_label(12, 0, "OIDC / CPA:")
+                  self.cpa_export_var = tk.BooleanVar(value=bool(config.get("cpa_export_enabled", False)))
+                  self.cpa_export_check = tk_checkbutton(config_frame, text="注册成功后导出 CPA xAI OIDC", variable=self.cpa_export_var)
+                  add_field(self.cpa_export_check, 12, 1, sticky=tk.W)
+
+                  add_label(12, 2, "CPA 输出目录:")
+                  self.cpa_auth_dir_var = tk.StringVar(value=str(config.get("cpa_auth_dir", "./cpa_auths")))
+                  self.cpa_auth_dir_entry = tk_entry(config_frame, textvariable=self.cpa_auth_dir_var, width=34)
+                  add_field(self.cpa_auth_dir_entry, 12, 3)
+          ''',
+              '''        add_label(12, 0, "新版管理员账号:")
+                  self.grok2api_remote_username_var = tk.StringVar(value=str(config.get("grok2api_remote_admin_username", "")))
+                  self.grok2api_remote_username_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_username_var, width=34)
+                  add_field(self.grok2api_remote_username_entry, 12, 1)
+
+                  add_label(12, 2, "新版管理员密码:")
+                  self.grok2api_remote_password_var = tk.StringVar(value=str(config.get("grok2api_remote_admin_password", "")))
+                  self.grok2api_remote_password_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_password_var, width=34, show="*")
+                  add_field(self.grok2api_remote_password_entry, 12, 3)
+
+                  add_label(13, 0, "OIDC / CPA:")
+                  self.cpa_export_var = tk.BooleanVar(value=bool(config.get("cpa_export_enabled", False)))
+                  self.cpa_export_check = tk_checkbutton(config_frame, text="注册成功后导出 CPA xAI OIDC", variable=self.cpa_export_var)
+                  add_field(self.cpa_export_check, 13, 1, sticky=tk.W)
+
+                  add_label(13, 2, "CPA 输出目录:")
+                  self.cpa_auth_dir_var = tk.StringVar(value=str(config.get("cpa_auth_dir", "./cpa_auths")))
+                  self.cpa_auth_dir_entry = tk_entry(config_frame, textvariable=self.cpa_auth_dir_var, width=34)
+                  add_field(self.cpa_auth_dir_entry, 13, 3)
+          ''')
+          replace_once('grok_register_ttk.py',
+              '        config["grok2api_remote_app_key"] = self.grok2api_remote_key_var.get().strip()\n',
+              '        config["grok2api_remote_app_key"] = self.grok2api_remote_key_var.get().strip()\n        config["grok2api_remote_admin_username"] = self.grok2api_remote_username_var.get().strip()\n        config["grok2api_remote_admin_password"] = self.grok2api_remote_password_var.get()\n')
+
+          replace_once('README.md',
+              '| `grok2api_remote_app_key` | 远端管理 API 的 app key |\n',
+              '| `grok2api_remote_app_key` | 旧版远端管理 API 的 app key |\n| `grok2api_remote_admin_username` | 新版 `chenyme/grok2api` 管理员账号 |\n| `grok2api_remote_admin_password` | 新版 `chenyme/grok2api` 管理员密码 |\n')
+          replace_once('README.md',
+              '远端入池优先尝试增量 `/tokens/add`。旧版全量保存默认关闭，以避免并发覆盖；即使显式开启，也要求远端返回 ETag，并通过 `If-Match` 保护写入。\n',
+              '远端入池会根据凭据自动选择版本：填写 `app_key` 使用旧版 `/tokens/add`；填写管理员账号和密码则通过新版 `/api/admin/v1/accounts/web/import` 导入 Grok Web。两套凭据不能同时填写。新版管理请求默认直连，远程地址必须使用 HTTPS，本机地址可使用 HTTP。旧版全量保存默认关闭，以避免并发覆盖。\n')
+          replace_once('README.md',
+              '''  "grok2api_remote_base": "https://你的-grok2api-域名/admin/api",
+                "grok2api_remote_app_key": "你的 app_key",
+                "grok2api_pool_name": "ssoBasic",
+          ''',
+              '''  "grok2api_remote_base": "https://你的-grok2api-域名",
+                "grok2api_remote_app_key": "",
+                "grok2api_remote_admin_username": "admin",
+                "grok2api_remote_admin_password": "你的管理员密码",
+                "grok2api_pool_name": "ssoBasic",
+          ''')
+
+          Path('tests/test_grok2api_go_remote.py').write_text(r'''import unittest
+
+import account_outputs
+import app_config
+
+
+class Response:
+    def __init__(self, status=200, payload=None, text="", headers=None):
+        self.status_code = status
+        self._payload = payload
+        self.text = text
+        self.headers = headers or {}
+
+    def json(self):
+        return self._payload
+
+
+class Grok2ApiGoRemoteTests(unittest.TestCase):
+    def setUp(self):
+        account_outputs._clear_grok2api_admin_cache()
+        self.config = {
+            "grok2api_remote_base": "https://grok.example.com",
+            "grok2api_remote_app_key": "",
+            "grok2api_remote_admin_username": "admin",
+            "grok2api_remote_admin_password": "secret",
+            "grok2api_pool_name": "ssoBasic",
+        }
+
+    def bind(self, post):
+        account_outputs.configure_token_runtime(
+            self.config, lambda *a, **k: None, post, lambda c, e, callback=None: str(e)
+        )
+
+    def test_go_import_is_direct_and_reuses_existing_remote_entrypoint(self):
+        calls = []
+        def post(url, **kwargs):
+            calls.append((url, kwargs))
+            if url.endswith('/auth/login'):
+                return Response(payload={"data": {"tokens": {"accessToken": "admin-token", "accessTokenExpiresAt": "2099-01-01T00:00:00Z"}}})
+            return Response(text='event: complete\ndata: {"created":1,"updated":0,"skipped":0,"synced":1,"syncFailed":0}\n\n')
+        self.bind(post)
+        self.assertTrue(account_outputs.add_token_to_grok2api_remote_pool('sso=abc'))
+        self.assertEqual(calls[0][0], 'https://grok.example.com/api/admin/v1/auth/login')
+        self.assertEqual(calls[1][0], 'https://grok.example.com/api/admin/v1/accounts/web/import')
+        self.assertEqual(calls[0][1]['proxies'], {})
+        self.assertEqual(calls[1][1]['proxies'], {})
+        self.assertTrue(calls[0][1]['verify'])
+        self.assertTrue(calls[1][1]['verify'])
+
+    def test_remote_plain_http_is_rejected(self):
+        self.config['grok2api_remote_base'] = 'http://grok.example.com'
+        self.bind(lambda *a, **k: None)
+        with self.assertRaisesRegex(RuntimeError, '必须使用 HTTPS'):
+            account_outputs.add_token_to_grok2api_remote_pool('abc')
+
+    def test_sync_failure_is_not_reported_as_full_success(self):
+        def post(url, **kwargs):
+            if url.endswith('/auth/login'):
+                return Response(payload={"data": {"tokens": {"accessToken": "admin-token", "accessTokenExpiresAt": "2099-01-01T00:00:00Z"}}})
+            return Response(text='event: complete\ndata: {"created":1,"synced":0,"syncFailed":1}\n\n')
+        self.bind(post)
+        with self.assertRaisesRegex(RuntimeError, '初始同步失败'):
+            account_outputs.add_token_to_grok2api_remote_pool('abc')
+
+    def test_config_rejects_mixed_old_and_new_credentials(self):
+        cfg = dict(app_config.DEFAULT_CONFIG)
+        cfg.update({
+            'grok2api_auto_add_remote': True,
+            'grok2api_remote_base': 'https://grok.example.com',
+            'grok2api_remote_app_key': 'old-key',
+            'grok2api_remote_admin_username': 'admin',
+            'grok2api_remote_admin_password': 'secret',
+        })
+        with self.assertRaisesRegex(app_config.ConfigError, '不能同时配置'):
+            app_config.validate_run_requirements(cfg)
+
+
+if __name__ == '__main__':
+    unittest.main()
+''', encoding='utf-8')
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Commit changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add account_outputs.py app_config.py config.example.json grok_register_ttk.py README.md tests/test_grok2api_go_remote.py
+          git commit -m "feat: upgrade remote grok2api integration"
+          git push origin HEAD:fix/upgrade-grok2api-remote
