@@ -257,16 +257,20 @@ Cloud Mail 模式直接生成随机地址，不预先创建邮箱账户。公共
 | `grok2api_pool_name` | `ssoBasic` 或 `ssoSuper` |
 | `grok2api_auto_add_remote` | 是否写入远端 token 池 |
 | `grok2api_remote_base` | 站点根地址、`/admin` 或 `/admin/api` 地址 |
-| `grok2api_remote_app_key` | 远端管理 API 的 app key |
+| `grok2api_remote_app_key` | 旧版远端管理 API 的 app key |
+| `grok2api_remote_admin_username` | 新版 `chenyme/grok2api` 管理员账号 |
+| `grok2api_remote_admin_password` | 新版 `chenyme/grok2api` 管理员密码 |
 | `grok2api_allow_legacy_full_save` | 是否允许旧版全量保存回退；默认关闭 |
 
-远端入池优先尝试增量 `/tokens/add`。旧版全量保存默认关闭，以避免并发覆盖；即使显式开启，也要求远端返回 ETag，并通过 `If-Match` 保护写入。
+远端入池会根据凭据自动选择版本：填写 `app_key` 使用旧版 `/tokens/add`；填写管理员账号和密码则通过新版 `/api/admin/v1/accounts/web/import` 导入 Grok Web。两套凭据不能同时填写。新版管理请求默认直连，远程地址必须使用 HTTPS，本机地址可使用 HTTP。旧版全量保存默认关闭，以避免并发覆盖。
 
 ```json
 {
   "grok2api_auto_add_remote": true,
-  "grok2api_remote_base": "https://你的-grok2api-域名/admin/api",
-  "grok2api_remote_app_key": "你的 app_key",
+  "grok2api_remote_base": "https://你的-grok2api-域名",
+  "grok2api_remote_app_key": "",
+  "grok2api_remote_admin_username": "admin",
+  "grok2api_remote_admin_password": "你的管理员密码",
   "grok2api_pool_name": "ssoBasic",
   "grok2api_allow_legacy_full_save": false
 }
