@@ -29,6 +29,8 @@ DEFAULT_CONFIG = {
     "grok2api_auto_add_remote": False,
     "grok2api_remote_base": "",
     "grok2api_remote_app_key": "",
+    "grok2api_remote_admin_username": "",
+    "grok2api_remote_admin_password": "",
     "api_reverse_tools": "",
     "cpa_export_enabled": True,
     "cpa_auth_dir": "./cpa_auths",
@@ -160,12 +162,17 @@ def validate_run_requirements(cfg):
     if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
         raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
     if cfg["grok2api_auto_add_remote"]:
-        missing = [
-            key for key in ("grok2api_remote_base", "grok2api_remote_app_key")
-            if not cfg[key]
-        ]
-        if missing:
-            raise ConfigError("远端 token 入池缺少必需配置: " + ", ".join(missing))
+        if not cfg["grok2api_remote_base"]:
+            raise ConfigError("远端 token 入池缺少必需配置: grok2api_remote_base")
+        has_legacy = bool(cfg["grok2api_remote_app_key"])
+        has_go = bool(cfg["grok2api_remote_admin_username"] and cfg["grok2api_remote_admin_password"])
+        has_partial_go = bool(cfg["grok2api_remote_admin_username"] or cfg["grok2api_remote_admin_password"])
+        if has_legacy and has_partial_go:
+            raise ConfigError("旧版 app_key 与新版管理员账号密码不能同时配置")
+        if has_partial_go and not has_go:
+            raise ConfigError("新版 grok2api 必须同时配置管理员账号和密码")
+        if not has_legacy and not has_go:
+            raise ConfigError("远端 token 入池需要旧版 app_key 或新版管理员账号密码")
     if cfg["cpa_export_enabled"] and cfg["cpa_copy_to_hotload"] and not cfg["cpa_hotload_dir"]:
         raise ConfigError("启用 CPA 热加载复制时必须配置 cpa_hotload_dir")
     return cfg

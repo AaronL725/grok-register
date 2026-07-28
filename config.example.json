@@ -21,6 +21,8 @@
   "grok2api_auto_add_remote": false,
   "grok2api_remote_base": "",
   "grok2api_remote_app_key": "",
+  "grok2api_remote_admin_username": "",
+  "grok2api_remote_admin_password": "",
   "api_reverse_tools": "",
   "cpa_export_enabled": true,
   "cpa_auth_dir": "./cpa_auths",

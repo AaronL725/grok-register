@@ -1,10 +1,13 @@
 """负责账号结果、pending 恢复以及 grok2api token 池的安全持久化。"""
+import hashlib
 import json
 import os
 import tempfile
+import threading
 import time
+import urllib.parse
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from filelock import FileLock
 
@@ -139,6 +142,10 @@ _http_post = None
 _log_exception = None
 _remote_compat_error = RuntimeError
 _remote_request_error = RuntimeError
+_grok2api_admin_lock = threading.Lock()
+_grok2api_admin_token = ""
+_grok2api_admin_expires_at = None
+_grok2api_admin_session_key = ""
 
 
 def configure_token_runtime(config_ref, http_get, http_post, log_exception,
@@ -289,7 +296,174 @@ def get_grok2api_remote_api_bases(base):
             seen.add(item)
     return unique
 
+def _grok2api_go_api_base(base):
+    normalized = str(base or "").strip().rstrip("/")
+    if not normalized:
+        return ""
+    for suffix in ("/api/admin/v1", "/admin/api", "/admin"):
+        if normalized.lower().endswith(suffix):
+            normalized = normalized[:-len(suffix)].rstrip("/")
+            break
+    parsed = urllib.parse.urlsplit(normalized)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
+        raise RemoteTokenRequestError("新版 grok2api 远端管理接口必须使用 HTTPS")
+    return normalized + "/api/admin/v1"
+
+
+def _clear_grok2api_admin_cache():
+    global _grok2api_admin_token, _grok2api_admin_expires_at, _grok2api_admin_session_key
+    with _grok2api_admin_lock:
+        _grok2api_admin_token = ""
+        _grok2api_admin_expires_at = None
+        _grok2api_admin_session_key = ""
+
+
+def _get_grok2api_admin_token(api_base, username, password, force=False):
+    global _grok2api_admin_token, _grok2api_admin_expires_at, _grok2api_admin_session_key
+    session_key = "%s\n%s\n%s" % (
+        api_base, username, hashlib.sha256(password.encode("utf-8")).hexdigest()
+    )
+    with _grok2api_admin_lock:
+        now = datetime.now(timezone.utc)
+        if (
+            not force
+            and _grok2api_admin_session_key == session_key
+            and _grok2api_admin_token
+            and isinstance(_grok2api_admin_expires_at, datetime)
+            and _grok2api_admin_expires_at > now + timedelta(seconds=30)
+        ):
+            return _grok2api_admin_token
+        endpoint = api_base + "/auth/login"
+        try:
+            response = http_post(
+                endpoint,
+                headers={"Content-Type": "application/json"},
+                json={"username": username, "password": password},
+                timeout=60,
+                proxies={},
+                verify=True,
+            )
+        except Exception as exc:
+            raise RemoteTokenRequestError(f"新版 grok2api 管理员登录请求失败: {endpoint}: {exc}") from exc
+        status = int(getattr(response, "status_code", 0) or 0)
+        if not 200 <= status < 300:
+            raise RemoteTokenRequestError(f"新版 grok2api 管理员登录失败: {endpoint}: HTTP {status}")
+        try:
+            tokens = response.json().get("data", {}).get("tokens", {})
+            token = str(tokens.get("accessToken") or "").strip()
+            expiry = str(tokens.get("accessTokenExpiresAt") or "").strip()
+        except Exception as exc:
+            raise RemoteTokenCompatibilityError("新版 grok2api 登录响应格式不兼容") from exc
+        if not token:
+            raise RemoteTokenCompatibilityError("新版 grok2api 登录响应缺少 accessToken")
+        try:
+            expires_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            expires_at = now + timedelta(minutes=5)
+        _grok2api_admin_token = token
+        _grok2api_admin_expires_at = expires_at.astimezone(timezone.utc)
+        _grok2api_admin_session_key = session_key
+        return token
+
+
+def _parse_grok2api_go_import(response, secrets=()):
+    current_event = ""
+    completed = None
+    for raw_line in str(getattr(response, "text", "") or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith("event:"):
+            current_event = line[6:].strip()
+            continue
+        if not line.startswith("data:"):
+            continue
+        try:
+            data = json.loads(line[5:].strip())
+        except Exception:
+            data = {"message": line[5:].strip()}
+        if current_event == "error":
+            message = str(data.get("message") or data.get("error") or "") if isinstance(data, dict) else ""
+            for secret in secrets:
+                if secret:
+                    message = message.replace(str(secret), "[REDACTED]")
+            raise RemoteTokenRequestError("新版 grok2api 导入失败" + (f": {message[:200]}" if message else ""))
+        if current_event == "complete":
+            completed = data if isinstance(data, dict) else {}
+    if completed is None:
+        raise RemoteTokenCompatibilityError("新版 grok2api 导入响应缺少 complete 事件")
+    return completed
+
+
+def _add_token_to_grok2api_go_remote_pool(token, email="", log_callback=None):
+    base = str(config.get("grok2api_remote_base", "") or "").strip()
+    username = str(config.get("grok2api_remote_admin_username", "") or "").strip()
+    password = str(config.get("grok2api_remote_admin_password", "") or "")
+    api_base = _grok2api_go_api_base(base)
+    endpoint = api_base + "/accounts/web/import"
+    try:
+        from curl_cffi import CurlMime
+    except Exception as exc:
+        raise RemoteTokenRequestError(f"无法创建新版 grok2api 导入表单: {exc}") from exc
+    for attempt in range(2):
+        access_token = _get_grok2api_admin_token(api_base, username, password, force=attempt > 0)
+        multipart = CurlMime()
+        multipart.addpart(
+            name="file",
+            filename="grok-web-sso.txt",
+            content_type="text/plain; charset=utf-8",
+            data=(token + "\n").encode("utf-8"),
+        )
+        try:
+            response = http_post(
+                endpoint,
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "text/event-stream"},
+                multipart=multipart,
+                timeout=60,
+                proxies={},
+                verify=True,
+            )
+        except Exception as exc:
+            raise RemoteTokenRequestError(f"新版 grok2api SSO 导入请求失败: {endpoint}: {exc}") from exc
+        finally:
+            multipart.close()
+        status = int(getattr(response, "status_code", 0) or 0)
+        if status == 401 and attempt == 0:
+            _clear_grok2api_admin_cache()
+            continue
+        if not 200 <= status < 300:
+            raise RemoteTokenRequestError(f"新版 grok2api SSO 导入失败: {endpoint}: HTTP {status}")
+        result = _parse_grok2api_go_import(response, (token, access_token))
+        summary = ", ".join(
+            f"{key}={result.get(key)}"
+            for key in ("created", "updated", "skipped", "synced", "syncFailed")
+            if result.get(key) is not None
+        )
+        if int(result.get("syncFailed") or 0):
+            raise RemoteTokenRequestError("SSO 已导入，但初始同步失败" + (f": {summary}" if summary else ""))
+        if log_callback:
+            log_callback(
+                "[+] 已导入新版 grok2api Grok Web"
+                + (f": {summary}" if summary else "")
+                + (f" ({email})" if email else "")
+            )
+        return True
+    raise RemoteTokenRequestError("新版 grok2api 管理员认证已失效")
+
+
 def add_token_to_grok2api_remote_pool(raw_token, email="", log_callback=None):
+    token = _normalize_sso_token(raw_token)
+    if not token:
+        return False
+    username = str(config.get("grok2api_remote_admin_username", "") or "").strip()
+    password = str(config.get("grok2api_remote_admin_password", "") or "")
+    if username and password:
+        return _add_token_to_grok2api_go_remote_pool(token, email=email, log_callback=log_callback)
+    return _add_token_to_grok2api_legacy_remote_pool(token, email=email, log_callback=log_callback)
+
+
+def _add_token_to_grok2api_legacy_remote_pool(raw_token, email="", log_callback=None):
     token = _normalize_sso_token(raw_token)
     if not token:
         return False

@@ -846,15 +846,25 @@ class GrokRegisterGUI:
         self.grok2api_remote_key_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_key_var, width=72)
         add_field(self.grok2api_remote_key_entry, 11, 1, columnspan=3)
 
-        add_label(12, 0, "OIDC / CPA:")
+        add_label(12, 0, "新版管理员账号:")
+        self.grok2api_remote_username_var = tk.StringVar(value=str(config.get("grok2api_remote_admin_username", "")))
+        self.grok2api_remote_username_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_username_var, width=34)
+        add_field(self.grok2api_remote_username_entry, 12, 1)
+
+        add_label(12, 2, "新版管理员密码:")
+        self.grok2api_remote_password_var = tk.StringVar(value=str(config.get("grok2api_remote_admin_password", "")))
+        self.grok2api_remote_password_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_password_var, width=34, show="*")
+        add_field(self.grok2api_remote_password_entry, 12, 3)
+
+        add_label(13, 0, "OIDC / CPA:")
         self.cpa_export_var = tk.BooleanVar(value=bool(config.get("cpa_export_enabled", False)))
         self.cpa_export_check = tk_checkbutton(config_frame, text="注册成功后导出 CPA xAI OIDC", variable=self.cpa_export_var)
-        add_field(self.cpa_export_check, 12, 1, sticky=tk.W)
+        add_field(self.cpa_export_check, 13, 1, sticky=tk.W)
 
-        add_label(12, 2, "CPA 输出目录:")
+        add_label(13, 2, "CPA 输出目录:")
         self.cpa_auth_dir_var = tk.StringVar(value=str(config.get("cpa_auth_dir", "./cpa_auths")))
         self.cpa_auth_dir_entry = tk_entry(config_frame, textvariable=self.cpa_auth_dir_var, width=34)
-        add_field(self.cpa_auth_dir_entry, 12, 3)
+        add_field(self.cpa_auth_dir_entry, 13, 3)
 
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
@@ -982,6 +992,8 @@ class GrokRegisterGUI:
         config["grok2api_auto_add_remote"] = bool(self.grok2api_remote_auto_var.get())
         config["grok2api_remote_base"] = self.grok2api_remote_base_var.get().strip()
         config["grok2api_remote_app_key"] = self.grok2api_remote_key_var.get().strip()
+        config["grok2api_remote_admin_username"] = self.grok2api_remote_username_var.get().strip()
+        config["grok2api_remote_admin_password"] = self.grok2api_remote_password_var.get()
         config["cpa_export_enabled"] = bool(self.cpa_export_var.get())
         config["cpa_auth_dir"] = self.cpa_auth_dir_var.get().strip() or "./cpa_auths"
         raw_paths = [x.strip() for x in self.cloudflare_paths_var.get().split(",") if x.strip()]
