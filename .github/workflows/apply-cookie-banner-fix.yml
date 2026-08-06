@@ -1,3 +1,4 @@
+# Temporary branch-only validation workflow; removed before merge.
 name: Apply focused cookie banner fix
 
 on:
