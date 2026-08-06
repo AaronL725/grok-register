@@ -154,14 +154,22 @@ def _norm(text: str) -> str:
 
 
 def _find_button_exact(page: Any, label: str) -> Optional[Any]:
-    try:
-        return page.ele(
-            "xpath://button[normalize-space()='%s'] | //*[@role='button' and normalize-space()='%s'] | //a[normalize-space()='%s'] | //input[@type='submit' and @value='%s']"
-            % (label, label, label, label),
-            timeout=0.4,
-        )
-    except Exception:
-        return None
+    # 页面动态渲染时元素可能刚挂载但尚未可见/无几何尺寸：加大超时并重试，
+    # 避免真实点击时出现"该元素没有位置及大小"。
+    for attempt in range(3):
+        try:
+            target = page.ele(
+                "xpath://button[normalize-space()='%s'] | //*[@role='button' and normalize-space()='%s'] | //a[normalize-space()='%s'] | //input[@type='submit' and @value='%s']"
+                % (label, label, label, label),
+                timeout=2.0,
+            )
+            if target:
+                return target
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(0.5)
+    return None
 
 
 def _cookie_banner_visible(text: str) -> bool:
@@ -199,7 +207,11 @@ def _click_exact(page: Any, labels, log: LogFn, real: bool = False) -> Optional[
             continue
         try:
             if real:
-                target.click()
+                try:
+                    target.click()
+                except Exception:
+                    # 真实点击失败（元素不可见/未渲染完）时兜底 JS 点击
+                    target.click(by_js=True)
             else:
                 try:
                     target.click(by_js=True)
@@ -216,20 +228,29 @@ def _wait_turnstile(page: Any, log: LogFn, timeout_sec: float, email: str = "", 
     deadline = time.time() + float(timeout_sec)
     while time.time() < deadline:
         text = _visible_text(page)
-        if not _is_turnstile_challenge(text):
-            try:
-                token_length = page.run_js(
-                    """
-                    const input = document.querySelector('input[name="cf-turnstile-response"]');
-                    return String((input && input.value) || '').trim().length;
-                    """
-                )
-                if int(token_length or 0) >= 80:
-                    return True
-            except Exception:
-                pass
-            if not _is_turnstile_challenge(_visible_text(page)):
+        try:
+            state = page.run_js(
+                """
+                const input = document.querySelector('input[name="cf-turnstile-response"]');
+                const present = !!input
+                  || !!document.querySelector(
+                    'iframe[src*="turnstile"], div.cf-turnstile, [data-sitekey], script[src*="turnstile"]'
+                  );
+                return {
+                  present,
+                  tokenLength: String((input && input.value) || '').trim().length,
+                };
+                """
+            )
+        except Exception:
+            state = None
+        if isinstance(state, dict):
+            if int(state.get("tokenLength") or 0) >= 80:
                 return True
+            if not bool(state.get("present")) and not _is_turnstile_challenge(text):
+                return True
+        elif not _is_turnstile_challenge(text):
+            return True
         _sleep(1.0)
     if raise_on_timeout:
         shot = _save_debug_shot(page, tag="turnstile-timeout", email=email, log=log)
@@ -241,8 +262,56 @@ def _wait_turnstile(page: Any, log: LogFn, timeout_sec: float, email: str = "", 
 
 
 def _fill(page: Any, selector: str, value: str, log: LogFn, label: str = "") -> bool:
+    expected = str(value or "")
+    dom_selector = selector[4:] if selector.startswith("css:") else selector
+    marker = "cpa-active-input"
     try:
-        target = page.ele(selector, timeout=0.8)
+        state = page.run_js(
+            """
+            const selector = arguments[0];
+            const value = String(arguments[1] || '');
+            const marker = arguments[2];
+            function isVisible(node) {
+              if (!node || node.disabled) return false;
+              const style = window.getComputedStyle(node);
+              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+              const rect = node.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0;
+            }
+            const candidates = Array.from(document.querySelectorAll(selector)).filter(isVisible);
+            const matching = candidates.find((node) => String(node.value || '') === value);
+            if (matching && matching.readOnly) {
+              return { status: 'readonly-match', value: String(matching.value || '') };
+            }
+            const node = candidates.find((candidate) => !candidate.readOnly);
+            if (!node) {
+              const readonly = candidates.find((candidate) => candidate.readOnly);
+              return {
+                status: readonly ? 'readonly-mismatch' : 'not-found',
+                value: String((readonly && readonly.value) || ''),
+              };
+            }
+            for (const previous of document.querySelectorAll('[data-cpa-fill-target]')) {
+              previous.removeAttribute('data-cpa-fill-target');
+            }
+            node.setAttribute('data-cpa-fill-target', marker);
+            return { status: 'editable', value: String(node.value || '') };
+            """,
+            dom_selector,
+            expected,
+            marker,
+        )
+    except Exception:
+        state = None
+    if isinstance(state, dict) and state.get("status") == "readonly-match":
+        if label:
+            log("filled %s" % label)
+        return True
+    if not isinstance(state, dict) or state.get("status") != "editable":
+        return False
+
+    try:
+        target = page.ele('css:[data-cpa-fill-target="%s"]' % marker, timeout=0.8)
     except Exception:
         target = None
     if not target:
@@ -258,22 +327,48 @@ def _fill(page: Any, selector: str, value: str, log: LogFn, label: str = "") -> 
             target.click()
             page.run_js(
                 """
-                const selector = arguments[0];
-                const value = arguments[1];
-                const node = document.querySelector(selector);
+                const marker = arguments[0];
+                const value = String(arguments[1] || '');
+                const node = document.querySelector('[data-cpa-fill-target="' + marker + '"]');
                 if (!node) return false;
+                const oldValue = String(node.value || '');
                 const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
                 if (setter) setter.call(node, value);
                 else node.value = value;
+                if (node._valueTracker) node._valueTracker.setValue(oldValue);
                 node.dispatchEvent(new Event('input', { bubbles: true }));
                 node.dispatchEvent(new Event('change', { bubbles: true }));
                 return true;
                 """,
-                selector,
-                value,
+                marker,
+                expected,
             )
         except Exception:
             return False
+    try:
+        actual = page.run_js(
+            """
+            const node = document.querySelector('[data-cpa-fill-target="' + arguments[0] + '"]');
+            return String((node && node.value) || '');
+            """,
+            marker,
+        )
+        actual = str(actual or "")
+        if actual != expected:
+            return False
+    except Exception:
+        return False
+    finally:
+        try:
+            page.run_js(
+                """
+                const node = document.querySelector('[data-cpa-fill-target="' + arguments[0] + '"]');
+                if (node) node.removeAttribute('data-cpa-fill-target');
+                """,
+                marker,
+            )
+        except Exception:
+            pass
     if label:
         log("filled %s" % label)
     return True
@@ -294,6 +389,9 @@ def _detect_auth_error(text: str, url: str = "") -> Optional[str]:
         ("密码错误", "wrong password"),
         ("wrong email", "wrong email"),
         ("invalid email", "wrong email"),
+        ("必须提供一个邮箱地址", "email address was cleared before submit"),
+        ("email address is required", "email address was cleared before submit"),
+        ("email is required", "email address was cleared before submit"),
         ("attention required", "cloudflare challenge/block"),
         ("access denied", "cloudflare blocked / access denied"),
         ("unable to access", "cloudflare blocked / unable to access"),
@@ -464,11 +562,29 @@ def approve_device_code(
             if login_attempts >= 3:
                 auth_error = _detect_auth_error(text, url) or "login failed after retries (still on password page)"
                 raise BrowserConfirmError("auth failed: %s" % auth_error)
+            if page.ele("css:input[type='email']", timeout=0.2):
+                if not _fill(page, "css:input[type='email']", email, logger, "email"):
+                    _sleep(0.5)
+                    continue
+            if not _fill(page, "css:input[type='password']", password, logger, "password"):
+                _sleep(0.5)
+                continue
+            turnstile_timeout = max(min(deadline - time.time(), 180.0), 1.0)
+            logger("waiting for Cloudflare verification in browser (up to %ss)" % int(turnstile_timeout))
+            if not _wait_turnstile(page, logger, turnstile_timeout, email=email, raise_on_timeout=False):
+                shot = _save_debug_shot(page, tag="turnstile-timeout", email=email, log=logger)
+                message = "turnstile timeout before login submit"
+                if shot:
+                    message = "%s shot=%s" % (message, shot)
+                raise BrowserConfirmError("auth failed: %s" % message)
+            if page.ele("css:input[type='email']", timeout=0.2):
+                if not _fill(page, "css:input[type='email']", email, logger, "email"):
+                    _sleep(0.5)
+                    continue
+            if not _fill(page, "css:input[type='password']", password, logger, "password"):
+                _sleep(0.5)
+                continue
             login_attempts += 1
-            _fill(page, "css:input[type='email']", email, logger, "email")
-            _wait_turnstile(page, logger, 25, email=email, raise_on_timeout=True)
-            _fill(page, "css:input[type='password']", password, logger, "password")
-            _wait_turnstile(page, logger, 12, email=email, raise_on_timeout=False)
             if not _click_exact(page, ["登录", "Sign in", "Log in"], logger, real=True):
                 try:
                     submit = page.ele("css:button[type='submit']", timeout=0.5) or page.ele("css:button[data-testid='sign-in-submit']", timeout=0.5)
