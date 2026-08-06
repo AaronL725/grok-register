@@ -1,11 +1,15 @@
 """接入临时邮箱服务并负责邮箱创建、邮件轮询和验证码提取。"""
+import json
+import os
 import re
 import secrets
 import string
+import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests
+from filelock import FileLock
 
 DUCKMAIL_API_BASE = "https://api.duckmail.sbs"
 
@@ -16,6 +20,12 @@ config = {}
 _cf_domain_index = 0
 _cloudmail_domain_index = 0
 _OWN_NAMES = {'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain'}
+_OWN_NAMES.update({
+    "get_outlook_register_dir",
+    "outlook_web_get_email_and_token",
+    "outlook_web_get_oai_code",
+    "outlook_web_update_status",
+})
 
 
 def bind_runtime(namespace):
@@ -544,6 +554,202 @@ def get_cloudmail_path():
 def get_cloudmail_public_token():
     return str(config.get("cloudmail_public_token", "") or "").strip()
 
+
+def get_outlook_register_dir():
+    return os.path.abspath(
+        os.path.expanduser(str(config.get("outlook_register_dir", "") or "").strip())
+    )
+
+
+def _outlook_web_paths():
+    base_dir = get_outlook_register_dir()
+    return {
+        "base_dir": base_dir,
+        "pool_file": os.path.join(base_dir, "Results", "outlook_web_pool.jsonl"),
+        "state_file": os.path.join(base_dir, "Results", "outlook_web_pool_state.json"),
+        "reader_script": os.path.join(base_dir, "webmail_reader.py"),
+        "python": os.path.join(base_dir, ".venv", "Scripts", "python.exe"),
+    }
+
+
+def _load_outlook_pool(pool_file):
+    records = []
+    with open(pool_file, "r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(item, dict):
+                continue
+            record_id = str(item.get("id", "")).strip()
+            email = str(item.get("email", "")).strip()
+            session_file = str(item.get("session_file", "")).strip()
+            if record_id and email and session_file:
+                records.append(item)
+    return records
+
+
+def _load_outlook_state(state_file):
+    if not os.path.exists(state_file):
+        return {"records": {}}
+    try:
+        with open(state_file, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except Exception:
+        return {"records": {}}
+    if not isinstance(value, dict) or not isinstance(value.get("records"), dict):
+        return {"records": {}}
+    return value
+
+
+def _save_outlook_state(state_file, state):
+    os.makedirs(os.path.dirname(state_file), exist_ok=True)
+    temp_file = f"{state_file}.{os.getpid()}.tmp"
+    with open(temp_file, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_file, state_file)
+    try:
+        os.chmod(state_file, 0o600)
+    except Exception:
+        pass
+
+
+def outlook_web_update_status(record_id, status, error=""):
+    paths = _outlook_web_paths()
+    lock = FileLock(paths["state_file"] + ".lock")
+    with lock:
+        state = _load_outlook_state(paths["state_file"])
+        previous = state["records"].get(record_id, {})
+        state["records"][record_id] = {
+            **previous,
+            "status": status,
+            "updated_at": time.time(),
+            "error": str(error or "")[:300],
+        }
+        _save_outlook_state(paths["state_file"], state)
+
+
+def outlook_web_get_email_and_token():
+    paths = _outlook_web_paths()
+    records = _load_outlook_pool(paths["pool_file"])
+    if not records:
+        raise RuntimeError("Outlook 网页邮箱池没有可用记录")
+
+    stale_after = 15 * 60
+    lock = FileLock(paths["state_file"] + ".lock")
+    with lock:
+        state = _load_outlook_state(paths["state_file"])
+        now = time.time()
+        selected = None
+        for item in records:
+            record_id = str(item["id"])
+            item_state = state["records"].get(record_id, {})
+            status = str(item_state.get("status", "unused"))
+            updated_at = float(item_state.get("updated_at", 0) or 0)
+            available = status in {"unused", "retryable"}
+            if status == "in_progress" and now - updated_at >= stale_after:
+                available = True
+            if available:
+                selected = item
+                attempts = int(item_state.get("attempts", 0) or 0) + 1
+                state["records"][record_id] = {
+                    **item_state,
+                    "status": "in_progress",
+                    "attempts": attempts,
+                    "updated_at": now,
+                    "error": "",
+                }
+                _save_outlook_state(paths["state_file"], state)
+                break
+    if selected is None:
+        raise RuntimeError("Outlook 网页邮箱池已用尽，或邮箱正在处理中")
+    return str(selected["email"]), f"outlook-web:{selected['id']}"
+
+
+def outlook_web_get_oai_code(
+    dev_token,
+    email,
+    timeout=180,
+    poll_interval=3,
+    log_callback=None,
+    cancel_callback=None,
+    resend_callback=None,
+):
+    del email, resend_callback
+    prefix = "outlook-web:"
+    if not str(dev_token).startswith(prefix):
+        raise RuntimeError("Outlook 网页邮箱 credential 格式错误")
+    record_id = str(dev_token)[len(prefix):].strip()
+    paths = _outlook_web_paths()
+    command = [
+        paths["python"],
+        paths["reader_script"],
+        "--pool-file", paths["pool_file"],
+        "--record-id", record_id,
+        "--timeout", str(int(timeout)),
+        "--poll-interval", str(float(poll_interval)),
+    ]
+    if bool(config.get("outlook_web_headless", False)):
+        command.append("--headless")
+    if log_callback:
+        log_callback("[*] 正在通过 Outlook 网页收件箱等待验证码")
+
+    process = subprocess.Popen(
+        command,
+        cwd=paths["base_dir"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    deadline = time.time() + timeout + 45
+    try:
+        while process.poll() is None:
+            raise_if_cancelled(cancel_callback)
+            if time.time() >= deadline:
+                process.terminate()
+                raise TimeoutError("Outlook 网页收信进程超时")
+            time.sleep(0.2)
+        stdout, stderr = process.communicate(timeout=5)
+    except Exception:
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.communicate(timeout=5)
+        except Exception:
+            process.kill()
+        outlook_web_update_status(record_id, "retryable", "reader interrupted")
+        raise
+
+    result = None
+    for line in str(stdout or "").splitlines():
+        if line.startswith("OUTLOOK_WEB_RESULT="):
+            try:
+                result = json.loads(line.split("=", 1)[1])
+            except Exception:
+                result = None
+    if isinstance(result, dict) and result.get("status") == "ok" and result.get("code"):
+        code = str(result["code"])
+        outlook_web_update_status(record_id, "consumed")
+        if log_callback:
+            log_callback(f"[*] Outlook 网页邮箱提取到验证码: {code}")
+        return code
+
+    error = "Outlook 网页收信失败"
+    if isinstance(result, dict) and result.get("error"):
+        error = str(result["error"])
+    elif process.returncode:
+        error = f"Outlook 网页收信进程退出码 {process.returncode}"
+    if stderr and log_callback:
+        log_callback("[Debug] Outlook 网页收信进程返回错误")
+    outlook_web_update_status(record_id, "retryable", error)
+    raise RuntimeError(error)
+
 def get_domains(api_key=None):
     headers = {}
     key = api_key or get_duckmail_api_key()
@@ -558,6 +764,8 @@ def get_duckmail_api_key():
 
 def get_email_and_token(api_key=None):
     provider = get_email_provider()
+    if provider == "outlook_web":
+        return outlook_web_get_email_and_token()
     if provider == "yyds":
         return yyds_get_email_and_token(api_key=api_key, jwt=get_yyds_jwt())
     if provider == "cloudmail":
@@ -644,6 +852,16 @@ def get_oai_code(
     resend_callback=None,
 ):
     provider = get_email_provider()
+    if provider == "outlook_web":
+        return outlook_web_get_oai_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
+        )
     if provider == "yyds":
         return yyds_get_oai_code(
             dev_token,
