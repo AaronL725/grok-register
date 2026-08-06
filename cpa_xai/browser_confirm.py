@@ -173,6 +173,42 @@ def _cookie_banner_visible(text: str) -> bool:
     )
 
 
+def _click_cookie_button(page: Any, label: str, log: LogFn) -> bool:
+    target = None
+    for attempt in range(3):
+        target = _find_button_exact(page, label)
+        if target:
+            try:
+                target.click()
+                log("clicked cookie button: %s" % label)
+                return True
+            except Exception as exc:
+                if attempt < 2:
+                    log(
+                        "cookie button not ready %s (attempt %s/3): %s"
+                        % (label, attempt + 1, exc)
+                    )
+        if attempt < 2:
+            _sleep(0.35)
+    if target:
+        try:
+            target.click(by_js=True)
+            log("clicked cookie button by JS: %s" % label)
+            return True
+        except Exception as exc:
+            log("cookie button click failed %s: %s" % (label, exc))
+    return False
+
+
+def _wait_cookie_banner_gone(page: Any, timeout_sec: float = 1.5) -> bool:
+    deadline = time.time() + float(timeout_sec)
+    while time.time() < deadline:
+        if not _cookie_banner_visible(_visible_text(page)):
+            return True
+        _sleep(0.15)
+    return False
+
+
 def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
     for label in (
         "接受所有 Cookie",
@@ -186,9 +222,12 @@ def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
         "接受",
         "Accept",
     ):
-        if _click_exact(page, [label], log, real=True):
+        if not _click_cookie_button(page, label, log):
+            continue
+        if _wait_cookie_banner_gone(page):
             log("cookie banner dismissed: %s" % label)
             return True
+        log("cookie button clicked but banner remains: %s" % label)
     return False
 
 
