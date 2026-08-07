@@ -39,6 +39,17 @@ class WebUIStaticTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.html)
 
+    def test_repository_badge_links_to_github(self):
+        for marker in (
+            'class="repo-pill"',
+            'href="https://github.com/AaronL725/grok-register"',
+            'target="_blank"',
+            'rel="noopener noreferrer"',
+            '@grok-register',
+        ):
+            self.assertIn(marker, self.html)
+        self.assertNotIn('class="console-pill"', self.html)
+
     def test_responsive_breakpoints_exist(self):
         self.assertIn('@media(max-width:1050px)', self.html)
         self.assertIn('@media(max-width:760px)', self.html)
