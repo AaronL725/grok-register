@@ -991,8 +991,12 @@
       if (target) target.style.display = 'block';
     }
 
-    function appendLog(line) {
+    let lastLogsJson = '';
+
+    function appendLogLine(line, autoScroll = true) {
       const body = $('terminalBody');
+      const isAtBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 50;
+
       const div = document.createElement('div');
       div.className = 'log-line';
       if (line.includes('[+]')) div.classList.add('success');
@@ -1001,7 +1005,14 @@
       div.dataset.raw = line;
       div.textContent = translateLogLine(line, currentLang);
       body.appendChild(div);
-      body.scrollTop = body.scrollHeight;
+
+      if (autoScroll && isAtBottom) {
+        body.scrollTop = body.scrollHeight;
+      }
+    }
+
+    function appendLog(line) {
+      appendLogLine(line, true);
     }
 
     async function loadConfig() {
@@ -1139,10 +1150,20 @@
 
         if (resLogs.ok) {
           const logsData = await resLogs.json();
-          if (logsData.lines && logsData.lines.length) {
-            const body = $('terminalBody');
-            body.innerHTML = '';
-            logsData.lines.forEach(appendLog);
+          if (logsData.lines) {
+            const currentJson = JSON.stringify(logsData.lines);
+            if (currentJson !== lastLogsJson) {
+              lastLogsJson = currentJson;
+              const body = $('terminalBody');
+              const isAtBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 50;
+
+              body.innerHTML = '';
+              logsData.lines.forEach(line => appendLogLine(line, false));
+
+              if (isAtBottom) {
+                body.scrollTop = body.scrollHeight;
+              }
+            }
           }
         }
       } catch (_) {}
