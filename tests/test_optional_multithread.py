@@ -191,6 +191,7 @@ class OptionalMultithreadTests(unittest.TestCase):
         self.assertTrue(all(module.browser is None and module.page is None for module in browser_modules))
         self.assertTrue(observed)
         self.assertLessEqual(max(observed), 5)
+        self.assertEqual(observed, sorted(observed))
 
 
 if __name__ == "__main__":
