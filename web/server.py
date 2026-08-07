@@ -285,7 +285,7 @@ async def api_status(x_access_key: Optional[str] = Header(None)):
 
 
 @app.get("/api/logs/snapshot")
-async def api_logs_snapshot(limit: int = 300, x_access_key: Optional[str] = Header(None)):
+async def api_logs_snapshot(limit: int = 2000, x_access_key: Optional[str] = Header(None)):
     _require_auth(x_access_key)
     with _log_cond:
         lines = list(_log_buffer)

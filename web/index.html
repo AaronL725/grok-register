@@ -991,11 +991,12 @@
       if (target) target.style.display = 'block';
     }
 
-    let lastLogsJson = '';
+    let renderedLogSet = new Set();
 
-    function appendLogLine(line, autoScroll = true) {
+    function appendLogLine(line, forceScrollToBottom = false) {
       const body = $('terminalBody');
-      const isAtBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 50;
+      const isAtBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 60;
+      const oldScrollTop = body.scrollTop;
 
       const div = document.createElement('div');
       div.className = 'log-line';
@@ -1006,8 +1007,10 @@
       div.textContent = translateLogLine(line, currentLang);
       body.appendChild(div);
 
-      if (autoScroll && isAtBottom) {
+      if (forceScrollToBottom || isAtBottom) {
         body.scrollTop = body.scrollHeight;
+      } else {
+        body.scrollTop = oldScrollTop;
       }
     }
 
@@ -1131,7 +1134,7 @@
       try {
         const [resStatus, resLogs] = await Promise.all([
           fetch('/api/status'),
-          fetch('/api/logs/snapshot?limit=50')
+          fetch('/api/logs/snapshot?limit=2000')
         ]);
 
         if (resStatus.ok) {
@@ -1150,18 +1153,33 @@
 
         if (resLogs.ok) {
           const logsData = await resLogs.json();
-          if (logsData.lines) {
-            const currentJson = JSON.stringify(logsData.lines);
-            if (currentJson !== lastLogsJson) {
-              lastLogsJson = currentJson;
-              const body = $('terminalBody');
-              const isAtBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 50;
+          if (logsData.lines && logsData.lines.length) {
+            const body = $('terminalBody');
+            const isAtBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 60;
+            const oldScrollTop = body.scrollTop;
 
-              body.innerHTML = '';
-              logsData.lines.forEach(line => appendLogLine(line, false));
+            let hasNew = false;
+            logsData.lines.forEach(line => {
+              if (!renderedLogSet.has(line)) {
+                renderedLogSet.add(line);
+                hasNew = true;
 
+                const div = document.createElement('div');
+                div.className = 'log-line';
+                if (line.includes('[+]')) div.classList.add('success');
+                else if (line.includes('[!]') || line.includes('[-]')) div.classList.add('error');
+                else if (line.includes('[*]')) div.classList.add('info');
+                div.dataset.raw = line;
+                div.textContent = translateLogLine(line, currentLang);
+                body.appendChild(div);
+              }
+            });
+
+            if (hasNew) {
               if (isAtBottom) {
                 body.scrollTop = body.scrollHeight;
+              } else {
+                body.scrollTop = oldScrollTop;
               }
             }
           }
@@ -1233,6 +1251,7 @@
     });
 
     $('clearLogBtn').addEventListener('click', () => {
+      renderedLogSet.clear();
       $('terminalBody').innerHTML = `<div class="log-line info">${dictionary[currentLang]['log-ready']}</div>`;
     });
 
