@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - feat/optional-multithread-registration
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -15,6 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: feat/optional-multithread-registration
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
