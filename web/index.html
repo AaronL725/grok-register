@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>grok-register — 控制台 / Control Plane</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg: #09090b;
+      --bg-card: rgba(24, 24, 27, 0.7);
+      --bg-input: #121215;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(255, 255, 255, 0.16);
+      --border-accent: rgba(208, 255, 0, 0.3);
+      --primary: #d0ff00;
+      --primary-hover: #b8e600;
+      --primary-glow: rgba(208, 255, 0, 0.15);
+      --fg: #f4f4f5;
+      --muted: #a1a1aa;
+      --muted-dark: #3f3f46;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --success: #22c55e;
+      --radius: 12px;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Navigation Header */
+    .navbar {
+      height: 64px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(9, 9, 11, 0.85);
+      backdrop-filter: blur(16px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #d0ff00 0%, #84cc16 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #000;
+    }
+    .brand-title {
+      font-weight: 700;
+      font-size: 17px;
+      letter-spacing: -0.4px;
+    }
+    .brand-badge {
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--primary-glow);
+      color: var(--primary);
+      padding: 2px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border-accent);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Lang Switcher Pill */
+    .lang-switcher {
+      display: flex;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2px;
+      gap: 2px;
+      margin-right: 8px;
+    }
+    .lang-btn {
+      padding: 4px 10px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .lang-btn.active {
+      background: var(--primary);
+      color: #000;
+    }
+
+    /* Container */
+    .main-container {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 28px;
+      width: 100%;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Metric Cards Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 768px) {
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.2s;
+    }
+    .metric-card:hover {
+      border-color: var(--border-hover);
+    }
+    .metric-label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .metric-value {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -1px;
+      font-family: var(--mono);
+    }
+    .metric-value.ok { color: var(--success); }
+    .metric-value.bad { color: var(--danger); }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .pulse-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted-dark);
+      transition: all 0.3s;
+    }
+    .pulse-dot.active {
+      background: var(--primary);
+      box-shadow: 0 0 12px var(--primary);
+      animation: pulse-glow 1.5s infinite;
+    }
+    @keyframes pulse-glow {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.25); opacity: 0.6; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Main Workspace Grid */
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 24px;
+    }
+    @media (max-width: 1024px) {
+      .workspace-grid { grid-template-columns: 1fr; }
+    }
+
+    /* Cards */
+    .panel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Tabs Header */
+    .tabs-header {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: rgba(18, 18, 20, 0.5);
+      overflow-x: auto;
+    }
+    .tab-btn {
+      padding: 14px 20px;
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 2px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .tab-btn svg { opacity: 0.7; transition: opacity 0.2s; }
+    .tab-btn:hover { color: var(--fg); }
+    .tab-btn:hover svg { opacity: 1; }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      background: rgba(208, 255, 0, 0.04);
+    }
+    .tab-btn.active svg { opacity: 1; stroke: var(--primary); }
+
+    .tab-content {
+      padding: 24px;
+      display: none;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .tab-content.active { display: flex; }
+
+    /* Form Inputs */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) {
+      .form-grid-2 { grid-template-columns: 1fr; }
+    }
+
+    label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--fg);
+    }
+    .field-hint {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    input[type="text"], input[type="number"], input[type="password"], select, textarea {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--fg);
+      font-size: 13px;
+      font-family: var(--font);
+      outline: none;
+      transition: all 0.2s;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(208, 255, 0, 0.1);
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      font-size: 13px;
+      user-select: none;
+    }
+    .checkbox-label input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+
+    /* Terminal Console */
+    .terminal-panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 520px;
+    }
+    .terminal-header {
+      padding: 12px 20px;
+      background: rgba(18, 18, 20, 0.8);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .terminal-title {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .terminal-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .terminal-body {
+      flex: 1;
+      background: #000000;
+      padding: 18px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.65;
+      color: #a1a1aa;
+      overflow-y: auto;
+      max-height: 540px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-line { margin-bottom: 2px; }
+    .log-line.info { color: #38bdf8; }
+    .log-line.success { color: #4ade80; }
+    .log-line.warn { color: #facc15; }
+    .log-line.error { color: #f87171; }
+
+    /* Button Controls */
+    .btn {
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #000000;
+    }
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 0 16px rgba(208, 255, 0, 0.25);
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border);
+      color: var(--fg);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: var(--border-hover);
+    }
+    .btn-danger {
+      background: var(--danger);
+      color: #ffffff;
+    }
+    .btn-danger:hover {
+      background: var(--danger-hover);
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.25);
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #18181b;
+      border: 1px solid var(--primary);
+      color: var(--fg);
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.3s;
+      pointer-events: none;
+      z-index: 1000;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar Header -->
+  <nav class="navbar">
+    <div class="brand">
+      <div class="brand-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <span class="brand-title">grok-register</span>
+      <span class="brand-badge" id="i18n-brand-badge">控制台</span>
+    </div>
+    <div class="nav-actions">
+      <!-- Language Switcher -->
+      <div class="lang-switcher">
+        <button class="lang-btn active" id="lang-zh" onclick="setLanguage('zh')">中文</button>
+        <button class="lang-btn" id="lang-id" onclick="setLanguage('id')">ID</button>
+      </div>
+
+      <button id="saveConfigBtn" class="btn btn-secondary">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        <span id="i18n-btn-save">保存配置</span>
+      </button>
+      <button id="startBtn" class="btn btn-primary">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <span id="i18n-btn-start">开始注册</span>
+      </button>
+      <button id="stopBtn" class="btn btn-danger" style="display: none;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        <span id="i18n-btn-stop">停止任务</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-container">
+
+    <!-- Status Metric Cards -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label" id="i18n-metric-status">任务状态</div>
+        <div class="status-badge">
+          <span id="statusDot" class="pulse-dot"></span>
+          <span id="statusText">待机中</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label" id="i18n-metric-target">目标数量</div>
+        <div id="metricTarget" class="metric-value">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label" id="i18n-metric-success">成功数量</div>
+        <div id="metricSuccess" class="metric-value ok">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label" id="i18n-metric-fail">失败数量</div>
+        <div id="metricFail" class="metric-value bad">0</div>
+      </div>
+    </div>
+
+    <!-- Main Workspace Grid -->
+    <div class="workspace-grid">
+
+      <!-- Settings Panel -->
+      <div class="panel-card">
+        <div class="tabs-header">
+          <button class="tab-btn active" onclick="switchTab('generalTab', this)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span id="i18n-tab-general">任务参数</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab('mailTab', this)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+            <span id="i18n-tab-mail">邮箱服务</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab('grok2apiTab', this)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-2 2m-1.5 1.5L4 19l-2 3 3-2 13.5-13.5M16 2l5 5"/></svg>
+            <span id="i18n-tab-grok2api">grok2api 池</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab('cpaTab', this)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span id="i18n-tab-cpa">CPA 导出</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: General Settings -->
+        <div id="generalTab" class="tab-content active">
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label for="register_count" id="i18n-label-reg-count">注册数量</label>
+              <input type="number" id="register_count" min="1" max="2500" value="1" />
+              <span class="field-hint" id="i18n-hint-reg-count">要创建的账号总数。</span>
+            </div>
+            <div class="form-group">
+              <label for="multi_thread_workers" id="i18n-label-workers">多线程 Worker 数</label>
+              <input type="number" id="multi_thread_workers" min="1" max="8" value="4" />
+              <span class="field-hint" id="i18n-hint-workers">并行浏览器线程数 (1-8 Worker)。</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="multi_thread_enabled" />
+              <span id="i18n-label-multi-thread">启用多线程注册</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="enable_nsfw" checked />
+              <span id="i18n-label-nsfw">启用 NSFW (后处理开关)</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="proxy" id="i18n-label-proxy">代理地址 (可选)</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="proxy" placeholder="http://user:pass@host:port 或 socks5://host:port" />
+              <button id="testProxyBtn" class="btn btn-secondary" style="white-space: nowrap;">
+                <span id="i18n-btn-test-proxy">测试代理</span>
+              </button>
+            </div>
+            <span class="field-hint" id="i18n-hint-proxy">留空表示使用直连网络。</span>
+          </div>
+
+          <div class="form-group">
+            <label for="user_agent" id="i18n-label-ua">自定义 User-Agent (可选)</label>
+            <input type="text" id="user_agent" placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64)..." />
+          </div>
+        </div>
+
+        <!-- Tab 2: Mail Provider Settings -->
+        <div id="mailTab" class="tab-content">
+          <div class="form-group">
+            <label for="email_provider" id="i18n-label-provider">主要邮箱服务</label>
+            <select id="email_provider" onchange="switchMailProvider(this.value)">
+              <option value="cloudflare">Cloudflare Temp Mail</option>
+              <option value="duckmail">DuckMail</option>
+              <option value="cloudmail">Cloud Mail</option>
+              <option value="yyds">YYDS Mail</option>
+            </select>
+          </div>
+
+          <!-- Cloudflare Panel -->
+          <div id="provider-cloudflare" class="mail-panel">
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label for="cloudflare_api_base" id="i18n-label-cf-base">Cloudflare API Base URL</label>
+              <input type="text" id="cloudflare_api_base" placeholder="https://temp-mail.ervareza.tech" />
+            </div>
+            <div class="form-grid-2" style="margin-bottom: 12px;">
+              <div class="form-group">
+                <label for="cloudflare_auth_mode" id="i18n-label-cf-auth">Cloudflare 鉴权模式</label>
+                <select id="cloudflare_auth_mode">
+                  <option value="none">none (无鉴权)</option>
+                  <option value="bearer">bearer</option>
+                  <option value="x-api-key">x-api-key</option>
+                  <option value="x-admin-auth">x-admin-auth</option>
+                  <option value="query-key">query-key</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="cloudflare_api_key" id="i18n-label-cf-key">Cloudflare API Key</label>
+                <input type="password" id="cloudflare_api_key" placeholder="API Key (如需要)" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="defaultDomains" id="i18n-label-cf-domain">默认邮箱域名</label>
+              <input type="text" id="defaultDomains" placeholder="ervareza.tech" />
+            </div>
+          </div>
+
+          <!-- DuckMail Panel -->
+          <div id="provider-duckmail" class="mail-panel" style="display: none;">
+            <div class="form-group">
+              <label for="duckmail_api_key" id="i18n-label-duck-key">DuckMail API Key</label>
+              <input type="password" id="duckmail_api_key" placeholder="填写 DuckMail API Key" />
+            </div>
+          </div>
+
+          <!-- CloudMail Panel -->
+          <div id="provider-cloudmail" class="mail-panel" style="display: none;">
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label for="cloudmail_api_base" id="i18n-label-cloud-base">CloudMail API Base URL</label>
+              <input type="text" id="cloudmail_api_base" placeholder="https://mail.example.com" />
+            </div>
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="cloudmail_public_token" id="i18n-label-cloud-token">Public Token</label>
+                <input type="password" id="cloudmail_public_token" />
+              </div>
+              <div class="form-group">
+                <label for="cloudmail_domains" id="i18n-label-cloud-domain">CloudMail 域名</label>
+                <input type="text" id="cloudmail_domains" placeholder="example.com" />
+              </div>
+            </div>
+          </div>
+
+          <!-- YYDS Panel -->
+          <div id="provider-yyds" class="mail-panel" style="display: none;">
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="yyds_api_key" id="i18n-label-yyds-key">YYDS API Key</label>
+                <input type="password" id="yyds_api_key" />
+              </div>
+              <div class="form-group">
+                <label for="yyds_jwt" id="i18n-label-yyds-jwt">YYDS JWT Token</label>
+                <input type="password" id="yyds_jwt" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: grok2api Pool Settings -->
+        <div id="grok2apiTab" class="tab-content">
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="grok2api_auto_add_remote" />
+              <span id="i18n-label-g2a-remote-enable">自动同步 Token 至 Remote grok2api 池</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="grok2api_remote_base" id="i18n-label-g2a-base">grok2api Remote Base URL</label>
+            <input type="text" id="grok2api_remote_base" placeholder="http://127.0.0.1:8010" />
+          </div>
+
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label for="grok2api_pool_name" id="i18n-label-g2a-pool">Token 池名称</label>
+              <select id="grok2api_pool_name">
+                <option value="ssoBasic">ssoBasic</option>
+                <option value="ssoSuper">ssoSuper</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="grok2api_remote_app_key" id="i18n-label-g2a-key">Remote App Key / 密码</label>
+              <input type="password" id="grok2api_remote_app_key" />
+            </div>
+          </div>
+
+          <div style="border-top: 1px solid var(--border); margin: 8px 0;"></div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="grok2api_auto_add_local" />
+              <span id="i18n-label-g2a-local-enable">自动写入本地 Token 文件</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="grok2api_local_token_file" id="i18n-label-g2a-local-file">本地 Token 文件路径</label>
+            <input type="text" id="grok2api_local_token_file" placeholder="./tokens.json" />
+          </div>
+        </div>
+
+        <!-- Tab 4: CPA Export Settings -->
+        <div id="cpaTab" class="tab-content">
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="cpa_export_enabled" checked />
+              <span id="i18n-label-cpa-enable">启用 CPA xAI Auth 导出</span>
+            </label>
+          </div>
+
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label for="cpa_auth_dir" id="i18n-label-cpa-dir">CPA Auth 保存目录</label>
+              <input type="text" id="cpa_auth_dir" value="./cpa_auths" />
+            </div>
+            <div class="form-group">
+              <label for="cpa_base_url" id="i18n-label-cpa-base">CPA Base URL</label>
+              <input type="text" id="cpa_base_url" value="https://cli-chat-proxy.grok.com/v1" />
+            </div>
+          </div>
+
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="cpa_headless" />
+                <span id="i18n-label-cpa-headless">CPA 无头浏览器模式</span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="cpa_force_standalone" checked />
+                <span id="i18n-label-cpa-standalone">强制 Standalone Minting</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Live Terminal Panel -->
+      <div class="panel-card terminal-panel">
+        <div class="terminal-header">
+          <div class="terminal-title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span id="i18n-terminal-title">实时控制台日志</span>
+          </div>
+          <div class="terminal-actions">
+            <button id="copyLogBtn" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span id="i18n-btn-copy-log">复制日志</span>
+            </button>
+            <button id="clearLogBtn" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <span id="i18n-btn-clear-log">清空日志</span>
+            </button>
+          </div>
+        </div>
+        <div id="terminalBody" class="terminal-body">
+          <div class="log-line info">[*] 控制台已就绪，等待指令...</div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <div id="toast">通知</div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let isRunning = false;
+    let currentLang = 'zh';
+
+    const dictionary = {
+      zh: {
+        'brand-badge': '控制台',
+        'btn-save': '保存配置',
+        'btn-start': '开始注册',
+        'btn-stop': '停止任务',
+        'metric-status': '任务状态',
+        'metric-target': '目标数量',
+        'metric-success': '成功数量',
+        'metric-fail': '失败数量',
+        'status-idle': '待机中',
+        'status-running': '运行中',
+        'tab-general': '任务参数',
+        'tab-mail': '邮箱服务',
+        'tab-grok2api': 'grok2api 池',
+        'tab-cpa': 'CPA 导出',
+        'label-reg-count': '注册数量',
+        'hint-reg-count': '要创建的账号总数。',
+        'label-workers': '多线程 Worker 数',
+        'hint-workers': '并行浏览器线程数 (1-8 Worker)。',
+        'label-multi-thread': '启用多线程注册',
+        'label-nsfw': '启用 NSFW (后处理开关)',
+        'label-proxy': '代理地址 (可选)',
+        'hint-proxy': '留空表示使用直连网络。',
+        'btn-test-proxy': '测试代理',
+        'label-ua': '自定义 User-Agent (可选)',
+        'label-provider': '主要邮箱服务',
+        'label-cf-base': 'Cloudflare API Base URL',
+        'label-cf-auth': 'Cloudflare 鉴权模式',
+        'label-cf-key': 'Cloudflare API Key',
+        'label-cf-domain': '默认邮箱域名',
+        'label-duck-key': 'DuckMail API Key',
+        'label-cloud-base': 'CloudMail API Base URL',
+        'label-cloud-token': 'Public Token',
+        'label-cloud-domain': 'CloudMail 域名',
+        'label-yyds-key': 'YYDS API Key',
+        'label-yyds-jwt': 'YYDS JWT Token',
+        'label-g2a-remote-enable': '自动同步 Token 至 Remote grok2api 池',
+        'label-g2a-base': 'grok2api Remote Base URL',
+        'label-g2a-pool': 'Token 池名称',
+        'label-g2a-key': 'Remote App Key / 密码',
+        'label-g2a-local-enable': '自动写入本地 Token 文件',
+        'label-g2a-local-file': '本地 Token 文件路径',
+        'label-cpa-enable': '启用 CPA xAI Auth 导出',
+        'label-cpa-dir': 'CPA Auth 保存目录',
+        'label-cpa-base': 'CPA Base URL',
+        'label-cpa-headless': 'CPA 无头浏览器模式',
+        'label-cpa-standalone': '强制 Standalone Minting',
+        'terminal-title': '实时控制台日志',
+        'btn-copy-log': '复制日志',
+        'btn-clear-log': '清空日志',
+        'toast-saved': '配置已保存',
+        'toast-started': '任务已启动',
+        'toast-stopped': '正在停止任务',
+        'toast-proxy-ok': '代理连接成功！',
+        'toast-proxy-fail': '代理连接失败',
+        'toast-copied': '日志已复制',
+        'log-ready': '[*] 控制台已就绪，等待指令...',
+        'log-loaded': '[*] 配置加载成功',
+        'log-saved': '[+] 配置已成功保存'
+      },
+      id: {
+        'brand-badge': 'Control Plane',
+        'btn-save': 'Simpan Konfigurasi',
+        'btn-start': 'Mulai Registrasi',
+        'btn-stop': 'Hentikan Tugas',
+        'metric-status': 'Status Tugas',
+        'metric-target': 'Target Jumlah',
+        'metric-success': 'Sukses',
+        'metric-fail': 'Gagal',
+        'status-idle': 'Idle / Santai',
+        'status-running': 'Sedang Berjalan',
+        'tab-general': 'Parameter Registrasi',
+        'tab-mail': 'Provider Email',
+        'tab-grok2api': 'grok2api Pool',
+        'tab-cpa': 'CPA Export',
+        'label-reg-count': 'Jumlah Registrasi',
+        'hint-reg-count': 'Jumlah total akun yang ingin dibuat.',
+        'label-workers': 'Worker Thread Paralel',
+        'hint-workers': 'Jumlah worker browser paralel (1-8 worker).',
+        'label-multi-thread': 'Aktifkan Registrasi Multi-Thread',
+        'label-nsfw': 'Aktifkan NSFW (Toggle Post-processing)',
+        'label-proxy': 'Alamat Proxy (Opsional)',
+        'hint-proxy': 'Kosongkan jika ingin menggunakan koneksi langsung.',
+        'btn-test-proxy': 'Uji Proxy',
+        'label-ua': 'User-Agent Kustom (Opsional)',
+        'label-provider': 'Layanan Email Utama',
+        'label-cf-base': 'Cloudflare API Base URL',
+        'label-cf-auth': 'Mode Auth Cloudflare',
+        'label-cf-key': 'Cloudflare API Key',
+        'label-cf-domain': 'Default Domain Email',
+        'label-duck-key': 'DuckMail API Key',
+        'label-cloud-base': 'CloudMail API Base URL',
+        'label-cloud-token': 'Public Token',
+        'label-cloud-domain': 'CloudMail Domains',
+        'label-yyds-key': 'YYDS API Key',
+        'label-yyds-jwt': 'YYDS JWT Token',
+        'label-g2a-remote-enable': 'Otomatis Tambahkan Token ke Remote grok2api Pool',
+        'label-g2a-base': 'grok2api Remote Base URL',
+        'label-g2a-pool': 'Nama Pool Token',
+        'label-g2a-key': 'Remote App Key / Password',
+        'label-g2a-local-enable': 'Auto Add ke File Token Lokal',
+        'label-g2a-local-file': 'Path File Token Lokal',
+        'label-cpa-enable': 'Aktifkan Export CPA xAI Auth',
+        'label-cpa-dir': 'Folder Simpan CPA Auth',
+        'label-cpa-base': 'CPA Base URL',
+        'label-cpa-headless': 'CPA Headless Browser Mode',
+        'label-cpa-standalone': 'Force Standalone CPA Minting',
+        'terminal-title': 'Terminal Log Live',
+        'btn-copy-log': 'Salin Log',
+        'btn-clear-log': 'Bersihkan Log',
+        'toast-saved': 'Konfigurasi Disimpan',
+        'toast-started': 'Tugas Dimulai',
+        'toast-stopped': 'Menghentikan Tugas',
+        'toast-proxy-ok': 'Proxy Terhubung!',
+        'toast-proxy-fail': 'Proxy Gagal',
+        'toast-copied': 'Log Disalin',
+        'log-ready': '[*] Terminal siap. Menunggu perintah...',
+        'log-loaded': '[*] Konfigurasi berhasil dimuat',
+        'log-saved': '[+] Konfigurasi berhasil disimpan'
+      }
+    };
+
+    function setLanguage(lang) {
+      currentLang = lang;
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'id';
+      $('lang-zh').classList.toggle('active', lang === 'zh');
+      $('lang-id').classList.toggle('active', lang === 'id');
+
+      const dict = dictionary[lang];
+      for (const [key, text] of Object.entries(dict)) {
+        const el = $('i18n-' + key);
+        if (el) el.textContent = text;
+      }
+      pollStatus();
+    }
+
+    function showToast(msgKey) {
+      const dict = dictionary[currentLang];
+      const msg = dict[msgKey] || msgKey;
+      const t = $('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function switchTab(tabId, btn) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      $(tabId).classList.add('active');
+    }
+
+    function switchMailProvider(val) {
+      document.querySelectorAll('.mail-panel').forEach(p => p.style.display = 'none');
+      const target = $('provider-' + val);
+      if (target) target.style.display = 'block';
+    }
+
+    function appendLog(line) {
+      const body = $('terminalBody');
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      if (line.includes('[+]')) div.classList.add('success');
+      else if (line.includes('[!]') || line.includes('[-]')) div.classList.add('error');
+      else if (line.includes('[*]')) div.classList.add('info');
+      div.textContent = line;
+      body.appendChild(div);
+      body.scrollTop = body.scrollHeight;
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) return;
+        const data = await res.json();
+        const cfg = data.config || {};
+
+        $('register_count').value = cfg.register_count || 1;
+        $('multi_thread_workers').value = cfg.multi_thread_workers || 4;
+        $('multi_thread_enabled').checked = !!cfg.multi_thread_enabled;
+        $('enable_nsfw').checked = cfg.enable_nsfw !== false;
+        $('proxy').value = cfg.proxy || '';
+        $('user_agent').value = cfg.user_agent || '';
+
+        $('email_provider').value = cfg.email_provider || 'cloudflare';
+        switchMailProvider(cfg.email_provider || 'cloudflare');
+
+        $('cloudflare_api_base').value = cfg.cloudflare_api_base || '';
+        $('cloudflare_api_key').value = cfg.cloudflare_api_key || '';
+        $('cloudflare_auth_mode').value = cfg.cloudflare_auth_mode || 'none';
+        $('defaultDomains').value = cfg.defaultDomains || '';
+
+        $('duckmail_api_key').value = cfg.duckmail_api_key || '';
+
+        $('cloudmail_api_base').value = cfg.cloudmail_api_base || '';
+        $('cloudmail_public_token').value = cfg.cloudmail_public_token || '';
+        $('cloudmail_domains').value = cfg.cloudmail_domains || '';
+
+        $('yyds_api_key').value = cfg.yyds_api_key || '';
+        $('yyds_jwt').value = cfg.yyds_jwt || '';
+
+        $('grok2api_auto_add_remote').checked = !!cfg.grok2api_auto_add_remote;
+        $('grok2api_remote_base').value = cfg.grok2api_remote_base || '';
+        $('grok2api_pool_name').value = cfg.grok2api_pool_name || 'ssoBasic';
+        $('grok2api_remote_app_key').value = cfg.grok2api_remote_app_key || '';
+
+        $('grok2api_auto_add_local').checked = !!cfg.grok2api_auto_add_local;
+        $('grok2api_local_token_file').value = cfg.grok2api_local_token_file || '';
+
+        $('cpa_export_enabled').checked = cfg.cpa_export_enabled !== false;
+        $('cpa_auth_dir').value = cfg.cpa_auth_dir || './cpa_auths';
+        $('cpa_base_url').value = cfg.cpa_base_url || 'https://cli-chat-proxy.grok.com/v1';
+        $('cpa_headless').checked = !!cfg.cpa_headless;
+        $('cpa_force_standalone').checked = cfg.cpa_force_standalone !== false;
+
+        appendLog(dictionary[currentLang]['log-loaded']);
+      } catch (err) {
+        appendLog('[!] Gagal memuat/Failed to load config: ' + err);
+      }
+    }
+
+    async function saveConfig(showNotice = true) {
+      const payload = {
+        register_count: parseInt($('register_count').value) || 1,
+        multi_thread_workers: parseInt($('multi_thread_workers').value) || 4,
+        multi_thread_enabled: $('multi_thread_enabled').checked,
+        enable_nsfw: $('enable_nsfw').checked,
+        proxy: $('proxy').value.trim(),
+        user_agent: $('user_agent').value.trim(),
+        email_provider: $('email_provider').value,
+
+        cloudflare_api_base: $('cloudflare_api_base').value.trim(),
+        cloudflare_api_key: $('cloudflare_api_key').value,
+        cloudflare_auth_mode: $('cloudflare_auth_mode').value,
+        defaultDomains: $('defaultDomains').value.trim(),
+
+        duckmail_api_key: $('duckmail_api_key').value,
+
+        cloudmail_api_base: $('cloudmail_api_base').value.trim(),
+        cloudmail_public_token: $('cloudmail_public_token').value,
+        cloudmail_domains: $('cloudmail_domains').value.trim(),
+
+        yyds_api_key: $('yyds_api_key').value,
+        yyds_jwt: $('yyds_jwt').value,
+
+        grok2api_auto_add_remote: $('grok2api_auto_add_remote').checked,
+        grok2api_remote_base: $('grok2api_remote_base').value.trim(),
+        grok2api_pool_name: $('grok2api_pool_name').value,
+        grok2api_remote_app_key: $('grok2api_remote_app_key').value,
+
+        grok2api_auto_add_local: $('grok2api_auto_add_local').checked,
+        grok2api_local_token_file: $('grok2api_local_token_file').value.trim(),
+
+        cpa_export_enabled: $('cpa_export_enabled').checked,
+        cpa_auth_dir: $('cpa_auth_dir').value.trim(),
+        cpa_base_url: $('cpa_base_url').value.trim(),
+        cpa_headless: $('cpa_headless').checked,
+        cpa_force_standalone: $('cpa_force_standalone').checked,
+      };
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          if (showNotice) {
+            appendLog(dictionary[currentLang]['log-saved']);
+            showToast('toast-saved');
+          }
+          return true;
+        } else {
+          appendLog('[!] Gagal/Failed save config');
+          return false;
+        }
+      } catch (err) {
+        appendLog('[!] Error save config: ' + err);
+        return false;
+      }
+    }
+
+    async function pollStatus() {
+      try {
+        const [resStatus, resLogs] = await Promise.all([
+          fetch('/api/status'),
+          fetch('/api/logs/snapshot?limit=50')
+        ]);
+
+        if (resStatus.ok) {
+          const s = await resStatus.json();
+          isRunning = !!s.running;
+          const dict = dictionary[currentLang];
+          $('statusText').textContent = isRunning ? dict['status-running'] : dict['status-idle'];
+          $('statusDot').className = 'pulse-dot ' + (isRunning ? 'active' : '');
+          $('metricTarget').textContent = s.target || 0;
+          $('metricSuccess').textContent = s.success || 0;
+          $('metricFail').textContent = s.fail || 0;
+
+          $('startBtn').style.display = isRunning ? 'none' : 'inline-flex';
+          $('stopBtn').style.display = isRunning ? 'inline-flex' : 'none';
+        }
+
+        if (resLogs.ok) {
+          const logsData = await resLogs.json();
+          if (logsData.lines && logsData.lines.length) {
+            const body = $('terminalBody');
+            body.innerHTML = '';
+            logsData.lines.forEach(appendLog);
+          }
+        }
+      } catch (_) {}
+    }
+
+    async function startJob() {
+      await saveConfig(false);
+      const count = parseInt($('register_count').value) || 1;
+      try {
+        const res = await fetch('/api/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count })
+        });
+        if (res.ok) {
+          appendLog(`[*] 开始任务/Starting job (${count})...`);
+          showToast('toast-started');
+          pollStatus();
+        } else {
+          const data = await res.json();
+          appendLog('[!] Gagal/Failed: ' + (data.detail || 'Error'));
+        }
+      } catch (err) {
+        appendLog('[!] Error start: ' + err);
+      }
+    }
+
+    async function stopJob() {
+      try {
+        const res = await fetch('/api/stop', { method: 'POST' });
+        if (res.ok) {
+          appendLog('[!] 正在停止/Stopping...');
+          showToast('toast-stopped');
+        }
+      } catch (err) {
+        appendLog('[!] Error stop: ' + err);
+      }
+    }
+
+    async function testProxy() {
+      await saveConfig(false);
+      appendLog('[*] 正在测试代理/Testing proxy...');
+      try {
+        const res = await fetch('/api/proxy/test', { method: 'POST' });
+        const data = await res.json();
+        (data.logs || []).forEach(l => appendLog(l));
+        if (res.ok && data.ok) {
+          showToast('toast-proxy-ok');
+        } else {
+          showToast('toast-proxy-fail');
+        }
+      } catch (err) {
+        appendLog('[!] Error test proxy: ' + err);
+      }
+    }
+
+    // Event Listeners
+    $('saveConfigBtn').addEventListener('click', () => saveConfig(true));
+    $('startBtn').addEventListener('click', startJob);
+    $('stopBtn').addEventListener('click', stopJob);
+    $('testProxyBtn').addEventListener('click', testProxy);
+
+    $('copyLogBtn').addEventListener('click', () => {
+      const text = Array.from($('terminalBody').children).map(c => c.textContent).join('\n');
+      navigator.clipboard.writeText(text);
+      showToast('toast-copied');
+    });
+
+    $('clearLogBtn').addEventListener('click', () => {
+      $('terminalBody').innerHTML = `<div class="log-line info">${dictionary[currentLang]['log-ready']}</div>`;
+    });
+
+    // Init
+    loadConfig();
+    pollStatus();
+    setInterval(pollStatus, 2500);
+  </script>
+</body>
+</html>

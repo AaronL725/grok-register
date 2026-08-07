@@ -23,6 +23,12 @@ Grok Register 是一个面向自动化流程研究、测试环境验证和个人
  </a>
 </p>
 
+<p align="center">
+  <b>Language / 语言 / Bahasa:</b>
+  <a href="README.md"><b>[ 简体中文 ]</b></a> |
+  <a href="README.id.md"><b>[ Bahasa Indonesia ]</b></a>
+</p>
+
 </div>
 
 ---

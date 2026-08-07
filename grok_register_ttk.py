@@ -688,6 +688,35 @@ def run_registration_common(count, log_callback, cancel_callback, accounts_outpu
     )
 
 
+def run_registration_job(count, log_callback=None, controller=None, on_progress=None):
+    log = log_callback or cli_log
+    if controller is None:
+        controller = CliStopController()
+    accounts_output_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        f"accounts_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    log(f"[*] Tugas dimulai, target jumlah: {count}")
+    log(f"[*] Akun berhasil akan disimpan ke: {accounts_output_file}")
+
+    def observer(batch, account, output):
+        if on_progress:
+            on_progress(batch.success_count, batch.fail_count, accounts_output_file)
+
+    batch = run_registration_common(
+        count=count,
+        log_callback=log,
+        cancel_callback=controller.should_stop,
+        accounts_output_file=accounts_output_file,
+        observer=observer,
+    )
+    return {
+        "success": batch.success_count,
+        "fail": batch.fail_count,
+        "accounts_file": accounts_output_file,
+    }
+
+
 class GrokRegisterGUI:
     def __init__(self, root):
         self.root = root
