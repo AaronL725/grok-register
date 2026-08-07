@@ -28,17 +28,20 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Apply guarded upgrade
         run: python tools/apply_parallel_upgrade.py
-      - name: Fix generated isolation test fixture
+      - name: Normalize generated fixtures
         run: |
           python - <<'PY'
           from pathlib import Path
-          path = Path('tests/test_optional_multithread.py')
-          text = path.read_text(encoding='utf-8')
+          test_path = Path('tests/test_optional_multithread.py')
+          text = test_path.read_text(encoding='utf-8')
           old = 'module_path.write_text("value = None\\\\n", encoding="utf-8")'
           new = 'module_path.write_text("value = None\\n", encoding="utf-8")'
           if text.count(old) != 1:
               raise SystemExit('isolation test fixture pattern mismatch')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          test_path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          readme = Path('README.md')
+          readme.write_text(readme.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
           PY
       - name: Compile changed Python
         run: python -m compileall -q app_config.py account_outputs.py cpa_export.py registration_parallel.py grok_register_ttk.py tests/test_optional_multithread.py
