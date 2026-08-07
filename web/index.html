@@ -1018,9 +1018,17 @@
       appendLogLine(line, true);
     }
 
+    function getAuthHeaders(isJson = false) {
+      const headers = {};
+      if (isJson) headers['Content-Type'] = 'application/json';
+      const key = localStorage.getItem('grok_register_access_key') || new URLSearchParams(window.location.search).get('access_key');
+      if (key) headers['X-Access-Key'] = key;
+      return headers;
+    }
+
     async function loadConfig() {
       try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/api/config', { headers: getAuthHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         const cfg = data.config || {};
@@ -1111,7 +1119,7 @@
       try {
         const res = await fetch('/api/config', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthHeaders(true),
           body: JSON.stringify(payload)
         });
         if (res.ok) {
@@ -1133,8 +1141,8 @@
     async function pollStatus() {
       try {
         const [resStatus, resLogs] = await Promise.all([
-          fetch('/api/status'),
-          fetch('/api/logs/snapshot?limit=2000')
+          fetch('/api/status', { headers: getAuthHeaders() }),
+          fetch('/api/logs/snapshot?limit=2000', { headers: getAuthHeaders() })
         ]);
 
         if (resStatus.ok) {
@@ -1193,7 +1201,7 @@
       try {
         const res = await fetch('/api/start', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthHeaders(true),
           body: JSON.stringify({ count })
         });
         if (res.ok) {
@@ -1211,7 +1219,7 @@
 
     async function stopJob() {
       try {
-        const res = await fetch('/api/stop', { method: 'POST' });
+        const res = await fetch('/api/stop', { method: 'POST', headers: getAuthHeaders() });
         if (res.ok) {
           appendLog('[!] 正在发送停止命令...');
           showToast('toast-stopped');
@@ -1225,7 +1233,7 @@
       await saveConfig(false);
       appendLog('[*] 正在测试代理连接...');
       try {
-        const res = await fetch('/api/proxy/test', { method: 'POST' });
+        const res = await fetch('/api/proxy/test', { method: 'POST', headers: getAuthHeaders() });
         const data = await res.json();
         (data.logs || []).forEach(l => appendLog(l));
         if (res.ok && data.ok) {

@@ -289,7 +289,7 @@ async def api_logs_snapshot(limit: int = 2000, x_access_key: Optional[str] = Hea
     _require_auth(x_access_key)
     with _log_cond:
         lines = list(_log_buffer)
-    if limit and len(lines) > limit:
+    if limit > 0 and len(lines) > limit:
         lines = lines[-limit:]
     return {"ok": True, "lines": lines}
 
