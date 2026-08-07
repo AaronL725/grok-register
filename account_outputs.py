@@ -12,19 +12,25 @@ from datetime import datetime, timedelta, timezone
 from filelock import FileLock
 
 
-def append_account_line(path, email, password, sso):
+def _append_account_line_unlocked(path, email, password, sso):
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(f"{email}----{password}----{sso}\n")
         handle.flush()
         os.fsync(handle.fileno())
 
 
+def append_account_line(path, email, password, sso):
+    with FileLock(path + ".lock", timeout=30):
+        _append_account_line_unlocked(path, email, password, sso)
+
+
 def save_mail_credential(base_dir, email, credential):
     path = os.path.join(base_dir, "mail_credentials.txt")
-    with open(path, "a", encoding="utf-8") as handle:
-        handle.write(f"{email}\t{credential}\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    with FileLock(path + ".lock", timeout=30):
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(f"{email}\t{credential}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
     return True
 
 
@@ -33,14 +39,15 @@ def queue_unsaved_account(path, payload, error):
     record = dict(payload)
     record["save_error"] = str(error)
     record["queued_at"] = datetime.now(timezone.utc).isoformat()
-    with open(pending_path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    try:
-        os.chmod(pending_path, 0o600)
-    except Exception:
-        pass
+    with FileLock(pending_path + ".lock", timeout=30):
+        with open(pending_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.chmod(pending_path, 0o600)
+        except Exception:
+            pass
     return True
 
 
@@ -100,7 +107,7 @@ def retry_pending_file(pending_path, output_path=None, log_callback=None):
                     raise ValueError("record missing email or sso")
                 key = (email, sso)
                 if key not in existing:
-                    append_account_line(target_path, email, password, sso)
+                    _append_account_line_unlocked(target_path, email, password, sso)
                     existing.add(key)
                 restored += 1
                 logger(f"[+] 已恢复 pending 账号: {email}")

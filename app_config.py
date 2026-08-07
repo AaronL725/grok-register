@@ -22,6 +22,8 @@ DEFAULT_CONFIG = {
     "proxy": "",
     "enable_nsfw": True,
     "register_count": 1,
+    "multi_thread_enabled": False,
+    "multi_thread_workers": 4,
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
     "grok2api_auto_add_local": False,
     "grok2api_local_token_file": "",
@@ -94,11 +96,12 @@ def validate_config_structure(raw):
         "enable_nsfw", "grok2api_auto_add_local", "grok2api_auto_add_remote",
         "grok2api_allow_legacy_full_save", "cpa_export_enabled",
         "cpa_copy_to_hotload", "cpa_headless", "cpa_force_standalone",
-        "cpa_mint_cookie_inject",
+        "cpa_mint_cookie_inject", "multi_thread_enabled",
     )
     for key in bool_keys:
         cfg[key] = _require_bool(cfg, key)
     cfg["register_count"] = _require_int(cfg, "register_count", 1, 2500)
+    cfg["multi_thread_workers"] = _require_int(cfg, "multi_thread_workers", 1, 8)
     cfg["cpa_mint_timeout_sec"] = _require_int(cfg, "cpa_mint_timeout_sec", 30, 1800)
     cfg["cpa_oidc_request_timeout_sec"] = _require_int(cfg, "cpa_oidc_request_timeout_sec", 3, 120)
     cfg["cpa_oidc_poll_timeout_sec"] = _require_int(cfg, "cpa_oidc_poll_timeout_sec", 3, 120)
