@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from filelock import FileLock
+
 _ROOT = Path(__file__).resolve().parent
 _DEFAULT_AUTH_DIR = _ROOT / "cpa_auths"
 
@@ -182,8 +184,11 @@ def export_cpa_xai_for_account(email, password, page=None, cookies=None, sso=Non
     if not result.get("ok"):
         fail_path = settings.auth_dir / "cpa_auth_failed.txt"
         try:
-            with open(str(fail_path), "a", encoding="utf-8") as handle:
-                handle.write("%s----%s----%s\n" % (email, result.get("error") or "unknown", int(time.time())))
+            with FileLock(str(fail_path) + ".lock", timeout=30):
+                with open(str(fail_path), "a", encoding="utf-8") as handle:
+                    handle.write("%s----%s----%s\n" % (email, result.get("error") or "unknown", int(time.time())))
+                    handle.flush()
+                    os.fsync(handle.fileno())
         except Exception as exc:
             log("[cpa] failed to persist failure record: %s" % exc)
     return result

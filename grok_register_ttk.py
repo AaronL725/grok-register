@@ -564,7 +564,7 @@ def tk_option_menu(parent, variable, values, width=12):
 
 
 
-def maybe_export_cpa_xai_after_success(email, password, sso="", log_callback=None, cancel_callback=None):
+def maybe_export_cpa_xai_after_success(email, password, sso="", log_callback=None, cancel_callback=None, page_override=None):
     if not bool(config.get("cpa_export_enabled", False)):
         return {"ok": False, "skipped": True, "reason": "disabled"}
     logger = log_callback or (lambda message: None)
@@ -573,11 +573,12 @@ def maybe_export_cpa_xai_after_success(email, password, sso="", log_callback=Non
     except Exception as exc:
         logger(f"[!] CPA 模块导入失败，已跳过 OIDC 导出: {exc}")
         return {"ok": False, "error": str(exc)}
-    current_page = None
-    try:
-        current_page = _registration_browser.page
-    except Exception:
-        current_page = None
+    current_page = page_override
+    if current_page is None:
+        try:
+            current_page = _registration_browser.page
+        except Exception:
+            current_page = None
     try:
         result = export_cpa_xai_for_account(
             email=email,
@@ -636,6 +637,22 @@ def retry_pending_file(pending_path, output_path=None, log_callback=None):
 def run_registration_common(count, log_callback, cancel_callback, accounts_output_file, observer):
     from registration_flow import RegistrationCallbacks, RegistrationOperations, run_batch
     callbacks = RegistrationCallbacks(log=log_callback, cancelled=cancel_callback)
+    parallel_enabled = bool(config.get("multi_thread_enabled", False))
+    parallel_workers = int(config.get("multi_thread_workers", 4) or 4)
+    if parallel_enabled and parallel_workers > 1 and int(count) > 1:
+        from registration_parallel import run_parallel_batch
+        return run_parallel_batch(
+            count=int(count),
+            callbacks=callbacks,
+            observer=observer,
+            runtime_namespace=globals(),
+            accounts_output_file=accounts_output_file,
+            workers=parallel_workers,
+            enable_nsfw=bool(config.get("enable_nsfw", True)),
+            cleanup_interval=MEMORY_CLEANUP_INTERVAL,
+            max_slot_retry=3,
+            max_mail_retry=3,
+        )
     operations = RegistrationOperations(
         start_browser=lambda: start_browser(log_callback=log_callback),
         restart_browser=lambda: restart_browser(log_callback=log_callback),
@@ -866,6 +883,34 @@ class GrokRegisterGUI:
         self.cpa_auth_dir_entry = tk_entry(config_frame, textvariable=self.cpa_auth_dir_var, width=34)
         add_field(self.cpa_auth_dir_entry, 13, 3)
 
+        add_label(14, 0, "并发注册:")
+        self.multi_thread_var = tk.BooleanVar(value=bool(config.get("multi_thread_enabled", False)))
+        self.multi_thread_check = tk_checkbutton(
+            config_frame,
+            text="启用多线程",
+            variable=self.multi_thread_var,
+            command=self._sync_multithread_controls,
+        )
+        add_field(self.multi_thread_check, 14, 1, sticky=tk.W)
+        add_label(14, 2, "线程数:")
+        self.multi_thread_workers_var = tk.StringVar(value=str(config.get("multi_thread_workers", 4)))
+        self.multi_thread_workers_spinbox = tk.Spinbox(
+            config_frame,
+            from_=1,
+            to=8,
+            width=8,
+            textvariable=self.multi_thread_workers_var,
+            bg=UI_ENTRY_BG,
+            fg=UI_FG,
+            insertbackground=UI_FG,
+            buttonbackground=UI_BUTTON_BG,
+            disabledbackground="#2f2f2f",
+            disabledforeground=UI_MUTED_FG,
+            relief=tk.SOLID,
+        )
+        add_field(self.multi_thread_workers_spinbox, 14, 3, sticky=tk.W)
+        self._sync_multithread_controls()
+
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
         self.start_btn = tk_button(btn_frame, text="开始注册", command=self.start_registration)
@@ -971,6 +1016,12 @@ class GrokRegisterGUI:
         self.registered_unsaved_count = 0
         self.postprocess_warning_count = 0
 
+    def _sync_multithread_controls(self):
+        if not hasattr(self, "multi_thread_workers_spinbox"):
+            return
+        state = tk.NORMAL if bool(self.multi_thread_var.get()) else tk.DISABLED
+        self.multi_thread_workers_spinbox.config(state=state)
+
     def start_registration(self):
         if self.is_running:
             self.log("[!] 当前已有任务在运行")
@@ -996,6 +1047,7 @@ class GrokRegisterGUI:
         config["grok2api_remote_admin_password"] = self.grok2api_remote_password_var.get()
         config["cpa_export_enabled"] = bool(self.cpa_export_var.get())
         config["cpa_auth_dir"] = self.cpa_auth_dir_var.get().strip() or "./cpa_auths"
+        config["multi_thread_enabled"] = bool(self.multi_thread_var.get())
         raw_paths = [x.strip() for x in self.cloudflare_paths_var.get().split(",") if x.strip()]
         if len(raw_paths) >= 4:
             config["cloudflare_path_domains"] = raw_paths[0] if raw_paths[0].startswith("/") else ("/" + raw_paths[0])
@@ -1005,6 +1057,7 @@ class GrokRegisterGUI:
         try:
             count = int(self.count_var.get())
             config["register_count"] = count
+            config["multi_thread_workers"] = int(self.multi_thread_workers_var.get())
             validated = validate_run_requirements(config)
             config.clear()
             config.update(validated)
@@ -1022,6 +1075,11 @@ class GrokRegisterGUI:
         self.update_stats()
         self._set_running_ui(True)
         self.log(f"[*] 配置已保存，开始执行。目标数量: {count}")
+        if config.get("multi_thread_enabled") and int(config.get("multi_thread_workers", 4)) > 1 and count > 1:
+            actual_workers = min(count, int(config.get("multi_thread_workers", 4)))
+            self.log(f"[*] 多线程注册已开启: 配置 {config.get('multi_thread_workers')} | 实际 {actual_workers}")
+        else:
+            self.log("[*] 多线程注册关闭，使用原串行流程")
         self.log(f"[*] 成功账号将实时保存到: {self.accounts_output_file}")
         threading.Thread(
             target=self.run_registration,
@@ -1132,6 +1190,10 @@ def main_cli():
     count = int(config.get("register_count", 1) or 1)
     cli_log("[*] CLI 已加载配置")
     cli_log(f"[*] 当前邮箱服务商: {config.get('email_provider', 'duckmail')} | 注册数量: {count}")
+    if config.get("multi_thread_enabled") and int(config.get("multi_thread_workers", 4)) > 1 and count > 1:
+        cli_log(f"[*] 多线程注册: 开启 | 配置线程 {config.get('multi_thread_workers')} | 实际线程 {min(count, int(config.get('multi_thread_workers', 4)))}")
+    else:
+        cli_log("[*] 多线程注册: 关闭（串行）")
     cli_log("[*] 输入 start 后开始；按 Ctrl+C 可强制停止")
     try:
         command = input("> ").strip().lower()

@@ -14,6 +14,8 @@
   "proxy": "",
   "enable_nsfw": true,
   "register_count": 1,
+  "multi_thread_enabled": false,
+  "multi_thread_workers": 4,
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
   "grok2api_auto_add_local": false,
   "grok2api_local_token_file": "",

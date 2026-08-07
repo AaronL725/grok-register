@@ -499,3 +499,22 @@ Thanks to [linux.do](https://linux.do) — a vibrant tech community where this p
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=AaronL725/grok-register&type=date&legend=top-left&sealed_token=uCM--S2xEp0n8rFUZHUg6wUJOgYcfO4XEVCIF9UZAT04YjL9YsMEOVOGAOlQfqwsoS7cQef0Rwc1cYCY4lAmTuMmcg-hKzNnx1A7KNekuCXQotFd4YifLIkvJWOEy5vxiREJX80Mwxbr8F-3GfCv0utIsQz_iq19nS57svUqwv0mSosV8OTxqXTLjmsI" />
  </picture>
 </a>
+
+## 可选多线程注册（实验）
+
+多线程默认**关闭**，因此升级后未修改配置的用户仍走原有串行注册流程。需要研究并发行为时可配置：
+
+```json
+{
+  "multi_thread_enabled": true,
+  "multi_thread_workers": 4
+}
+```
+
+- `multi_thread_enabled`: 是否启用并发注册，默认 `false`。
+- `multi_thread_workers`: 配置线程数，默认 `4`，允许 `1`–`8`；实际 worker 数不会超过本次注册数量。
+- GUI 可通过“启用多线程”开关和线程数输入框设置；CLI 继续读取同一份 `config.json`。
+- 并发模式为每个 worker 创建独立的邮箱模块实例与注册浏览器模块实例，避免共享 `browser/page` 状态；单账号注册、重试、grok2api、CPA 和结果统计仍复用原有逻辑。
+- 账号、邮箱凭据、pending 和 CPA 失败日志的共享追加写入使用文件锁保护；CPA 浏览器在所有 worker 结束后统一清理。
+
+该选项用于学习与并发行为研究。若未明确需要并发，请保持关闭以获得与旧版本一致的执行路径。
