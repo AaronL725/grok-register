@@ -48,7 +48,8 @@ class WebUIStaticTests(unittest.TestCase):
             '@grok-register',
         ):
             self.assertIn(marker, self.html)
-        self.assertNotIn('class="console-pill"', self.html)
+        self.assertIn('class="console-pill" data-i18n="console">控制台</span>', self.html)
+        self.assertIn('.console-pill{font-size:11px;font-weight:600;background:rgba(208,255,0,.15)', self.html)
 
     def test_responsive_breakpoints_exist(self):
         self.assertIn('@media(max-width:1050px)', self.html)
