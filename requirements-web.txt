@@ -1,0 +1,4 @@
+-r requirements.txt
+fastapi>=0.115,<0.116
+uvicorn>=0.34,<0.35
+httpx>=0.28,<0.29
