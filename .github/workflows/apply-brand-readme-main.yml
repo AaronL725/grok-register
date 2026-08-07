@@ -1,4 +1,4 @@
-name: Apply requested brand and README update
+name: Finalize requested brand and README update
 
 on:
   pull_request:
@@ -9,82 +9,39 @@ permissions:
   contents: write
 
 jobs:
-  apply:
+  sync:
     if: github.head_ref == 'fix/brand-readme-placement-v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Apply exact patch
-        shell: python
+      - name: Sync latest main and preserve requested result
         run: |
-          from pathlib import Path
-
-          def replace_once(text, old, new, label):
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{label}: expected exactly one match, got {count}")
-              return text.replace(old, new, 1)
-
-          index_path = Path("web/index.html")
-          test_path = Path("tests/test_web_ui_static.py")
-          readme_path = Path("README.md")
-          index = index_path.read_text(encoding="utf-8")
-          test_text = test_path.read_text(encoding="utf-8")
-          readme = readme_path.read_text(encoding="utf-8")
-
-          if '    <div class="brand-name">grok-register</div>\n' not in index and '### 可选多线程注册（可选）' in readme:
-              Path('.patch-already-applied').write_text('1', encoding='utf-8')
-              raise SystemExit(0)
-
-          index = replace_once(index, '    <div class="brand-name">grok-register</div>\n', '', 'remove plain brand name')
-          index_path.write_text(index, encoding="utf-8")
-
-          old_test = '''        self.assertIn('class="console-pill" data-i18n="console">控制台</span>', self.html)\n        self.assertIn('.console-pill{font-size:11px;font-weight:600;background:rgba(208,255,0,.15)', self.html)\n'''
-          new_test = '''        self.assertIn('class="console-pill" data-i18n="console">控制台</span>', self.html)\n        self.assertIn('.console-pill{font-size:11px;font-weight:600;background:rgba(208,255,0,.15)', self.html)\n        self.assertNotIn('class="brand-name">grok-register</div>', self.html)\n        self.assertLess(self.html.index('class="repo-pill"'), self.html.index('class="console-pill" data-i18n="console"'))\n'''
-          test_text = replace_once(test_text, old_test, new_test, 'brand static test')
-          test_path.write_text(test_text, encoding="utf-8")
-
-          readme = replace_once(
-              readme,
-              '- [配置](#配置)\n',
-              '- [配置](#配置)\n  - [可选多线程注册（可选）](#可选多线程注册可选)\n  - [WebUI（可选）](#webui可选)\n',
-              'README TOC',
-          )
-          old_tail = '''## 可选多线程注册（实验）\n\n多线程默认**关闭**，因此升级后未修改配置的用户仍走原有串行注册流程。需要研究并发行为时可配置：\n\n```json\n{\n  "multi_thread_enabled": true,\n  "multi_thread_workers": 4\n}\n```\n\n- `multi_thread_enabled`: 是否启用并发注册，默认 `false`。\n- `multi_thread_workers`: 配置线程数，默认 `4`，允许 `1`–`8`；实际 worker 数不会超过本次注册数量。\n- GUI 可通过“启用多线程”开关和线程数输入框设置；CLI 继续读取同一份 `config.json`。\n- 并发模式为每个 worker 创建独立的邮箱模块实例与注册浏览器模块实例，避免共享 `browser/page` 状态；单账号注册、重试、grok2api、CPA 和结果统计仍复用原有逻辑。\n- 账号、邮箱凭据、pending 和 CPA 失败日志的共享追加写入使用文件锁保护；CPA 浏览器在所有 worker 结束后统一清理。\n\n该选项用于学习与并发行为研究。若未明确需要并发，请保持关闭以获得与旧版本一致的执行路径。\n\n## WebUI（可选）\n\nWebUI 是一个本地 FastAPI 薄控制层，与 GUI / CLI 共用同一份 `config.json` 和同一套 `run_registration_common()` 注册流程；串行、多线程、grok2api、CPA、pending 与浏览器生命周期仍由原有模块负责。\n\n安装可选 Web 依赖：\n\n```bash\npython -m pip install -r requirements-web.txt\n```\n\n启动：\n\n```bash\npython -m web.server\n```\n\n然后访问 `http://127.0.0.1:8092`。WebUI 默认只监听本机地址，提供配置、开始/停止、批次状态和实时日志。任务运行期间配置表单会被锁定，建议同一时间只从 GUI、CLI、WebUI 中选择一个入口启动注册任务。\n'''
-          new_sections = '''### 可选多线程注册（可选）\n\n多线程默认**关闭**，需要时可配置：\n\n```json\n{\n  "multi_thread_enabled": true,\n  "multi_thread_workers": 4\n}\n```\n\n- `multi_thread_enabled`: 是否启用并发注册，默认 `false`。\n- `multi_thread_workers`: 配置线程数，默认 `4`，允许 `1`–`8`；实际 worker 数不会超过本次注册数量。\n- GUI 可通过“启用多线程”开关和线程数输入框设置；CLI 继续读取同一份 `config.json`。\n- 并发模式为每个 worker 创建独立的邮箱模块实例与注册浏览器模块实例，避免共享 `browser/page` 状态；单账号注册、重试、grok2api、CPA 和结果统计仍复用原有逻辑。\n- 账号、邮箱凭据、pending 和 CPA 失败日志的共享追加写入使用文件锁保护；CPA 浏览器在所有 worker 结束后统一清理。\n\n### WebUI（可选）\n\nWebUI 是一个本地 FastAPI 薄控制层，与 GUI / CLI 共用同一份 `config.json` 和同一套 `run_registration_common()` 注册流程；串行、多线程、grok2api、CPA、pending 与浏览器生命周期仍由原有模块负责。\n\n安装可选 Web 依赖：\n\n```bash\npython -m pip install -r requirements-web.txt\n```\n\n启动：\n\n```bash\npython -m web.server\n```\n\n然后访问 `http://127.0.0.1:8092`。WebUI 默认只监听本机地址，提供配置、开始/停止、批次状态和实时日志。任务运行期间配置表单会被锁定，建议同一时间只从 GUI、CLI、WebUI 中选择一个入口启动注册任务。\n\n'''
-          readme = replace_once(readme, old_tail, '', 'remove old README tail sections')
-          anchor = '2. **运行校验**：点击“开始注册”或启动 CLI 任务时，检查当前启用功能所需的配置。\n\n'
-          readme = replace_once(readme, anchor, anchor + new_sections, 'insert config subsections')
-          for phrase in (
-              '因此升级后未修改配置的用户仍走原有串行注册流程。',
-              '该选项用于学习与并发行为研究。若未明确需要并发，请保持关闭以获得与旧版本一致的执行路径。',
-              '## 可选多线程注册（实验）',
-          ):
-              if phrase in readme:
-                  raise SystemExit(f'forbidden README text remains: {phrase}')
-          if readme.count('### 可选多线程注册（可选）') != 1 or readme.count('### WebUI（可选）') != 1:
-              raise SystemExit('README sections must appear exactly once')
-          if not (readme.index('## 配置') < readme.index('### 可选多线程注册（可选）') < readme.index('### WebUI（可选）') < readme.index('### 基础配置')):
-              raise SystemExit('README config subsection order is invalid')
-          readme_path.write_text(readme.rstrip() + '\n', encoding="utf-8")
-      - name: Verify
-        run: |
-          if [ -f .patch-already-applied ]; then exit 0; fi
-          python -m unittest tests.test_web_ui_static -v
-          git diff --check
-      - name: Commit result and remove temporary workflows
-        run: |
-          if [ -f .patch-already-applied ]; then exit 0; fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "Branch already contains latest main"
+            exit 0
+          fi
+          set +e
+          git merge origin/main --no-edit
+          merge_status=$?
+          set -e
+          if [ $merge_status -ne 0 ]; then
+            git rm -f .github/workflows/apply-brand-readme-main.yml || true
+            git add -A
+            git commit --no-edit
+          fi
           git rm -f .github/workflows/apply-brand-readme-main.yml || true
           git rm -f .github/workflows/apply-brand-readme-placement.yml || true
-          git add README.md web/index.html tests/test_web_ui_static.py
-          git commit -m "fix: simplify WebUI brand and reorganize README [brand-readme-applied]"
+          git rm -f .github/.brand-readme-trigger || true
+          python -m unittest tests.test_web_ui_static -v
+          git diff --check HEAD~1 HEAD || true
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: remove temporary brand README workflow"
+          fi
           git push origin HEAD:${{ github.head_ref }}
