@@ -1,0 +1,10 @@
+name: Trigger requested brand and README patch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo trigger
