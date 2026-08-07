@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>grok-register WebUI</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0d10;--panel:#15181d;--panel2:#101318;--line:#292e36;--fg:#edf0f5;--muted:#98a2b3;--accent:#86efac;--bad:#f87171;--warn:#fbbf24}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit}.top{position:sticky;top:0;z-index:5;display:flex;gap:12px;align-items:center;padding:14px 20px;background:rgba(11,13,16,.94);border-bottom:1px solid var(--line)}.top h1{margin:0;font-size:18px}.spacer{flex:1}.btn{border:1px solid var(--line);background:#20242b;color:var(--fg);border-radius:8px;padding:8px 14px;cursor:pointer}.btn.primary{background:var(--accent);color:#07100a;border-color:var(--accent);font-weight:700}.btn.danger{background:#3b1519;border-color:#6b242a;color:#fecaca}.btn:disabled{opacity:.45;cursor:not-allowed}.wrap{max-width:1500px;margin:auto;padding:20px}.stats{display:grid;grid-template-columns:repeat(6,minmax(100px,1fr));gap:10px;margin-bottom:16px}.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}.card{padding:14px}.label{color:var(--muted);font-size:12px}.value{font-size:23px;font-weight:700;margin-top:4px}.layout{display:grid;grid-template-columns:minmax(540px,1.15fr) minmax(420px,.85fr);gap:16px}.tabs{display:flex;gap:4px;padding:10px;border-bottom:1px solid var(--line);overflow:auto}.tab{background:transparent;border:0;color:var(--muted);padding:8px 11px;border-radius:7px;cursor:pointer}.tab.active{background:#252a32;color:var(--fg)}.section{display:none;padding:16px}.section.active{display:block}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}.field{display:flex;flex-direction:column;gap:6px}.field.full{grid-column:1/-1}.field label{font-size:12px;color:#c7ced8}.field input,.field select{width:100%;border:1px solid var(--line);background:var(--panel2);color:var(--fg);border-radius:7px;padding:8px 10px;outline:none}.field input:focus,.field select:focus{border-color:#64748b}.check{display:flex;gap:9px;align-items:center;background:var(--panel2);border:1px solid var(--line);padding:9px 10px;border-radius:7px}.check input{width:auto}.terminal{min-height:720px;display:flex;flex-direction:column}.terminal-head{display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}.terminal-body{flex:1;max-height:760px;overflow:auto;background:#060708;padding:14px;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}.line{margin-bottom:2px}.line.ok{color:#86efac}.line.bad{color:#fca5a5}.line.info{color:#93c5fd}.notice{min-height:20px;color:var(--muted);padding:0 2px 12px}.error{color:var(--bad)}.warn{color:var(--warn)}@media(max-width:1050px){.layout{grid-template-columns:1fr}.terminal{min-height:520px}.stats{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.top{flex-wrap:wrap}.wrap{padding:10px}}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>grok-register WebUI</h1>
+  <span id="runBadge" class="label">待机</span>
+  <span class="spacer"></span>
+  <button id="saveBtn" class="btn">保存配置</button>
+  <button id="startBtn" class="btn primary">开始注册</button>
+  <button id="stopBtn" class="btn danger" disabled>停止</button>
+</header>
+<main class="wrap">
+  <div class="stats">
+    <div class="card"><div class="label">目标</div><div id="sTarget" class="value">0</div></div>
+    <div class="card"><div class="label">成功</div><div id="sSuccess" class="value">0</div></div>
+    <div class="card"><div class="label">失败</div><div id="sFail" class="value">0</div></div>
+    <div class="card"><div class="label">待恢复</div><div id="sPending" class="value">0</div></div>
+    <div class="card"><div class="label">后处理警告</div><div id="sWarnings" class="value">0</div></div>
+    <div class="card"><div class="label">状态</div><div id="sStatus" class="value">待机</div></div>
+  </div>
+  <div id="notice" class="notice"></div>
+  <div class="layout">
+    <section class="panel">
+      <div id="tabs" class="tabs"></div>
+      <div id="sections"></div>
+    </section>
+    <section class="panel terminal">
+      <div class="terminal-head"><strong>实时日志</strong><span class="spacer"></span><button id="clearBtn" class="btn">清空显示</button></div>
+      <div id="terminal" class="terminal-body"></div>
+    </section>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const fieldDefs={
+  "基础":[
+    ["register_count","注册数量","number",{min:1,max:2500}],
+    ["multi_thread_enabled","启用多线程","checkbox"],
+    ["multi_thread_workers","线程数","number",{min:1,max:8}],
+    ["enable_nsfw","注册后尝试开启 NSFW","checkbox"],
+    ["proxy","主注册代理","text"],
+    ["user_agent","User-Agent","text","full"]
+  ],
+  "邮箱":[
+    ["email_provider","邮箱服务商","select",["duckmail","yyds","cloudflare","cloudmail"]],
+    ["duckmail_api_key","DuckMail API Key","password"],
+    ["yyds_api_key","YYDS API Key","password"],
+    ["yyds_jwt","YYDS JWT","password"],
+    ["cloudflare_api_base","Cloudflare API Base","text","full"],
+    ["cloudflare_api_key","Cloudflare API Key / Admin Password","password"],
+    ["cloudflare_auth_mode","Cloudflare 鉴权模式","select",["none","bearer","x-api-key","x-admin-auth","query-key"]],
+    ["cloudflare_path_domains","Cloudflare 域名路径","text"],
+    ["cloudflare_path_accounts","Cloudflare 创建邮箱路径","text"],
+    ["cloudflare_path_token","Cloudflare Token 路径","text"],
+    ["cloudflare_path_messages","Cloudflare 邮件路径","text"],
+    ["defaultDomains","默认域名（逗号分隔）","text","full"],
+    ["cloudmail_api_base","Cloud Mail API Base","text","full"],
+    ["cloudmail_public_token","Cloud Mail Public Token","password"],
+    ["cloudmail_domains","Cloud Mail 域名","text"],
+    ["cloudmail_path_messages","Cloud Mail 邮件路径","text","full"]
+  ],
+  "grok2api":[
+    ["grok2api_auto_add_local","自动写入本地池","checkbox"],
+    ["grok2api_local_token_file","本地 Token 文件","text"],
+    ["grok2api_pool_name","Token 池","select",["ssoBasic","ssoSuper"]],
+    ["grok2api_auto_add_remote","自动写入远端池","checkbox"],
+    ["grok2api_remote_base","远端 Base URL","text","full"],
+    ["grok2api_remote_app_key","旧版 App Key","password"],
+    ["grok2api_remote_admin_username","新版管理员账号","text"],
+    ["grok2api_remote_admin_password","新版管理员密码","password"],
+    ["grok2api_allow_legacy_full_save","允许旧版全量保存回退","checkbox"]
+  ],
+  "CPA":[
+    ["cpa_export_enabled","启用 CPA/OIDC 导出","checkbox"],
+    ["cpa_auth_dir","CPA 输出目录","text"],
+    ["cpa_copy_to_hotload","复制到热加载目录","checkbox"],
+    ["cpa_hotload_dir","热加载目录","text"],
+    ["cpa_base_url","CPA Base URL","text","full"],
+    ["cpa_proxy","CPA 专用代理","text","full"],
+    ["cpa_headless","CPA 无头模式","checkbox"],
+    ["cpa_force_standalone","CPA 独立浏览器","checkbox"],
+    ["cpa_mint_timeout_sec","CPA 授权整体超时（秒）","number",{min:30,max:1800}],
+    ["cpa_mint_cookie_inject","注入已有 Cookie","checkbox"],
+    ["cpa_oidc_request_timeout_sec","OIDC 请求超时（秒）","number",{min:3,max:120}],
+    ["cpa_oidc_poll_timeout_sec","OIDC 轮询超时（秒）","number",{min:3,max:120}],
+    ["api_reverse_tools","外部 cpa_xai 工具目录","text","full"]
+  ]
+};
+let dirty=new Set(),lastSeq=0,running=false,serverLatest=0;
+function renderFields(){
+  const tabs=$("tabs"),sections=$("sections");let first=true;
+  for(const [section,defs] of Object.entries(fieldDefs)){
+    const tab=document.createElement("button");tab.className="tab"+(first?" active":"");tab.textContent=section;tab.dataset.target="sec-"+section;tabs.appendChild(tab);
+    const box=document.createElement("div");box.className="section"+(first?" active":"");box.id="sec-"+section;const grid=document.createElement("div");grid.className="grid";box.appendChild(grid);sections.appendChild(box);
+    for(const def of defs){const [key,label,type,extra]=def;const wrap=document.createElement("div");wrap.className="field"+(extra==="full"?" full":"");
+      if(type==="checkbox"){const row=document.createElement("label");row.className="check";const input=document.createElement("input");input.type="checkbox";input.id=key;row.append(input,document.createTextNode(label));wrap.appendChild(row);}
+      else{const lab=document.createElement("label");lab.htmlFor=key;lab.textContent=label;let input;if(type==="select"){input=document.createElement("select");for(const value of extra){const o=document.createElement("option");o.value=value;o.textContent=value;input.appendChild(o);}}else{input=document.createElement("input");input.type=type;const opt=(extra&&typeof extra==="object")?extra:{};if(opt.min!==undefined)input.min=opt.min;if(opt.max!==undefined)input.max=opt.max;}input.id=key;wrap.append(lab,input);}grid.appendChild(wrap);
+      const input=wrap.querySelector("input,select");input.addEventListener("input",()=>dirty.add(key));input.addEventListener("change",()=>dirty.add(key));
+    }
+    first=false;
+  }
+  tabs.addEventListener("click",e=>{const t=e.target.closest(".tab");if(!t)return;document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".section").forEach(x=>x.classList.remove("active"));t.classList.add("active");$(t.dataset.target).classList.add("active");});
+}
+function setNotice(text,bad=false){const n=$("notice");n.textContent=text||"";n.className="notice"+(bad?" error":"");}
+function setFormDisabled(disabled){document.querySelectorAll("#sections input,#sections select").forEach(el=>el.disabled=disabled);$("saveBtn").disabled=disabled;$("startBtn").disabled=disabled;$("stopBtn").disabled=!disabled;}
+function applyConfig(cfg){for(const defs of Object.values(fieldDefs)){for(const [key,,type] of defs){const el=$(key);if(!el||!(key in cfg))continue;if(type==="checkbox")el.checked=!!cfg[key];else el.value=cfg[key]??"";}}dirty.clear();}
+function readValue(key){const el=$(key);if(!el)return undefined;if(el.type==="checkbox")return el.checked;if(el.type==="number")return Number.parseInt(el.value,10);return el.value;}
+async function loadConfig(){const r=await fetch("/api/config");if(!r.ok)throw new Error((await r.json()).detail||"加载配置失败");const d=await r.json();applyConfig(d.config||{});}
+async function saveConfig(){if(running)return false;const payload={};for(const key of dirty)payload[key]=readValue(key);if(!Object.keys(payload).length){setNotice("没有需要保存的修改");return true;}const r=await fetch("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok){setNotice(d.detail||"配置保存失败",true);return false;}applyConfig(d.config||{});setNotice("配置已保存");return true;}
+async function startJob(){if(dirty.size&&!await saveConfig())return;setNotice("");const r=await fetch("/api/start",{method:"POST"});const d=await r.json();if(!r.ok){setNotice(d.detail||"启动失败",true);return;}await pollStatus();}
+async function stopJob(){const r=await fetch("/api/stop",{method:"POST"});const d=await r.json();if(!r.ok)setNotice(d.detail||"停止失败",true);else setNotice(d.stopped?"已发送停止请求":"当前没有运行中的任务");}
+function appendLine(entry){const body=$("terminal"),nearBottom=body.scrollHeight-body.scrollTop-body.clientHeight<60;const div=document.createElement("div");div.className="line";const line=String(entry.line||"");if(line.includes("[+]"))div.classList.add("ok");else if(line.includes("[!]"))div.classList.add("bad");else if(line.includes("[*]"))div.classList.add("info");div.textContent=line;body.appendChild(div);while(body.children.length>2000)body.removeChild(body.firstChild);if(nearBottom)body.scrollTop=body.scrollHeight;}
+async function pollLogs(){try{const r=await fetch("/api/logs?after="+lastSeq);if(!r.ok)return;const d=await r.json();serverLatest=d.latest||lastSeq;for(const e of d.entries||[]){appendLine(e);lastSeq=Math.max(lastSeq,Number(e.seq)||0);}}catch(_){}}
+async function pollStatus(){try{const r=await fetch("/api/status");if(!r.ok)return;const s=await r.json();running=!!s.running;$("sTarget").textContent=s.target||0;$("sSuccess").textContent=s.success||0;$("sFail").textContent=s.fail||0;$("sPending").textContent=s.pending||0;$("sWarnings").textContent=s.warnings||0;$("sStatus").textContent=running?"运行中":(s.cancelled?"已停止":"待机");$("runBadge").textContent=running?"运行中":"待机";setFormDisabled(running);if(s.error)setNotice("任务异常: "+s.error,true);}catch(_){}}
+$("saveBtn").addEventListener("click",()=>saveConfig().catch(e=>setNotice(e.message,true)));$("startBtn").addEventListener("click",()=>startJob().catch(e=>setNotice(e.message,true)));$("stopBtn").addEventListener("click",()=>stopJob().catch(e=>setNotice(e.message,true)));$("clearBtn").addEventListener("click",()=>{$("terminal").innerHTML="";lastSeq=serverLatest;});
+renderFields();Promise.all([loadConfig(),pollStatus(),pollLogs()]).catch(e=>setNotice(e.message,true));setInterval(pollStatus,1000);setInterval(pollLogs,1000);
+</script>
+</body>
+</html>
