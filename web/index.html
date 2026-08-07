@@ -877,6 +877,57 @@
     };
 
     function setLanguage(lang) {
+    const logTranslations = [
+      { zh: "1. 打开注册页", id: "1. Membuka Halaman Registrasi" },
+      { zh: "2. 创建邮箱并提交", id: "2. Membuat Email & Mengirimkan Form" },
+      { zh: "已创建邮箱:", id: "Email Berhasil Dibuat:" },
+      { zh: "已填写邮箱并提交:", id: "Email Diisi & Form Dikirim:" },
+      { zh: "3. 拉取验证码", id: "3. Mengambil Kode OTP" },
+      { zh: "Cloudflare 本轮邮件数量:", id: "Jumlah Email Cloudflare Ronde Ini:" },
+      { zh: "Cloudflare 收到邮件:", id: "Cloudflare Menerima Email:" },
+      { zh: "Cloudflare 从邮件中提取到验证码:", id: "Cloudflare Mengestrak Kode OTP:" },
+      { zh: "已触发重新发送验证码", id: "Pemicu Kirim Ulang OTP Berhasil" },
+      { zh: "已填写验证码并提交:", id: "Kode OTP Diisi & Form Dikirim:" },
+      { zh: "4. 填写资料", id: "4. Mengisi Profil Pengguna" },
+      { zh: "资料已填写，等待 Cloudflare 人机验证通过", id: "Profil Diisi, Menunggu Turnstile Cloudflare..." },
+      { zh: "Cloudflare token 为空，暂停", id: "Token Cloudflare Kosong, Menunggu..." },
+      { zh: "Turnstile 已通过", id: "Turnstile Cloudflare Berhasil Lolos" },
+      { zh: "Turnstile 二次复用完成", id: "Turnstile Re-use Selesai" },
+      { zh: "已填写注册资料并提交:", id: "Profil Registrasi Berhasil Dikirim:" },
+      { zh: "资料已填:", id: "Profil Terisi:" },
+      { zh: "5. 等待 sso cookie", id: "5. Menunggu SSO Cookie" },
+      { zh: "已获取到 sso cookie", id: "Berhasil Mendapatkan SSO Cookie" },
+      { zh: "6. 开启 NSFW", id: "6. Mengaktifkan Mode NSFW" },
+      { zh: "NSFW 开启成功:", id: "NSFW Berhasil Diaktifkan:" },
+      { zh: "CPA OIDC 导出成功:", id: "Ekspor CPA OIDC Berhasil:" },
+      { zh: "CPA OIDC 导出失败", id: "Ekspor CPA OIDC Gagal" },
+      { zh: "注册并保存成功:", id: "Registrasi & Penyimpanan Berhasil:" },
+      { zh: "任务结束: 关闭浏览器并清理内存", id: "Tugas Selesai: Menutup Browser & Membersihkan Memori" },
+      { zh: "Python GC 已回收对象数:", id: "Python GC Membersihkan Objek:" },
+      { zh: "Web 任务线程已结束", id: "Thread Tugas Web Selesai" },
+      { zh: "直连模式（未配置代理）", id: "Mode Koneksi Langsung (Tanpa Proxy)" },
+      { zh: "正在测试代理连接", id: "Menguji Koneksi Proxy" },
+      { zh: "代理连接成功！出口 IP", id: "Koneksi Proxy Berhasil! Egress IP" },
+      { zh: "开始注册任务 数量=", id: "Memulai Tugas Registrasi Jumlah=" },
+      { zh: "终止命令已发送", id: "Perintah Hentikan Telah Dikirim" },
+      { zh: "控制台已就绪，等待指令...", id: "Terminal siap. Menunggu perintah..." },
+      { zh: "配置加载成功", id: "Konfigurasi Berhasil Dimuat" },
+      { zh: "配置已成功保存", id: "Konfigurasi Berhasil Disimpan" },
+      { zh: "开始任务", id: "Memulai Tugas" }
+    ];
+
+    function translateLogLine(line, lang) {
+      if (lang === 'zh') return line;
+      let translated = line;
+      for (const item of logTranslations) {
+        if (translated.includes(item.zh)) {
+          translated = translated.replaceAll(item.zh, item.id);
+        }
+      }
+      return translated;
+    }
+
+    function setLanguage(lang) {
       currentLang = lang;
       document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'id';
       $('lang-zh').classList.toggle('active', lang === 'zh');
@@ -887,17 +938,25 @@
         const el = $('i18n-' + key);
         if (el) el.textContent = text;
       }
+
+      const body = $('terminalBody');
+      Array.from(body.children).forEach(child => {
+        if (child.dataset.raw) {
+          child.textContent = translateLogLine(child.dataset.raw, lang);
+        }
+      });
+
       pollStatus();
     }
 
-    function showToast(msgKey) {
+    showToast = function(msgKey) {
       const dict = dictionary[currentLang];
       const msg = dict[msgKey] || msgKey;
       const t = $('toast');
       t.textContent = msg;
       t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 3000);
-    }
+    };
 
     function switchTab(tabId, btn) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -919,7 +978,8 @@
       if (line.includes('[+]')) div.classList.add('success');
       else if (line.includes('[!]') || line.includes('[-]')) div.classList.add('error');
       else if (line.includes('[*]')) div.classList.add('info');
-      div.textContent = line;
+      div.dataset.raw = line;
+      div.textContent = translateLogLine(line, currentLang);
       body.appendChild(div);
       body.scrollTop = body.scrollHeight;
     }
