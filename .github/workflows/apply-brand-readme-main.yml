@@ -32,19 +32,24 @@ jobs:
               return text.replace(old, new, 1)
 
           index_path = Path("web/index.html")
+          test_path = Path("tests/test_web_ui_static.py")
+          readme_path = Path("README.md")
           index = index_path.read_text(encoding="utf-8")
+          test_text = test_path.read_text(encoding="utf-8")
+          readme = readme_path.read_text(encoding="utf-8")
+
+          if '    <div class="brand-name">grok-register</div>\n' not in index and '### 可选多线程注册（可选）' in readme:
+              Path('.patch-already-applied').write_text('1', encoding='utf-8')
+              raise SystemExit(0)
+
           index = replace_once(index, '    <div class="brand-name">grok-register</div>\n', '', 'remove plain brand name')
           index_path.write_text(index, encoding="utf-8")
 
-          test_path = Path("tests/test_web_ui_static.py")
-          test_text = test_path.read_text(encoding="utf-8")
           old_test = '''        self.assertIn('class="console-pill" data-i18n="console">控制台</span>', self.html)\n        self.assertIn('.console-pill{font-size:11px;font-weight:600;background:rgba(208,255,0,.15)', self.html)\n'''
           new_test = '''        self.assertIn('class="console-pill" data-i18n="console">控制台</span>', self.html)\n        self.assertIn('.console-pill{font-size:11px;font-weight:600;background:rgba(208,255,0,.15)', self.html)\n        self.assertNotIn('class="brand-name">grok-register</div>', self.html)\n        self.assertLess(self.html.index('class="repo-pill"'), self.html.index('class="console-pill" data-i18n="console"'))\n'''
           test_text = replace_once(test_text, old_test, new_test, 'brand static test')
           test_path.write_text(test_text, encoding="utf-8")
 
-          readme_path = Path("README.md")
-          readme = readme_path.read_text(encoding="utf-8")
           readme = replace_once(
               readme,
               '- [配置](#配置)\n',
@@ -67,13 +72,15 @@ jobs:
               raise SystemExit('README sections must appear exactly once')
           if not (readme.index('## 配置') < readme.index('### 可选多线程注册（可选）') < readme.index('### WebUI（可选）') < readme.index('### 基础配置')):
               raise SystemExit('README config subsection order is invalid')
-          readme_path.write_text(readme, encoding="utf-8")
+          readme_path.write_text(readme.rstrip() + '\n', encoding="utf-8")
       - name: Verify
         run: |
+          if [ -f .patch-already-applied ]; then exit 0; fi
           python -m unittest tests.test_web_ui_static -v
           git diff --check
       - name: Commit result and remove temporary workflows
         run: |
+          if [ -f .patch-already-applied ]; then exit 0; fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git rm -f .github/workflows/apply-brand-readme-main.yml || true
