@@ -61,6 +61,7 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
         raise ValueError("parallel batch requires at least two active workers")
 
     stats_lock = threading.Lock()
+    observer_lock = threading.Lock()
     log_lock = threading.Lock()
     io_lock = threading.Lock()
     abort_event = threading.Event()
@@ -169,10 +170,11 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
         )
 
         def worker_observer(batch, account, output):
-            with stats_lock:
-                snapshots[worker_id] = _summary_copy(batch)
-                total = _aggregate(snapshots)
-            observer(total, account, output)
+            with observer_lock:
+                with stats_lock:
+                    snapshots[worker_id] = _summary_copy(batch)
+                    total = _aggregate(snapshots)
+                observer(total, account, output)
 
         try:
             batch = run_batch(
