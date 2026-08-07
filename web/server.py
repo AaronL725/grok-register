@@ -218,13 +218,13 @@ def _run_job(count: int) -> None:
             _job_state["last_accounts_file"] = str(result.get("accounts_file") or "")
 
     except Exception as exc:
-        _append_log(f"[!] 任务异常 / Job error: {exc}")
+        _append_log(f"[!] 任务异常: {exc}")
     finally:
         with _job_lock:
             _job_state["running"] = False
             _job_state["finished_at"] = time.time()
             _controller = None
-        _append_log("[*] Web 任务线程已结束 / Web job thread finished")
+        _append_log("[*] Web 任务线程已结束")
 
 
 @app.get("/", include_in_schema=False)
@@ -305,14 +305,14 @@ async def api_proxy_test(x_access_key: Optional[str] = Header(None)):
 
     proxy = str(engine.config.get("proxy") or "").strip()
     if not proxy:
-        return {"ok": True, "proxy": "", "logs": ["[*] 直连模式（未配置代理） / Direct connection (no proxy)"]}
+        return {"ok": True, "proxy": "", "logs": ["[*] 直连模式（未配置代理）"]}
     try:
-        _log(f"[*] 正在测试代理连接 / Testing proxy connection: {proxy}")
+        _log(f"[*] 正在测试代理连接: {proxy}")
         from curl_cffi import requests
         resp = requests.get("https://httpbin.org/ip", proxies={"http": proxy, "https": proxy}, timeout=10)
         resp.raise_for_status()
         ip = resp.json().get("origin", "")
-        _log(f"[+] 代理连接成功！出口 IP / Proxy connection successful! Egress IP: {ip}")
+        _log(f"[+] 代理连接成功！出口 IP: {ip}")
         return {"ok": True, "proxy": proxy, "ip": ip, "logs": logs}
     except Exception as exc:
         return JSONResponse(
@@ -328,7 +328,7 @@ async def api_start(body: StartBody, x_access_key: Optional[str] = Header(None))
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="job already running")
-        _append_log(f"[*] 开始注册任务 / Starting registration count={body.count}")
+        _append_log(f"[*] 开始注册任务 数量={body.count}")
         t = threading.Thread(target=_run_job, args=(body.count,), daemon=True)
         _job_thread = t
         t.start()
@@ -342,7 +342,7 @@ async def api_stop(x_access_key: Optional[str] = Header(None)):
         if not _job_state["running"] or not _controller:
             return {"ok": True, "stopped": False, "message": "no running job"}
         _controller.stop()
-        _append_log("[!] 终止命令已发送 / Stop command sent")
+        _append_log("[!] 终止命令已发送")
     return {"ok": True, "stopped": True}
 
 

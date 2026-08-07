@@ -1078,15 +1078,15 @@
           body: JSON.stringify({ count })
         });
         if (res.ok) {
-          appendLog(`[*] 开始任务/Starting job (${count})...`);
+          appendLog(`[*] 开始任务 (${count})...`);
           showToast('toast-started');
           pollStatus();
         } else {
           const data = await res.json();
-          appendLog('[!] Gagal/Failed: ' + (data.detail || 'Error'));
+          appendLog('[!] 任务失败: ' + (data.detail || 'Error'));
         }
       } catch (err) {
-        appendLog('[!] Error start: ' + err);
+        appendLog('[!] 启动异常: ' + err);
       }
     }
 
@@ -1094,17 +1094,17 @@
       try {
         const res = await fetch('/api/stop', { method: 'POST' });
         if (res.ok) {
-          appendLog('[!] 正在停止/Stopping...');
+          appendLog('[!] 正在发送停止命令...');
           showToast('toast-stopped');
         }
       } catch (err) {
-        appendLog('[!] Error stop: ' + err);
+        appendLog('[!] 停止异常: ' + err);
       }
     }
 
     async function testProxy() {
       await saveConfig(false);
-      appendLog('[*] 正在测试代理/Testing proxy...');
+      appendLog('[*] 正在测试代理连接...');
       try {
         const res = await fetch('/api/proxy/test', { method: 'POST' });
         const data = await res.json();
