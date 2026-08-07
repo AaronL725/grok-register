@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import collections
 import datetime
-import os
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
@@ -22,7 +21,7 @@ LOG_LIMIT = 2000
 app = FastAPI(title="grok-register WebUI", version="1.0")
 
 _job_lock = threading.Lock()
-_job_thread: threading.Thread | None = None
+_job_thread: Optional[threading.Thread] = None
 _controller: Any = None
 _job_state = {
     "running": False,
@@ -58,10 +57,9 @@ def _state_snapshot() -> dict[str, Any]:
 
 def _load_config_if_idle() -> dict[str, Any]:
     with _job_lock:
-        running = bool(_job_state["running"])
-    if not running:
-        engine.load_config()
-    return dict(engine.config)
+        if not _job_state["running"]:
+            engine.load_config()
+        return dict(engine.config)
 
 
 def _new_accounts_file() -> str:
@@ -79,6 +77,7 @@ def _update_progress(batch: Any) -> None:
 
 
 def _run_job(count: int, controller: Any, accounts_file: str) -> None:
+    global _controller
     try:
         batch = engine.run_registration_common(
             count=count,
@@ -99,7 +98,6 @@ def _run_job(count: int, controller: Any, accounts_file: str) -> None:
             _job_state["cancelled"] = bool(
                 _job_state["cancelled"] or controller.should_stop()
             )
-            global _controller
             _controller = None
         _append_log("[*] WebUI 任务结束")
 
@@ -121,10 +119,6 @@ def get_config():
 
 @app.put("/api/config")
 async def put_config(request: Request):
-    with _job_lock:
-        if _job_state["running"]:
-            raise HTTPException(status_code=409, detail="任务运行期间不能修改配置")
-
     updates = await request.json()
     if not isinstance(updates, dict):
         raise HTTPException(status_code=400, detail="配置更新必须是 JSON 对象")
@@ -134,18 +128,21 @@ async def put_config(request: Request):
     if unknown:
         raise HTTPException(status_code=400, detail="未知配置项: " + ", ".join(unknown))
 
-    engine.load_config()
-    candidate = dict(engine.config)
-    candidate.update(updates)
-    try:
-        validated = engine.validate_run_requirements(candidate)
-    except engine.ConfigError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    engine.config.clear()
-    engine.config.update(validated)
-    engine.save_config()
-    return {"ok": True, "config": dict(engine.config)}
+    with _job_lock:
+        if _job_state["running"]:
+            raise HTTPException(status_code=409, detail="任务运行期间不能修改配置")
+        engine.load_config()
+        candidate = dict(engine.config)
+        candidate.update(updates)
+        try:
+            validated = engine.validate_run_requirements(candidate)
+        except engine.ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        engine.config.clear()
+        engine.config.update(validated)
+        engine.save_config()
+        result = dict(engine.config)
+    return {"ok": True, "config": result}
 
 
 @app.get("/api/status")
@@ -165,21 +162,21 @@ def logs(after: int = Query(default=0, ge=0)):
 def start():
     global _job_thread, _controller
 
-    engine.load_config()
-    try:
-        validated = engine.validate_run_requirements(dict(engine.config))
-    except engine.ConfigError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    engine.config.clear()
-    engine.config.update(validated)
-
-    count = int(engine.config["register_count"])
-    controller = engine.CliStopController()
-    accounts_file = _new_accounts_file()
-
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="已有注册任务正在运行")
+
+        engine.load_config()
+        try:
+            validated = engine.validate_run_requirements(dict(engine.config))
+        except engine.ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        engine.config.clear()
+        engine.config.update(validated)
+
+        count = int(engine.config["register_count"])
+        controller = engine.CliStopController()
+        accounts_file = _new_accounts_file()
 
         _job_state.update({
             "running": True,
