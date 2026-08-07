@@ -1048,7 +1048,6 @@ class GrokRegisterGUI:
         config["cpa_export_enabled"] = bool(self.cpa_export_var.get())
         config["cpa_auth_dir"] = self.cpa_auth_dir_var.get().strip() or "./cpa_auths"
         config["multi_thread_enabled"] = bool(self.multi_thread_var.get())
-        config["multi_thread_workers"] = int(self.multi_thread_workers_var.get())
         raw_paths = [x.strip() for x in self.cloudflare_paths_var.get().split(",") if x.strip()]
         if len(raw_paths) >= 4:
             config["cloudflare_path_domains"] = raw_paths[0] if raw_paths[0].startswith("/") else ("/" + raw_paths[0])
@@ -1058,6 +1057,7 @@ class GrokRegisterGUI:
         try:
             count = int(self.count_var.get())
             config["register_count"] = count
+            config["multi_thread_workers"] = int(self.multi_thread_workers_var.get())
             validated = validate_run_requirements(config)
             config.clear()
             config.update(validated)
