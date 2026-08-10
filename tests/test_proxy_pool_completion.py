@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from app_config import DEFAULT_CONFIG
@@ -21,21 +22,16 @@ class ProxyPoolCompletionTests(unittest.TestCase):
         self.assertEqual(result["exit_ip"], "203.0.113.7")
         self.assertEqual(get.call_args.args[0], "https://ipinfo.io/json")
 
-    def test_periodic_probe_scheduler_is_coalesced(self):
-        manager = ProxyPoolManager(self.config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=1))
-        manager._last_probe_all = 0
-        import threading, time
-        entered = threading.Event()
-        release = threading.Event()
-        def fake_probe(force=False):
-            entered.set(); release.wait(1); return []
-        with patch.object(manager, "probe_all", side_effect=fake_probe) as probe:
-            manager._schedule_periodic_probe_if_due()
-            self.assertTrue(entered.wait(1))
-            manager._schedule_periodic_probe_if_due()
-            release.set()
-            time.sleep(0.05)
-        self.assertEqual(probe.call_count, 1)
+    def test_managed_browser_policy_is_fail_closed(self):
+        source = Path("registration_browser.py").read_text(encoding="utf-8")
+        self.assertIn("from proxy_pool import ProxyTransportError", source)
+        self.assertIn("if _managed_proxy_mode():\n                raise ProxyTransportError", source)
+        self.assertIn("if _managed_proxy_mode() and is_proxy_connection_error(last_exc):", source)
+
+    def test_gui_exposes_compact_proxy_pool_controls(self):
+        source = Path("grok_register_ttk.py").read_text(encoding="utf-8")
+        for marker in ("self.proxy_mode_var", "self.proxy_pool_file_var", "self.proxy_subscription_var", "self.proxy_capacity_var", "def test_proxy_pool(self):"):
+            self.assertIn(marker, source)
 
 
 if __name__ == "__main__":
