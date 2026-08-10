@@ -187,6 +187,33 @@ python -m web.server
 | `enable_nsfw` | 注册后是否尝试开启 NSFW |
 | `user_agent` | 浏览器和请求使用的 User-Agent |
 
+
+### 代理与代理池
+
+默认 `proxy_mode=auto`，旧配置无需修改：`proxy` 为空时直连，非空时继续使用原单代理逻辑。需要账号级稳定代理租约时，可切换到 `single` 或 `pool`。
+
+```json
+{
+  "proxy_mode": "pool",
+  "proxy": "",
+  "proxy_fallback": "none",
+  "proxy_pool_file": "./proxies.txt",
+  "proxy_pool_subscription_url": "",
+  "proxy_pool_endpoint_mode": "auto",
+  "proxy_pool_max_concurrent_per_node": 1
+}
+```
+
+- `single`：把 `proxy` 作为受健康度与冷却管理的固定节点。
+- `pool`：从本地文件和/或订阅加载多个节点，按账号注册 Session 获取稳定 Lease。
+- 同一次账号注册中的浏览器、邮箱请求、NSFW 与默认 CPA 网络都会保持同一个 Lease；邮箱重试不会换代理，完整 slot 重试才会重新获取。
+- 支持 HTTP/HTTPS/SOCKS4/SOCKS5 及认证代理；包含 `{account}` 的地址会自动按旋转入口处理。
+- 固定节点发生明确 transport failure 时会降健康度并进入指数冷却，同时触发后台恢复探测；普通业务失败不会直接处罚代理。
+- WebUI 提供独立“代理池”页查看脱敏节点、健康度、出口 IP、延迟、占用、失败数和冷却状态；GUI 提供精简配置和测试按钮。
+- `cpa_proxy` 显式设置时始终优先；远端管理类后处理继续使用原有网络隔离规则。
+
+更多参数和运行机制见 `docs/proxy-pool.md`。
+
 ### DuckMail
 
 | 配置项 | 说明 |

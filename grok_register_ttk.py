@@ -911,6 +911,36 @@ class GrokRegisterGUI:
         add_field(self.multi_thread_workers_spinbox, 14, 3, sticky=tk.W)
         self._sync_multithread_controls()
 
+        add_label(15, 0, "代理模式:")
+        self.proxy_mode_var = tk.StringVar(value=str(config.get("proxy_mode", "auto")))
+        self.proxy_mode_combo = tk_option_menu(config_frame, self.proxy_mode_var, ["auto", "direct", "single", "pool"], width=12)
+        add_field(self.proxy_mode_combo, 15, 1, sticky=tk.W)
+        add_label(15, 2, "代理池回退:")
+        self.proxy_fallback_var = tk.StringVar(value=str(config.get("proxy_fallback", "none")))
+        self.proxy_fallback_combo = tk_option_menu(config_frame, self.proxy_fallback_var, ["none", "direct", "single"], width=12)
+        add_field(self.proxy_fallback_combo, 15, 3, sticky=tk.W)
+
+        add_label(16, 0, "代理池文件:")
+        self.proxy_pool_file_var = tk.StringVar(value=str(config.get("proxy_pool_file", "")))
+        self.proxy_pool_file_entry = tk_entry(config_frame, textvariable=self.proxy_pool_file_var, width=34)
+        add_field(self.proxy_pool_file_entry, 16, 1)
+        add_label(16, 2, "节点类型:")
+        self.proxy_endpoint_mode_var = tk.StringVar(value=str(config.get("proxy_pool_endpoint_mode", "auto")))
+        self.proxy_endpoint_mode_combo = tk_option_menu(config_frame, self.proxy_endpoint_mode_var, ["auto", "fixed", "rotating"], width=12)
+        add_field(self.proxy_endpoint_mode_combo, 16, 3, sticky=tk.W)
+
+        add_label(17, 0, "代理订阅 URL:")
+        self.proxy_subscription_var = tk.StringVar(value=str(config.get("proxy_pool_subscription_url", "")))
+        self.proxy_subscription_entry = tk_entry(config_frame, textvariable=self.proxy_subscription_var, width=72)
+        add_field(self.proxy_subscription_entry, 17, 1, columnspan=3)
+
+        add_label(18, 0, "单节点并发:")
+        self.proxy_capacity_var = tk.StringVar(value=str(config.get("proxy_pool_max_concurrent_per_node", 1)))
+        self.proxy_capacity_spinbox = tk.Spinbox(config_frame, from_=1, to=64, width=8, textvariable=self.proxy_capacity_var, bg=UI_ENTRY_BG, fg=UI_FG, insertbackground=UI_FG, buttonbackground=UI_BUTTON_BG, relief=tk.SOLID)
+        add_field(self.proxy_capacity_spinbox, 18, 1, sticky=tk.W)
+        self.proxy_test_btn = tk_button(config_frame, text="测试代理池", command=self.test_proxy_pool)
+        add_field(self.proxy_test_btn, 18, 3, sticky=tk.W)
+
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
         self.start_btn = tk_button(btn_frame, text="开始注册", command=self.start_registration)
@@ -1022,6 +1052,37 @@ class GrokRegisterGUI:
         state = tk.NORMAL if bool(self.multi_thread_var.get()) else tk.DISABLED
         self.multi_thread_workers_spinbox.config(state=state)
 
+    def test_proxy_pool(self):
+        if self.is_running:
+            self.log("[!] 注册任务运行期间不能手动测试代理池")
+            return
+        def worker():
+            try:
+                candidate = dict(config)
+                candidate.update({
+                    "proxy_mode": self.proxy_mode_var.get().strip() or "auto",
+                    "proxy": self.proxy_var.get().strip(),
+                    "proxy_fallback": self.proxy_fallback_var.get().strip() or "none",
+                    "proxy_pool_file": self.proxy_pool_file_var.get().strip(),
+                    "proxy_pool_subscription_url": self.proxy_subscription_var.get().strip(),
+                    "proxy_pool_endpoint_mode": self.proxy_endpoint_mode_var.get().strip() or "auto",
+                    "proxy_pool_max_concurrent_per_node": int(self.proxy_capacity_var.get()),
+                })
+                candidate = validate_config_structure(candidate)
+                from proxy_pool import get_manager, reset_manager
+                try:
+                    reset_manager()
+                except Exception:
+                    pass
+                manager = get_manager(config=candidate, log=self.log)
+                manager.reload_sources(force=True)
+                results = manager.probe_all(force=True) if manager.managed else []
+                healthy = sum(1 for item in results if item.get("status") == "healthy")
+                self.log("[*] 代理池测试完成: %s/%s 个节点健康" % (healthy, len(results)))
+            except Exception as exc:
+                self.log("[!] 代理池测试失败: %s" % exc)
+        threading.Thread(target=worker, name="proxy-pool-gui-test", daemon=True).start()
+
     def start_registration(self):
         if self.is_running:
             self.log("[!] 当前已有任务在运行")
@@ -1030,6 +1091,11 @@ class GrokRegisterGUI:
         config["email_provider"] = self.email_provider_var.get().strip() or "duckmail"
         config["enable_nsfw"] = bool(self.nsfw_var.get())
         config["proxy"] = self.proxy_var.get().strip()
+        config["proxy_mode"] = self.proxy_mode_var.get().strip() or "auto"
+        config["proxy_fallback"] = self.proxy_fallback_var.get().strip() or "none"
+        config["proxy_pool_file"] = self.proxy_pool_file_var.get().strip()
+        config["proxy_pool_subscription_url"] = self.proxy_subscription_var.get().strip()
+        config["proxy_pool_endpoint_mode"] = self.proxy_endpoint_mode_var.get().strip() or "auto"
         config["duckmail_api_key"] = self.api_key_var.get().strip()
         config["cloudflare_api_base"] = self.cloudflare_api_base_var.get().strip()
         config["cloudflare_api_key"] = self.cloudflare_api_key_var.get().strip()
@@ -1058,6 +1124,7 @@ class GrokRegisterGUI:
             count = int(self.count_var.get())
             config["register_count"] = count
             config["multi_thread_workers"] = int(self.multi_thread_workers_var.get())
+            config["proxy_pool_max_concurrent_per_node"] = int(self.proxy_capacity_var.get())
             validated = validate_run_requirements(config)
             config.clear()
             config.update(validated)
