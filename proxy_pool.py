@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
 import secrets
 import threading
 import time
@@ -28,6 +29,10 @@ class ProxyPoolError(RuntimeError):
 
 
 class ProxyAcquireTimeout(ProxyPoolError):
+    pass
+
+
+class ProxyAcquireCancelled(ProxyPoolError):
     pass
 
 
@@ -125,6 +130,14 @@ def proxy_log_label(value):
         )
     except Exception:
         return "(proxy)"
+
+
+_CREDENTIAL_URL_RE = re.compile(r"(?i)\b(https?|socks4a?|socks5h?)://([^/\s@]+)@")
+
+
+def safe_proxy_error_text(value):
+    text = str(value or "")
+    return _CREDENTIAL_URL_RE.sub(lambda match: match.group(1) + "://***@", text)
 
 
 def _node_id(proxy_url):
@@ -258,16 +271,37 @@ class ProxyPoolManager:
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ProxyPoolError("代理订阅必须是有效的 http/https URL")
         via = str(self.config.get("proxy_pool_subscription_proxy") or "").strip()
+        if via:
+            via = normalize_proxy_url(via)
         proxies = {"http": via, "https": via} if via else {}
-        response = requests.get(
-            url,
-            proxies=proxies,
-            timeout=min(max(self.probe_timeout, 5), 60),
-            allow_redirects=True,
-            headers={"Accept": "text/plain, text/*;q=0.9, */*;q=0.1"},
-        )
-        if not 200 <= int(response.status_code) < 300:
-            raise ProxyPoolError("代理订阅返回 HTTP %s" % response.status_code)
+        current_url = url
+        response = None
+        for redirect_count in range(4):
+            try:
+                response = requests.get(
+                    current_url,
+                    proxies=proxies,
+                    timeout=min(max(self.probe_timeout, 5), 60),
+                    allow_redirects=False,
+                    headers={"Accept": "text/plain, text/*;q=0.9, */*;q=0.1"},
+                )
+            except Exception as exc:
+                raise ProxyPoolError("代理订阅请求失败: %s" % safe_proxy_error_text(exc)) from exc
+            status_code = int(response.status_code)
+            if status_code not in (301, 302, 303, 307, 308):
+                break
+            if redirect_count >= 3:
+                raise ProxyPoolError("代理订阅重定向次数超过 3 次")
+            location = str((getattr(response, "headers", {}) or {}).get("location") or "").strip()
+            if not location:
+                raise ProxyPoolError("代理订阅重定向缺少 Location")
+            current_url = urllib.parse.urljoin(current_url, location)
+            redirected = urllib.parse.urlsplit(current_url)
+            if redirected.scheme not in ("http", "https") or not redirected.netloc:
+                raise ProxyPoolError("代理订阅重定向地址无效")
+        if response is None or not 200 <= int(response.status_code) < 300:
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            raise ProxyPoolError("代理订阅返回 HTTP %s" % status_code)
         body = str(response.text or "")
         if len(body.encode("utf-8", "ignore")) > _MAX_SOURCE_BYTES:
             raise ProxyPoolError("代理订阅内容超过 2 MiB 限制")
@@ -290,7 +324,7 @@ class ProxyPoolManager:
             try:
                 values.extend(loader())
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(safe_proxy_error_text(exc))
         unique = []
         seen = set()
         for source, value in values:
@@ -348,7 +382,7 @@ class ProxyPoolManager:
             try:
                 self.reload_sources(force=True)
             except Exception as exc:
-                self.log("[!] 代理池刷新失败，继续使用当前节点: %s" % exc)
+                self.log("[!] 代理池刷新失败，继续使用当前节点: %s" % safe_proxy_error_text(exc))
 
     def _schedule_periodic_probe_if_due(self):
         if not self.managed or self.probe_interval <= 0:
@@ -399,7 +433,7 @@ class ProxyPoolManager:
                 return ProxyLease("fallback-single", _expand_account_placeholder(proxy_url, session_key), worker_key, slot_index, attempt_index, affinity, session_key)
         return None
 
-    def acquire(self, affinity, worker_key, slot_index, attempt_index, session_key, timeout=None):
+    def acquire(self, affinity, worker_key, slot_index, attempt_index, session_key, timeout=None, cancel_callback=None):
         if not self.managed:
             return None
         self.refresh_if_due()
@@ -407,6 +441,8 @@ class ProxyPoolManager:
         deadline = time.time() + float(timeout if timeout is not None else self.acquire_timeout)
         with self._condition:
             while True:
+                if cancel_callback and cancel_callback():
+                    raise ProxyAcquireCancelled("代理租约等待已取消")
                 now = time.time()
                 eligible = self._eligible_locked(now)
                 if eligible:
@@ -465,7 +501,7 @@ class ProxyPoolManager:
         with self._lock:
             node = self._nodes.get(lease.node_id)
             if node is not None:
-                node.last_error = "soft: %s" % str(error or "")[:160]
+                node.last_error = "soft: %s" % safe_proxy_error_text(error)[:160]
 
     def report_transport_failure(self, lease, error):
         if lease is None or lease.node_id in ("direct", "fallback-single"):
@@ -533,7 +569,7 @@ class ProxyPoolManager:
             exit_ip = self._parse_probe_ip(response)
             status = "healthy"
         except Exception as exc:
-            error = str(exc)
+            error = safe_proxy_error_text(exc)
         latency = int((time.monotonic() - started) * 1000)
         with self._condition:
             node = self._nodes.get(node_id)
@@ -664,7 +700,7 @@ def managed_proxy_active():
     return current_proxy_lease() is not None
 
 
-def begin_registration_slot(slot_index, attempt_index=1, worker_key=None, log=None):
+def begin_registration_slot(slot_index, attempt_index=1, worker_key=None, log=None, cancel_callback=None):
     if current_proxy_lease() is not None:
         raise ProxyPoolError("当前线程已有未释放的代理租约")
     manager = get_manager(log=log)
@@ -682,6 +718,7 @@ def begin_registration_slot(slot_index, attempt_index=1, worker_key=None, log=No
         slot_index=slot,
         attempt_index=attempt,
         session_key=session_key,
+        cancel_callback=cancel_callback,
     )
     _TLS.lease = lease
     if log is not None:
@@ -715,4 +752,4 @@ def manager_snapshot(config=None):
     try:
         return get_manager(config=config).snapshot()
     except Exception as exc:
-        return {"mode": str((config or {}).get("proxy_mode") or "auto"), "managed": False, "nodes": [], "error": str(exc)}
+        return {"mode": str((config or {}).get("proxy_mode") or "auto"), "managed": False, "nodes": [], "error": safe_proxy_error_text(exc)}

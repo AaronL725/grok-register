@@ -9,7 +9,7 @@ import time
 from DrissionPage import Chromium
 from DrissionPage.errors import PageDisconnectedError
 from curl_cffi import requests
-from proxy_pool import ProxyTransportError
+from proxy_pool import ProxyTransportError, safe_proxy_error_text
 
 browser = None
 page = None
@@ -246,7 +246,7 @@ def start_browser(log_callback=None, use_proxy=True):
             browser_started_with_proxy = False
             time.sleep(min(1.5 * attempt, 4))
     if _managed_proxy_mode() and is_proxy_connection_error(last_exc):
-        raise ProxyTransportError("Chromium 通过当前代理启动失败: %s" % last_exc) from last_exc
+        raise ProxyTransportError("Chromium 通过当前代理启动失败: %s" % safe_proxy_error_text(last_exc)) from last_exc
     raise Exception(f"浏览器启动失败，已重试4次: {last_exc}")
 
 def stop_browser():
@@ -384,7 +384,7 @@ def open_signup_page(log_callback=None, cancel_callback=None):
     except Exception as e:
         if browser_started_with_proxy and get_configured_proxy():
             if _managed_proxy_mode():
-                raise ProxyTransportError("当前代理访问注册页失败: %s" % e) from e
+                raise ProxyTransportError("当前代理访问注册页失败: %s" % safe_proxy_error_text(e)) from e
             if log_callback:
                 log_callback(f"[!] 浏览器代理访问注册页失败，自动回退直连: {e}")
             restart_browser(log_callback=log_callback, use_proxy=False)
