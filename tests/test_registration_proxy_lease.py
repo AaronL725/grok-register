@@ -41,15 +41,29 @@ class RegistrationProxyLeaseTests(unittest.TestCase):
             retry_exception=RetryNeeded,
         )
 
+    def _lease_spy(self):
+        state = {"active": False, "begins": [], "releases": []}
+
+        def begin(**kwargs):
+            self.assertFalse(state["active"])
+            state["active"] = True
+            state["begins"].append(kwargs)
+
+        def end(**kwargs):
+            if state["active"]:
+                state["active"] = False
+                state["releases"].append(kwargs)
+
+        return state, begin, end
+
     def test_mail_retry_keeps_one_slot_lease(self):
         state = {"browser": False, "restarts": 0, "code_calls": 0}
         callbacks = RegistrationCallbacks(log=lambda _message: None, cancelled=lambda: False)
         observer = lambda _batch, _account, _output: None
-        begin_calls = []
-        end_calls = []
+        lease, begin, end = self._lease_spy()
 
-        with patch("registration_flow.begin_registration_slot", side_effect=lambda **kw: begin_calls.append(kw)), patch(
-            "registration_flow.end_registration_slot", side_effect=lambda **kw: end_calls.append(kw)
+        with patch("registration_flow.begin_registration_slot", side_effect=begin), patch(
+            "registration_flow.end_registration_slot", side_effect=end
         ):
             result = run_batch(
                 count=1,
@@ -61,26 +75,25 @@ class RegistrationProxyLeaseTests(unittest.TestCase):
             )
 
         self.assertEqual(result.success_count, 1)
-        self.assertEqual(len(begin_calls), 1)
-        self.assertEqual(len(end_calls), 1)
-        self.assertTrue(end_calls[0]["success"])
+        self.assertEqual(len(lease["begins"]), 1)
+        self.assertEqual(len(lease["releases"]), 1)
+        self.assertTrue(lease["releases"][0]["success"])
         self.assertEqual(state["code_calls"], 2)
         self.assertEqual(state["restarts"], 1, "mail retry should restart browser without starting a new slot")
 
     def test_each_processed_account_gets_its_own_slot(self):
         state = {"browser": False, "restarts": 0, "code_calls": 99}
         callbacks = RegistrationCallbacks(log=lambda _message: None, cancelled=lambda: False)
-        begin_calls = []
-        end_calls = []
+        lease, begin, end = self._lease_spy()
         ops = self._ops(state)
         ops.fill_code_and_submit = lambda _email, _token: "123456"
-        with patch("registration_flow.begin_registration_slot", side_effect=lambda **kw: begin_calls.append(kw)), patch(
-            "registration_flow.end_registration_slot", side_effect=lambda **kw: end_calls.append(kw)
+        with patch("registration_flow.begin_registration_slot", side_effect=begin), patch(
+            "registration_flow.end_registration_slot", side_effect=end
         ):
             result = run_batch(2, callbacks, lambda *_args: None, ops, enable_nsfw=False)
         self.assertEqual(result.processed_count, 2)
-        self.assertEqual([call["slot_index"] for call in begin_calls], [1, 2])
-        self.assertEqual(len(end_calls), 2)
+        self.assertEqual([call["slot_index"] for call in lease["begins"]], [1, 2])
+        self.assertEqual(len(lease["releases"]), 2)
 
 
 if __name__ == "__main__":
