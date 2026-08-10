@@ -135,12 +135,6 @@ def prepare_browser_proxy(use_proxy=True, log_callback=None):
     proxy = get_configured_proxy()
     if not use_proxy or not proxy:
         return "", None
-    parsed = _parse_proxy_url(proxy)
-    if _proxy_has_auth(proxy) and parsed and (parsed.scheme or "http").lower() not in ("http", "https"):
-        stripped = _strip_proxy_auth(proxy)
-        if log_callback:
-            log_callback("[!] Chromium 暂不直接支持该认证代理协议，已使用去认证代理地址")
-        return stripped, None
     logger = None
     if log_callback:
         logger = lambda message: log_callback("[*] 已为 Chromium启动本地认证代理桥: %s" % message.split(": ", 1)[-1]) if "started authenticated proxy bridge" in message else log_callback(message)
