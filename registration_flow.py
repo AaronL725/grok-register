@@ -1,6 +1,15 @@
 """编排 GUI 与 CLI 共用的单账号注册和批量执行流程。"""
 from dataclasses import dataclass, field
+import threading
 from typing import Any, Callable, Dict, Optional, Tuple
+
+from proxy_pool import (
+    ProxyPoolError,
+    begin_registration_slot,
+    current_proxy_lease,
+    end_registration_slot,
+    is_proxy_transport_exception,
+)
 
 
 @dataclass
@@ -97,6 +106,8 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
             message = str(exc)
             if ("未收到验证码" in message or "验证码" in message) and mail_try < max_mail_retry:
                 callbacks.log(f"[!] 本邮箱未取到验证码，自动更换新邮箱重试: {message}")
+                # Mail retries remain inside the same registration slot, so a
+                # managed proxy lease remains stable across the browser restart.
                 ops.restart_browser()
                 ops.sleep(1)
                 continue
@@ -209,23 +220,13 @@ def _run_cleanup_safely(ops, callbacks, reason):
         return False
 
 
-def _prepare_next_account(result, settings, callbacks, ops):
-    if result.processed_count >= settings.count:
-        return False
-    if callbacks.cancelled():
-        result.cancelled = True
-        return False
-    try:
-        if ops.browser_missing():
-            ops.start_browser()
-        else:
-            ops.restart_browser()
+def _prepare_slot_browser(ops, callbacks):
+    if ops.browser_missing():
+        ops.start_browser()
+        callbacks.log("[*] 浏览器已启动")
+    else:
+        ops.restart_browser()
         ops.sleep(1)
-        return True
-    except ops.cancelled_exception:
-        result.cancelled = True
-        callbacks.log("[!] 已在账号间准备阶段停止")
-        return False
 
 
 def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interval=5,
@@ -242,17 +243,26 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
     retry_count_for_slot = 0
     last_cleanup_success_count = 0
     try:
-        ops.start_browser()
-        callbacks.log("[*] 浏览器已启动")
         while result.processed_count < settings.count:
             if callbacks.cancelled():
                 result.cancelled = True
                 break
-            callbacks.log(f"--- 开始第 {result.processed_count + 1}/{settings.count} 个账号 ---")
+            slot_index = result.processed_count + 1
+            attempt_index = retry_count_for_slot + 1
             account = None
             output = None
             continue_batch = True
+            transport_error = None
+            slot_success = False
             try:
+                begin_registration_slot(
+                    slot_index=slot_index,
+                    attempt_index=attempt_index,
+                    worker_key=threading.current_thread().name,
+                    log=callbacks.log,
+                )
+                _prepare_slot_browser(ops, callbacks)
+                callbacks.log(f"--- 开始第 {slot_index}/{settings.count} 个账号 ---")
                 account = register_one_account(
                     callbacks,
                     ops,
@@ -260,6 +270,7 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
                     max_mail_retry=settings.max_mail_retry,
                 )
                 output = persist_account_result(account, callbacks, ops)
+                slot_success = bool(account and account.ok)
                 result.results.append({"registration": account, "output": output})
                 retry_count_for_slot = 0
                 result.processed_count += 1
@@ -313,18 +324,42 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
                     retry_count_for_slot = 0
                     callbacks.log(f"[-] 当前账号已达到最大重试次数，跳过: {exc}")
             except Exception as exc:
-                result.fail_count += 1
-                result.processed_count += 1
-                retry_count_for_slot = 0
-                callbacks.log(f"[-] 注册失败: {exc}")
+                managed_attempt = current_proxy_lease() is not None
+                proxy_retry = isinstance(exc, ProxyPoolError) or (managed_attempt and is_proxy_transport_exception(exc))
+                if proxy_retry:
+                    if managed_attempt and is_proxy_transport_exception(exc):
+                        transport_error = exc
+                    retry_count_for_slot += 1
+                    if retry_count_for_slot <= settings.max_slot_retry:
+                        callbacks.log(
+                            f"[!] 当前账号代理不可用，释放租约并重试 {retry_count_for_slot}/{settings.max_slot_retry}: {exc}"
+                        )
+                    else:
+                        result.fail_count += 1
+                        result.processed_count += 1
+                        retry_count_for_slot = 0
+                        callbacks.log(f"[-] 当前账号代理重试达到上限，跳过: {exc}")
+                else:
+                    result.fail_count += 1
+                    result.processed_count += 1
+                    retry_count_for_slot = 0
+                    callbacks.log(f"[-] 注册失败: {exc}")
             finally:
+                try:
+                    end_registration_slot(success=slot_success, transport_error=transport_error)
+                except Exception as exc:
+                    callbacks.log(f"[Debug] 代理租约释放失败: {exc}")
                 _notify_observer(observer, result, account, output, callbacks)
 
             if not continue_batch or result.cancelled:
                 break
-            if not _prepare_next_account(result, settings, callbacks, ops):
+            if result.processed_count < settings.count and callbacks.cancelled():
+                result.cancelled = True
                 break
     finally:
+        try:
+            end_registration_slot(success=False)
+        except Exception:
+            pass
         _run_cleanup_safely(ops, callbacks, "任务结束")
     return result
-
