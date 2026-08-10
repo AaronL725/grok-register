@@ -1,0 +1,39 @@
+name: Proxy pool README cleanup
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.ref == 'feat/proxy-pool-runtime'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Clean wording
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('README.md')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('新版 `chenyme/grok2api` 管理员账号', '新版 grok2api 管理员账号')
+          text = text.replace('新版 `chenyme/grok2api` 管理员密码', '新版 grok2api 管理员密码')
+          p.write_text(text, encoding='utf-8')
+          PY
+          if grep -Rni --exclude-dir=.git 'chenyme/grok2api\|chenyme' .; then
+            echo 'forbidden external project name remains' >&2
+            exit 1
+          fi
+          if ! git diff --quiet; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add README.md
+            git commit -m 'docs: neutralize remote integration wording'
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
