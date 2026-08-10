@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from filelock import FileLock
+from proxy_pool import current_proxy_url
 
 _ROOT = Path(__file__).resolve().parent
 _DEFAULT_AUTH_DIR = _ROOT / "cpa_auths"
@@ -40,12 +41,20 @@ class CpaExportSettings:
         hotload_dir = Path(hotload_value).expanduser() if hotload_value else None
         if hotload_dir is not None and not hotload_dir.is_absolute():
             hotload_dir = (_ROOT / hotload_dir).resolve()
+        explicit_proxy = str(cfg.get("cpa_proxy") or "").strip()
+        leased_proxy = current_proxy_url()
+        if explicit_proxy:
+            effective_proxy = explicit_proxy
+        elif leased_proxy is not None:
+            effective_proxy = str(leased_proxy or "").strip()
+        else:
+            effective_proxy = str(cfg.get("proxy") or "").strip()
         return cls(
             enabled=bool(cfg.get("cpa_export_enabled", True)),
             auth_dir=auth_dir,
             hotload_dir=hotload_dir,
             copy_to_hotload=bool(cfg.get("cpa_copy_to_hotload", False)),
-            proxy=str(cfg.get("cpa_proxy") or cfg.get("proxy") or "").strip(),
+            proxy=effective_proxy,
             headless=bool(cfg.get("cpa_headless", False)),
             mint_timeout=float(cfg.get("cpa_mint_timeout_sec") or 300),
             request_timeout=float(cfg.get("cpa_oidc_request_timeout_sec") or 15),

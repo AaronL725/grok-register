@@ -1,6 +1,16 @@
 """编排 GUI 与 CLI 共用的单账号注册和批量执行流程。"""
 from dataclasses import dataclass, field
+import threading
 from typing import Any, Callable, Dict, Optional, Tuple
+
+from app_config import config as app_config
+from proxy_pool import (
+    ProxyPoolError,
+    begin_registration_slot,
+    current_proxy_lease,
+    end_registration_slot,
+    is_proxy_transport_exception,
+)
 
 
 @dataclass
@@ -228,16 +238,48 @@ def _prepare_next_account(result, settings, callbacks, ops):
         return False
 
 
-def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interval=5,
-              max_slot_retry=3, max_mail_retry=3, settings=None):
-    if settings is None:
-        settings = RegistrationSettings(
-            count=int(count),
-            enable_nsfw=bool(enable_nsfw),
-            cleanup_interval=int(cleanup_interval),
-            max_slot_retry=int(max_slot_retry),
-            max_mail_retry=int(max_mail_retry),
+def _record_success(result, settings, callbacks, ops, account, output, last_cleanup_success_count):
+    result.results.append({"registration": account, "output": output})
+    result.processed_count += 1
+    if output.saved:
+        result.success_count += 1
+        callbacks.log(f"[+] 注册并保存成功: {account.email}")
+        if (
+            settings.cleanup_interval > 0
+            and result.success_count % settings.cleanup_interval == 0
+            and result.success_count != last_cleanup_success_count
+            and result.processed_count < settings.count
+        ):
+            _run_cleanup_safely(
+                ops,
+                callbacks,
+                f"已成功 {result.success_count} 个账号，执行定期清理",
+            )
+            last_cleanup_success_count = result.success_count
+    else:
+        result.fail_count += 1
+        result.registered_unsaved_count += 1
+        callbacks.log(f"[-] 注册成功但持久化未完成: {account.email}")
+    pool_warning = any(
+        isinstance(state, dict) and state.get("enabled") and not state.get("ok")
+        for state in output.pools.values()
+    )
+    cpa_warning = bool(
+        output.cpa
+        and not output.cpa.get("skipped")
+        and (
+            not output.cpa.get("ok")
+            or output.cpa.get("warning")
+            or output.cpa.get("cpa_copy_error")
         )
+    )
+    if pool_warning or cpa_warning:
+        result.postprocess_warning_count += 1
+    return last_cleanup_success_count
+
+
+def _run_batch_legacy(settings, callbacks, observer, ops):
+    """Preserve the pre-proxy-pool execution order exactly for auto/direct modes."""
     result = BatchResult()
     retry_count_for_slot = 0
     last_cleanup_success_count = 0
@@ -260,43 +302,10 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
                     max_mail_retry=settings.max_mail_retry,
                 )
                 output = persist_account_result(account, callbacks, ops)
-                result.results.append({"registration": account, "output": output})
                 retry_count_for_slot = 0
-                result.processed_count += 1
-                if output.saved:
-                    result.success_count += 1
-                    callbacks.log(f"[+] 注册并保存成功: {account.email}")
-                    if (
-                        settings.cleanup_interval > 0
-                        and result.success_count % settings.cleanup_interval == 0
-                        and result.success_count != last_cleanup_success_count
-                        and result.processed_count < settings.count
-                    ):
-                        _run_cleanup_safely(
-                            ops,
-                            callbacks,
-                            f"已成功 {result.success_count} 个账号，执行定期清理",
-                        )
-                        last_cleanup_success_count = result.success_count
-                else:
-                    result.fail_count += 1
-                    result.registered_unsaved_count += 1
-                    callbacks.log(f"[-] 注册成功但持久化未完成: {account.email}")
-                pool_warning = any(
-                    isinstance(state, dict) and state.get("enabled") and not state.get("ok")
-                    for state in output.pools.values()
+                last_cleanup_success_count = _record_success(
+                    result, settings, callbacks, ops, account, output, last_cleanup_success_count
                 )
-                cpa_warning = bool(
-                    output.cpa
-                    and not output.cpa.get("skipped")
-                    and (
-                        not output.cpa.get("ok")
-                        or output.cpa.get("warning")
-                        or output.cpa.get("cpa_copy_error")
-                    )
-                )
-                if pool_warning or cpa_warning:
-                    result.postprocess_warning_count += 1
             except ops.cancelled_exception:
                 result.cancelled = True
                 callbacks.log("[!] 注册被停止")
@@ -328,3 +337,115 @@ def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interva
         _run_cleanup_safely(ops, callbacks, "任务结束")
     return result
 
+
+def _run_batch_managed(settings, callbacks, observer, ops):
+    """Run account attempts under stable per-slot proxy leases."""
+    result = BatchResult()
+    retry_count_for_slot = 0
+    last_cleanup_success_count = 0
+    first_browser_start = True
+    try:
+        while result.processed_count < settings.count:
+            if callbacks.cancelled():
+                result.cancelled = True
+                break
+            slot_index = result.processed_count + 1
+            attempt_index = retry_count_for_slot + 1
+            account = None
+            output = None
+            continue_batch = True
+            transport_error = None
+            slot_success = False
+            try:
+                begin_registration_slot(
+                    slot_index=slot_index,
+                    attempt_index=attempt_index,
+                    worker_key=threading.current_thread().name,
+                    log=callbacks.log,
+                )
+                if first_browser_start or ops.browser_missing():
+                    ops.start_browser()
+                    callbacks.log("[*] 浏览器已启动")
+                    first_browser_start = False
+                else:
+                    ops.restart_browser()
+                    ops.sleep(1)
+                callbacks.log(f"--- 开始第 {slot_index}/{settings.count} 个账号 ---")
+                account = register_one_account(
+                    callbacks,
+                    ops,
+                    enable_nsfw=settings.enable_nsfw,
+                    max_mail_retry=settings.max_mail_retry,
+                )
+                output = persist_account_result(account, callbacks, ops)
+                slot_success = bool(account and account.ok)
+                retry_count_for_slot = 0
+                last_cleanup_success_count = _record_success(
+                    result, settings, callbacks, ops, account, output, last_cleanup_success_count
+                )
+            except ops.cancelled_exception:
+                result.cancelled = True
+                callbacks.log("[!] 注册被停止")
+                continue_batch = False
+            except ops.retry_exception as exc:
+                retry_count_for_slot += 1
+                if retry_count_for_slot <= settings.max_slot_retry:
+                    callbacks.log(
+                        f"[!] 当前账号流程卡住，重试第 {retry_count_for_slot}/{settings.max_slot_retry} 次: {exc}"
+                    )
+                else:
+                    result.fail_count += 1
+                    result.processed_count += 1
+                    retry_count_for_slot = 0
+                    callbacks.log(f"[-] 当前账号已达到最大重试次数，跳过: {exc}")
+            except Exception as exc:
+                has_lease = current_proxy_lease() is not None
+                proxy_retry = isinstance(exc, ProxyPoolError) or (has_lease and is_proxy_transport_exception(exc))
+                if proxy_retry:
+                    if has_lease and is_proxy_transport_exception(exc):
+                        transport_error = exc
+                    retry_count_for_slot += 1
+                    if retry_count_for_slot <= settings.max_slot_retry:
+                        callbacks.log(
+                            f"[!] 当前账号代理不可用，释放租约并重试 {retry_count_for_slot}/{settings.max_slot_retry}: {exc}"
+                        )
+                    else:
+                        result.fail_count += 1
+                        result.processed_count += 1
+                        retry_count_for_slot = 0
+                        callbacks.log(f"[-] 当前账号代理重试达到上限，跳过: {exc}")
+                else:
+                    # Once inside an account attempt, non-proxy failures retain
+                    # the same statistics as the historical in-loop behavior.
+                    result.fail_count += 1
+                    result.processed_count += 1
+                    retry_count_for_slot = 0
+                    callbacks.log(f"[-] 注册失败: {exc}")
+            finally:
+                try:
+                    end_registration_slot(success=slot_success, transport_error=transport_error)
+                except Exception as exc:
+                    callbacks.log(f"[Debug] 代理租约释放失败: {exc}")
+                _notify_observer(observer, result, account, output, callbacks)
+
+            if not continue_batch or result.cancelled:
+                break
+    finally:
+        _run_cleanup_safely(ops, callbacks, "任务结束")
+    return result
+
+
+def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interval=5,
+              max_slot_retry=3, max_mail_retry=3, settings=None):
+    if settings is None:
+        settings = RegistrationSettings(
+            count=int(count),
+            enable_nsfw=bool(enable_nsfw),
+            cleanup_interval=int(cleanup_interval),
+            max_slot_retry=int(max_slot_retry),
+            max_mail_retry=int(max_mail_retry),
+        )
+    mode = str(app_config.get("proxy_mode", "auto") or "auto").strip().lower()
+    if mode in ("single", "pool"):
+        return _run_batch_managed(settings, callbacks, observer, ops)
+    return _run_batch_legacy(settings, callbacks, observer, ops)

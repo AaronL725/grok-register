@@ -9,6 +9,11 @@ from cpa_xai.proxyutil import (
     prepare_chromium_proxy,
     proxy_for_chromium,
 )
+from proxy_pool import (
+    ProxyTransportError,
+    current_proxy_lease,
+    managed_proxy_active,
+)
 
 _config = {}
 _extension_path = ""
@@ -21,6 +26,12 @@ def configure_runtime(config_ref, extension_path=""):
 
 
 def get_configured_proxy():
+    lease = current_proxy_lease()
+    if lease is not None:
+        return str(lease.proxy_url or "").strip()
+    mode = str(_config.get("proxy_mode", "auto") or "auto").strip().lower()
+    if mode == "direct" or mode in ("single", "pool"):
+        return ""
     return str(_config.get("proxy", "") or "").strip()
 
 
@@ -105,23 +116,25 @@ def page_has_proxy_error(page_obj):
         return False
     text = "%s\n%s\n%s" % (url, title, body)
     text = text.lower()
-    return any(marker in text for marker in (
+    failed = any(marker in text for marker in (
         "err_proxy", "proxy connection failed", "proxy server",
         "proxy authentication", "tunnel connection failed",
         "无法连接到代理服务器", "代理服务器",
     ))
+    if failed and managed_proxy_active():
+        raise ProxyTransportError("Chromium 检测到代理连接错误页面")
+    return failed
 
 
 def prepare_browser_proxy(use_proxy=True, log_callback=None):
+    # Managed registration leases must never silently switch to another IP in
+    # the middle of an account. Legacy auto mode keeps the historical direct
+    # fallback behavior when callers explicitly pass use_proxy=False.
+    if managed_proxy_active():
+        use_proxy = True
     proxy = get_configured_proxy()
     if not use_proxy or not proxy:
         return "", None
-    parsed = _parse_proxy_url(proxy)
-    if _proxy_has_auth(proxy) and parsed and (parsed.scheme or "http").lower() not in ("http", "https"):
-        stripped = _strip_proxy_auth(proxy)
-        if log_callback:
-            log_callback("[!] Chromium 暂不直接支持该认证代理协议，已使用去认证代理地址，失败将回退直连")
-        return stripped, None
     logger = None
     if log_callback:
         logger = lambda message: log_callback("[*] 已为 Chromium启动本地认证代理桥: %s" % message.split(": ", 1)[-1]) if "started authenticated proxy bridge" in message else log_callback(message)
@@ -173,6 +186,8 @@ def http_get(url, **kwargs):
         return requests.get(url, **request_kwargs)
     except Exception as exc:
         if is_proxy_connection_error(exc):
+            if managed_proxy_active():
+                raise ProxyTransportError(str(exc)) from exc
             direct = dict(request_kwargs)
             direct.pop("proxies", None)
             return requests.get(url, **direct)
@@ -185,6 +200,8 @@ def http_post(url, **kwargs):
         return requests.post(url, **request_kwargs)
     except Exception as exc:
         if is_proxy_connection_error(exc):
+            if managed_proxy_active():
+                raise ProxyTransportError(str(exc)) from exc
             direct = dict(request_kwargs)
             direct.pop("proxies", None)
             return requests.post(url, **direct)

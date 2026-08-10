@@ -9,6 +9,7 @@ import time
 from DrissionPage import Chromium
 from DrissionPage.errors import PageDisconnectedError
 from curl_cffi import requests
+from proxy_pool import ProxyTransportError
 
 browser = None
 page = None
@@ -16,6 +17,13 @@ browser_proxy_bridge = None
 browser_started_with_proxy = False
 cf_clearance = ""
 SIGNUP_URL = "https://accounts.x.ai/sign-up?redirect=grok-com"
+
+
+def _managed_proxy_mode():
+    try:
+        return str(config.get("proxy_mode", "auto") or "auto").strip().lower() in ("single", "pool")
+    except Exception:
+        return False
 _OWN_NAMES = {'is_cloudflare_block_response', 'response_preview', 'start_browser', 'enable_nsfw_for_token', 'stop_browser_proxy_bridge', 'set_tos_accepted', 'fill_email_and_submit', 'getTurnstileToken', 'set_birth_date', 'generate_random_birthdate', 'fill_profile_and_submit', 'click_email_signup_button', 'wait_for_sso_cookie', 'fill_code_and_submit', 'build_profile', 'cleanup_runtime_memory', 'open_signup_page', 'stop_browser', 'encode_grpc_nsfw_settings', 'restart_browser', 'has_profile_form', 'update_nsfw_settings', 'refresh_active_page'}
 
 
@@ -237,6 +245,8 @@ def start_browser(log_callback=None, use_proxy=True):
             browser_proxy_bridge = None
             browser_started_with_proxy = False
             time.sleep(min(1.5 * attempt, 4))
+    if _managed_proxy_mode() and is_proxy_connection_error(last_exc):
+        raise ProxyTransportError("Chromium 通过当前代理启动失败: %s" % last_exc) from last_exc
     raise Exception(f"浏览器启动失败，已重试4次: {last_exc}")
 
 def stop_browser():
@@ -373,6 +383,8 @@ def open_signup_page(log_callback=None, cancel_callback=None):
         _open_with_current_browser()
     except Exception as e:
         if browser_started_with_proxy and get_configured_proxy():
+            if _managed_proxy_mode():
+                raise ProxyTransportError("当前代理访问注册页失败: %s" % e) from e
             if log_callback:
                 log_callback(f"[!] 浏览器代理访问注册页失败，自动回退直连: {e}")
             restart_browser(log_callback=log_callback, use_proxy=False)
@@ -381,6 +393,8 @@ def open_signup_page(log_callback=None, cancel_callback=None):
             raise
 
     if browser_started_with_proxy and page_has_proxy_error(page):
+        if _managed_proxy_mode():
+            raise ProxyTransportError("Chromium 页面显示代理连接错误")
         if log_callback:
             log_callback("[!] 浏览器页面显示代理错误，自动回退直连")
         restart_browser(log_callback=log_callback, use_proxy=False)
