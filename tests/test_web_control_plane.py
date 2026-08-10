@@ -41,6 +41,11 @@ class WebControlPlaneTests(unittest.TestCase):
         with server._log_lock:
             server._logs.clear()
             server._log_seq = 0
+        try:
+            import proxy_pool
+            proxy_pool.reset_manager()
+        except Exception:
+            pass
 
     def _base_config(self):
         return dict(self.server.engine.DEFAULT_CONFIG)
@@ -65,7 +70,10 @@ class WebControlPlaneTests(unittest.TestCase):
         self.fail("web job did not finish")
 
     def test_index_and_health(self):
-        self.assertEqual(self.client.get("/").status_code, 200)
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/proxy-pool.js", response.text)
+        self.assertIn("/proxy-pool.css", response.text)
         self.assertEqual(self.client.get("/health").json(), {"ok": True})
 
     def test_get_config_reads_existing_engine_config(self):
@@ -97,6 +105,51 @@ class WebControlPlaneTests(unittest.TestCase):
             self.server._job_state["running"] = True
         response = self.client.put("/api/config", json={"register_count": 2})
         self.assertEqual(response.status_code, 409)
+
+    def test_proxy_pool_status_masks_credentials(self):
+        cfg = self._base_config()
+        cfg.update({"proxy_mode": "single", "proxy": "http://secret:password@127.0.0.1:7890"})
+        with patch.object(self.server.engine, "load_config", side_effect=self._fake_load(cfg)):
+            response = self.client.get("/api/proxy-pool/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["mode"], "single")
+        self.assertEqual(len(payload["nodes"]), 1)
+        label = payload["nodes"][0]["proxy"]
+        self.assertIn("user:***@", label)
+        self.assertNotIn("secret", label)
+        self.assertNotIn("password", label)
+
+    def test_proxy_pool_reload_and_test_are_rejected_while_running(self):
+        with self.server._job_lock:
+            self.server._job_state["running"] = True
+        self.assertEqual(self.client.post("/api/proxy-pool/reload").status_code, 409)
+        self.assertEqual(self.client.post("/api/proxy-pool/test").status_code, 409)
+
+    def test_proxy_pool_reload_and_probe_use_shared_manager(self):
+        cfg = self._base_config()
+        cfg.update({"proxy_mode": "single", "proxy": "http://127.0.0.1:7890"})
+
+        class FakeManager:
+            def reload_sources(self, force=False):
+                return {"mode": "single", "managed": True, "nodes": []}
+
+            def probe_all(self, force=False):
+                return [{"id": "node", "status": "healthy"}]
+
+            def snapshot(self):
+                return {"mode": "single", "managed": True, "nodes": []}
+
+        fake = FakeManager()
+        with patch.object(self.server.engine, "load_config", side_effect=self._fake_load(cfg)), patch(
+            "proxy_pool.get_manager", return_value=fake
+        ):
+            reload_response = self.client.post("/api/proxy-pool/reload")
+            test_response = self.client.post("/api/proxy-pool/test")
+        self.assertEqual(reload_response.status_code, 200)
+        self.assertTrue(reload_response.json()["managed"])
+        self.assertEqual(test_response.status_code, 200)
+        self.assertEqual(test_response.json()["results"][0]["status"], "healthy")
 
     def test_start_reuses_existing_registration_common_and_reports_progress(self):
         cfg = self._base_config()
