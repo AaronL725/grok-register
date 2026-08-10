@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+import registration_flow
 from registration_flow import RegistrationCallbacks, RegistrationOperations, run_batch
 
 
@@ -62,9 +63,9 @@ class RegistrationProxyLeaseTests(unittest.TestCase):
         observer = lambda _batch, _account, _output: None
         lease, begin, end = self._lease_spy()
 
-        with patch("registration_flow.begin_registration_slot", side_effect=begin), patch(
-            "registration_flow.end_registration_slot", side_effect=end
-        ):
+        with patch.dict(registration_flow.app_config, {"proxy_mode": "single"}, clear=False), patch(
+            "registration_flow.begin_registration_slot", side_effect=begin
+        ), patch("registration_flow.end_registration_slot", side_effect=end):
             result = run_batch(
                 count=1,
                 callbacks=callbacks,
@@ -87,9 +88,9 @@ class RegistrationProxyLeaseTests(unittest.TestCase):
         lease, begin, end = self._lease_spy()
         ops = self._ops(state)
         ops.fill_code_and_submit = lambda _email, _token: "123456"
-        with patch("registration_flow.begin_registration_slot", side_effect=begin), patch(
-            "registration_flow.end_registration_slot", side_effect=end
-        ):
+        with patch.dict(registration_flow.app_config, {"proxy_mode": "single"}, clear=False), patch(
+            "registration_flow.begin_registration_slot", side_effect=begin
+        ), patch("registration_flow.end_registration_slot", side_effect=end):
             result = run_batch(2, callbacks, lambda *_args: None, ops, enable_nsfw=False)
         self.assertEqual(result.processed_count, 2)
         self.assertEqual([call["slot_index"] for call in lease["begins"]], [1, 2])
