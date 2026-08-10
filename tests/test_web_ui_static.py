@@ -8,10 +8,14 @@ from app_config import DEFAULT_CONFIG
 class WebUIStaticTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
+        root = Path(__file__).resolve().parents[1] / "web"
+        cls.html = (root / "index.html").read_text(encoding="utf-8")
+        cls.proxy_js = (root / "proxy-pool.js").read_text(encoding="utf-8")
+        cls.proxy_css = (root / "proxy-pool.css").read_text(encoding="utf-8")
+        cls.form_sources = cls.html + "\n" + cls.proxy_js
 
     def test_all_config_keys_are_exposed_by_web_form(self):
-        missing = [key for key in DEFAULT_CONFIG if ("'" + key + "'") not in self.html]
+        missing = [key for key in DEFAULT_CONFIG if ("'" + key + "'") not in self.form_sources]
         self.assertEqual(missing, [], "WebUI missing config fields: %s" % missing)
 
     def test_zh_en_switch_and_persistence_exist(self):
@@ -23,6 +27,8 @@ class WebUIStaticTests(unittest.TestCase):
             "en:{console:'Console'",
         ):
             self.assertIn(marker, self.html)
+        self.assertIn("tabProxy:'代理池'", self.proxy_js)
+        self.assertIn("tabProxy:'Proxy pool'", self.proxy_js)
 
     def test_reference_dashboard_structure_is_present(self):
         self.assertEqual(len(re.findall(r'class="stat"', self.html)), 4)
@@ -53,10 +59,20 @@ class WebUIStaticTests(unittest.TestCase):
         self.assertNotIn('class="brand-name">grok-register</div>', self.html)
         self.assertLess(self.html.index('class="repo-pill"'), self.html.index('class="console-pill" data-i18n="console"'))
 
+    def test_proxy_pool_extension_has_status_and_controls(self):
+        for marker in (
+            "proxy_pool_file", "proxy_pool_subscription_url", "proxy_pool_endpoint_mode",
+            "/api/proxy-pool/status", "/api/proxy-pool/reload", "/api/proxy-pool/test",
+            "proxyPoolRows", "proxy_pool_max_concurrent_per_node",
+        ):
+            self.assertIn(marker, self.proxy_js)
+        self.assertIn(".proxy-table", self.proxy_css)
+
     def test_responsive_breakpoints_exist(self):
         self.assertIn('@media(max-width:1050px)', self.html)
         self.assertIn('@media(max-width:760px)', self.html)
         self.assertIn('@media(max-width:430px)', self.html)
+        self.assertIn('@media(max-width:760px)', self.proxy_css)
 
 
 if __name__ == "__main__":
