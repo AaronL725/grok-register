@@ -186,13 +186,13 @@ POST /api/proxy-pool/reload
 POST /api/proxy-pool/test
 ```
 
-节点状态只返回脱敏代理标识，例如：
+节点状态直接返回完整代理地址，包括用户名和密码，例如：
 
 ```text
-http://user:***@127.0.0.1:8080
+http://user:password@127.0.0.1:8080
 ```
 
-不会返回代理用户名或密码。注册任务运行期间禁止手动 reload/test，避免人为改变活动调度状态。
+当前项目按个人部署场景设计，因此 WebUI、状态 API 与代理相关日志不会对代理凭据做脱敏。注册任务运行期间仍禁止手动 reload/test，避免人为改变活动调度状态。
 
 ## Chromium 认证代理
 

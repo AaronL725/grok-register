@@ -4,7 +4,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
-import re
 import secrets
 import threading
 import time
@@ -121,23 +120,13 @@ def proxy_log_label(value):
     if not raw:
         return "direct"
     try:
-        parsed = urllib.parse.urlsplit(normalize_proxy_url(raw))
-        host = parsed.hostname or "?"
-        port = parsed.port
-        auth = "user:***@" if parsed.username is not None else ""
-        return "%s://%s%s%s" % (
-            parsed.scheme or "http", auth, host, (":%s" % port) if port else ""
-        )
+        return normalize_proxy_url(raw)
     except Exception:
-        return "(proxy)"
-
-
-_CREDENTIAL_URL_RE = re.compile(r"(?i)\b(https?|socks4a?|socks5h?)://([^/\s@]+)@")
+        return raw
 
 
 def safe_proxy_error_text(value):
-    text = str(value or "")
-    return _CREDENTIAL_URL_RE.sub(lambda match: match.group(1) + "://***@", text)
+    return str(value or "")
 
 
 def _node_id(proxy_url):

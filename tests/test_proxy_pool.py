@@ -78,12 +78,10 @@ class ProxyPoolTests(unittest.TestCase):
         self.assertEqual(state["cooldown_sec"], 0)
         manager.release(lease)
 
-    def test_snapshot_masks_proxy_credentials(self):
+    def test_snapshot_exposes_proxy_credentials(self):
         manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://secret:password@127.0.0.1:8001"))
         label = manager.snapshot()["nodes"][0]["proxy"]
-        self.assertIn("user:***@", label)
-        self.assertNotIn("secret", label)
-        self.assertNotIn("password", label)
+        self.assertEqual(label, "http://secret:password@127.0.0.1:8001")
 
     def test_acquire_honors_cancellation(self):
         manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001"))
@@ -97,11 +95,11 @@ class ProxyPoolTests(unittest.TestCase):
         manager.release(lease)
         self.assertEqual(manager.snapshot()["nodes"][0]["inflight"], 0)
 
-    def test_proxy_error_text_masks_credentials(self):
+    def test_proxy_error_text_preserves_credentials(self):
         value = safe_proxy_error_text("failed via socks5://secret:password@127.0.0.1:1080")
-        self.assertNotIn("secret", value)
-        self.assertNotIn("password", value)
-        self.assertIn("socks5://***@127.0.0.1:1080", value)
+        self.assertIn("secret", value)
+        self.assertIn("password", value)
+        self.assertIn("socks5://secret:password@127.0.0.1:1080", value)
 
 
 if __name__ == "__main__":
