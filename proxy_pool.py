@@ -10,7 +10,7 @@ import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Optional
 
 from curl_cffi import requests
 
@@ -85,6 +85,10 @@ def normalize_proxy_url(value):
     if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
         raise ProxyPoolError("代理地址包含控制字符")
     if "://" not in raw:
+        # Keep the common host:port shorthand, but do not accidentally treat
+        # arbitrary single-line/Base64 source text as a proxy hostname.
+        if ":" not in raw:
+            raise ProxyPoolError("代理地址缺少协议或端口")
         raw = "http://" + raw
     try:
         parsed = urllib.parse.urlsplit(raw)
@@ -203,6 +207,7 @@ class ProxyPoolManager:
         self.mode = str(self.config.get("proxy_mode") or "auto").strip().lower()
         self.fallback = str(self.config.get("proxy_fallback") or "none").strip().lower()
         self.endpoint_mode = str(self.config.get("proxy_pool_endpoint_mode") or "auto").strip().lower()
+        self.probe_provider = str(self.config.get("proxy_pool_probe_provider") or "cloudflare").strip().lower()
         self.capacity = max(1, int(self.config.get("proxy_pool_max_concurrent_per_node") or 1))
         self.acquire_timeout = max(1, int(self.config.get("proxy_pool_acquire_timeout_sec") or 30))
         self.refresh_interval = max(0, int(self.config.get("proxy_pool_refresh_interval_sec") or 900))
@@ -214,6 +219,7 @@ class ProxyPoolManager:
         self._probe_events = {}
         self._last_refresh = 0.0
         self._last_probe_all = 0.0
+        self._probe_all_running = False
         self.reload_sources(force=True)
 
     @property
@@ -344,6 +350,25 @@ class ProxyPoolManager:
             except Exception as exc:
                 self.log("[!] 代理池刷新失败，继续使用当前节点: %s" % exc)
 
+    def _schedule_periodic_probe_if_due(self):
+        if not self.managed or self.probe_interval <= 0:
+            return
+        now = time.time()
+        with self._lock:
+            if self._probe_all_running or now - self._last_probe_all < self.probe_interval:
+                return
+            self._probe_all_running = True
+            self._last_probe_all = now
+
+        def runner():
+            try:
+                self.probe_all(force=True)
+            finally:
+                with self._lock:
+                    self._probe_all_running = False
+
+        threading.Thread(target=runner, name="proxy-probe-all", daemon=True).start()
+
     def _eligible_locked(self, now):
         values = []
         for node in self._nodes.values():
@@ -378,6 +403,7 @@ class ProxyPoolManager:
         if not self.managed:
             return None
         self.refresh_if_due()
+        self._schedule_periodic_probe_if_due()
         deadline = time.time() + float(timeout if timeout is not None else self.acquire_timeout)
         with self._condition:
             while True:
@@ -467,6 +493,24 @@ class ProxyPoolManager:
         session_key = secrets.token_hex(8)
         return _expand_account_placeholder(node.proxy_url, session_key)
 
+    def _probe_endpoint(self):
+        if self.probe_provider == "ipinfo":
+            return "https://ipinfo.io/json"
+        return "https://www.cloudflare.com/cdn-cgi/trace"
+
+    def _parse_probe_ip(self, response):
+        text = str(response.text or "")
+        if self.probe_provider == "ipinfo":
+            try:
+                value = response.json()
+                return str(value.get("ip") or "").strip() if isinstance(value, dict) else ""
+            except Exception:
+                return ""
+        for line in text.splitlines():
+            if line.startswith("ip="):
+                return line[3:].strip()
+        return ""
+
     def probe_node(self, node_id):
         with self._lock:
             node = self._nodes.get(node_id)
@@ -479,17 +523,14 @@ class ProxyPoolManager:
         error = ""
         try:
             response = requests.get(
-                "https://www.cloudflare.com/cdn-cgi/trace",
+                self._probe_endpoint(),
                 proxies={"http": proxy_url, "https": proxy_url},
                 timeout=self.probe_timeout,
                 allow_redirects=False,
             )
             if not 200 <= int(response.status_code) < 300:
                 raise ProxyPoolError("HTTP %s" % response.status_code)
-            for line in str(response.text or "").splitlines():
-                if line.startswith("ip="):
-                    exit_ip = line[3:].strip()
-                    break
+            exit_ip = self._parse_probe_ip(response)
             status = "healthy"
         except Exception as exc:
             error = str(exc)
