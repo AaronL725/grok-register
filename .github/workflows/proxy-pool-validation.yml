@@ -21,16 +21,6 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(path, old, new):
-              p = Path(path)
-              text = p.read_text(encoding='utf-8')
-              if new in text:
-                  return False
-              if text.count(old) != 1:
-                  raise SystemExit(f'{path}: expected one target, got {text.count(old)}')
-              p.write_text(text.replace(old, new, 1), encoding='utf-8')
-              return True
-
           # registration_browser: managed leases must never silently fall back to direct mid-account.
           p = Path('registration_browser.py')
           text = p.read_text(encoding='utf-8')
@@ -51,26 +41,7 @@ jobs:
               text = text.replace(old, new, 1)
           p.write_text(text, encoding='utf-8')
 
-          # proxy_pool: honor configured probe provider and schedule periodic probes asynchronously.
-          p = Path('proxy_pool.py')
-          text = p.read_text(encoding='utf-8')
-          if 'self.probe_provider =' not in text:
-              text = text.replace('        self.probe_timeout = max(3, int(self.config.get("proxy_pool_probe_timeout_sec") or 15))\n', '        self.probe_timeout = max(3, int(self.config.get("proxy_pool_probe_timeout_sec") or 15))\n        self.probe_provider = str(self.config.get("proxy_pool_probe_provider") or "cloudflare").strip().lower()\n        self._periodic_probe_running = False\n', 1)
-          if 'self._schedule_periodic_probe_if_due()' not in text:
-              text = text.replace('        self.refresh_if_due()\n        deadline = time.time()', '        self.refresh_if_due()\n        self._schedule_periodic_probe_if_due()\n        deadline = time.time()', 1)
-          marker = '    def probe_node(self, node_id):\n'
-          method = '''    def _schedule_periodic_probe_if_due(self):\n        if self.probe_interval <= 0:\n            return\n        now = time.time()\n        with self._lock:\n            if self._periodic_probe_running or now - self._last_probe_all < self.probe_interval:\n                return\n            self._periodic_probe_running = True\n\n        def runner():\n            try:\n                self.probe_all(force=True)\n            except Exception as exc:\n                self.log("[Debug] 代理池定期探测失败: %s" % exc)\n            finally:\n                with self._lock:\n                    self._periodic_probe_running = False\n\n        threading.Thread(target=runner, name="proxy-probe-periodic", daemon=True).start()\n\n'''
-          if 'def _schedule_periodic_probe_if_due' not in text:
-              if marker not in text: raise SystemExit('proxy_pool probe marker missing')
-              text = text.replace(marker, method + marker, 1)
-          old = '''            response = requests.get(\n                "https://www.cloudflare.com/cdn-cgi/trace",\n                proxies={"http": proxy_url, "https": proxy_url},\n                timeout=self.probe_timeout,\n                allow_redirects=False,\n            )\n            if not 200 <= int(response.status_code) < 300:\n                raise ProxyPoolError("HTTP %s" % response.status_code)\n            for line in str(response.text or "").splitlines():\n                if line.startswith("ip="):\n                    exit_ip = line[3:].strip()\n                    break\n            status = "healthy"\n'''
-          new = '''            if self.probe_provider == "ipinfo":\n                response = requests.get(\n                    "https://ipinfo.io/json",\n                    proxies={"http": proxy_url, "https": proxy_url},\n                    timeout=self.probe_timeout,\n                    allow_redirects=False,\n                )\n                if not 200 <= int(response.status_code) < 300:\n                    raise ProxyPoolError("HTTP %s" % response.status_code)\n                try:\n                    exit_ip = str((response.json() or {}).get("ip") or "").strip()\n                except Exception:\n                    exit_ip = ""\n            else:\n                response = requests.get(\n                    "https://www.cloudflare.com/cdn-cgi/trace",\n                    proxies={"http": proxy_url, "https": proxy_url},\n                    timeout=self.probe_timeout,\n                    allow_redirects=False,\n                )\n                if not 200 <= int(response.status_code) < 300:\n                    raise ProxyPoolError("HTTP %s" % response.status_code)\n                for line in str(response.text or "").splitlines():\n                    if line.startswith("ip="):\n                        exit_ip = line[3:].strip()\n                        break\n            status = "healthy"\n'''
-          if new not in text:
-              if text.count(old) != 1: raise SystemExit('proxy provider target mismatch')
-              text = text.replace(old, new, 1)
-          p.write_text(text, encoding='utf-8')
-
-          # GUI: expose compact proxy-pool controls without duplicating the WebUI status table.
+          # GUI: expose compact pool controls and a background test action.
           p = Path('grok_register_ttk.py')
           text = p.read_text(encoding='utf-8')
           block = '''\n        add_label(15, 0, "代理模式:")\n        self.proxy_mode_var = tk.StringVar(value=str(config.get("proxy_mode", "auto")))\n        self.proxy_mode_combo = tk_option_menu(config_frame, self.proxy_mode_var, ["auto", "direct", "single", "pool"], width=12)\n        add_field(self.proxy_mode_combo, 15, 1, sticky=tk.W)\n        add_label(15, 2, "代理池回退:")\n        self.proxy_fallback_var = tk.StringVar(value=str(config.get("proxy_fallback", "none")))\n        self.proxy_fallback_combo = tk_option_menu(config_frame, self.proxy_fallback_var, ["none", "direct", "single"], width=12)\n        add_field(self.proxy_fallback_combo, 15, 3, sticky=tk.W)\n\n        add_label(16, 0, "代理池文件:")\n        self.proxy_pool_file_var = tk.StringVar(value=str(config.get("proxy_pool_file", "")))\n        self.proxy_pool_file_entry = tk_entry(config_frame, textvariable=self.proxy_pool_file_var, width=34)\n        add_field(self.proxy_pool_file_entry, 16, 1)\n        add_label(16, 2, "节点类型:")\n        self.proxy_endpoint_mode_var = tk.StringVar(value=str(config.get("proxy_pool_endpoint_mode", "auto")))\n        self.proxy_endpoint_mode_combo = tk_option_menu(config_frame, self.proxy_endpoint_mode_var, ["auto", "fixed", "rotating"], width=12)\n        add_field(self.proxy_endpoint_mode_combo, 16, 3, sticky=tk.W)\n\n        add_label(17, 0, "代理订阅 URL:")\n        self.proxy_subscription_var = tk.StringVar(value=str(config.get("proxy_pool_subscription_url", "")))\n        self.proxy_subscription_entry = tk_entry(config_frame, textvariable=self.proxy_subscription_var, width=72)\n        add_field(self.proxy_subscription_entry, 17, 1, columnspan=3)\n\n        add_label(18, 0, "单节点并发:")\n        self.proxy_capacity_var = tk.StringVar(value=str(config.get("proxy_pool_max_concurrent_per_node", 1)))\n        self.proxy_capacity_spinbox = tk.Spinbox(config_frame, from_=1, to=64, width=8, textvariable=self.proxy_capacity_var, bg=UI_ENTRY_BG, fg=UI_FG, insertbackground=UI_FG, buttonbackground=UI_BUTTON_BG, relief=tk.SOLID)\n        add_field(self.proxy_capacity_spinbox, 18, 1, sticky=tk.W)\n        self.proxy_test_btn = tk_button(config_frame, text="测试代理池", command=self.test_proxy_pool)\n        add_field(self.proxy_test_btn, 18, 3, sticky=tk.W)\n'''
@@ -95,23 +66,22 @@ jobs:
               text = text.replace(method_marker, method + method_marker, 1)
           p.write_text(text, encoding='utf-8')
 
-          # README: document the new proxy-pool modes while keeping legacy proxy compatibility explicit.
+          # README: concise user-facing proxy-pool section.
           p = Path('README.md')
           text = p.read_text(encoding='utf-8')
-          section = '''\n### 代理与代理池\n\n默认 `proxy_mode=auto`，旧配置无需修改：`proxy` 为空时直连，非空时继续使用原单代理逻辑。需要账号级稳定代理租约时，可切换到 `single` 或 `pool`。\n\n```json\n{\n  "proxy_mode": "pool",\n  "proxy": "",\n  "proxy_fallback": "none",\n  "proxy_pool_file": "./proxies.txt",\n  "proxy_pool_subscription_url": "",\n  "proxy_pool_endpoint_mode": "auto",\n  "proxy_pool_max_concurrent_per_node": 1\n}\n```\n\n- `single`：把 `proxy` 作为受健康度与冷却管理的固定节点。\n- `pool`：从本地文件和/或订阅加载多个节点，按账号注册 Session 获取稳定 Lease。\n- 同一次账号注册中的浏览器、邮箱请求、NSFW 与默认 CPA 网络都会保持同一个 Lease；邮箱重试不会换代理，完整 slot 重试才会重新获取。\n- 支持 HTTP/HTTPS/SOCKS4/SOCKS5，以及认证代理；包含 `{account}` 的地址会自动按旋转入口处理，每次完整 attempt 生成稳定 session 标识。\n- 固定节点发生明确 transport failure 时会降健康度并进入指数冷却，同时触发后台恢复探测；普通业务失败、验证码失败、认证/限流等不会直接处罚代理。\n- WebUI 提供独立“代理池”页，可查看脱敏节点、健康度、出口 IP、延迟、占用、失败数和冷却状态，并手动重新加载/测试。GUI 提供精简代理池配置与测试按钮。\n- `cpa_proxy` 若显式设置始终优先；远端管理类后处理继续使用其既有网络隔离规则，不继承注册 Lease。\n\n更多参数和运行机制见 `docs/proxy-pool.md`。\n\n'''
+          section = '''\n### 代理与代理池\n\n默认 `proxy_mode=auto`，旧配置无需修改：`proxy` 为空时直连，非空时继续使用原单代理逻辑。需要账号级稳定代理租约时，可切换到 `single` 或 `pool`。\n\n```json\n{\n  "proxy_mode": "pool",\n  "proxy": "",\n  "proxy_fallback": "none",\n  "proxy_pool_file": "./proxies.txt",\n  "proxy_pool_subscription_url": "",\n  "proxy_pool_endpoint_mode": "auto",\n  "proxy_pool_max_concurrent_per_node": 1\n}\n```\n\n- `single`：把 `proxy` 作为受健康度与冷却管理的固定节点。\n- `pool`：从本地文件和/或订阅加载多个节点，按账号注册 Session 获取稳定 Lease。\n- 同一次账号注册中的浏览器、邮箱请求、NSFW 与默认 CPA 网络都会保持同一个 Lease；邮箱重试不会换代理，完整 slot 重试才会重新获取。\n- 支持 HTTP/HTTPS/SOCKS4/SOCKS5 及认证代理；包含 `{account}` 的地址会自动按旋转入口处理。\n- 固定节点发生明确 transport failure 时会降健康度并进入指数冷却，同时触发后台恢复探测；普通业务失败不会直接处罚代理。\n- WebUI 提供独立“代理池”页查看脱敏节点、健康度、出口 IP、延迟、占用、失败数和冷却状态；GUI 提供精简配置和测试按钮。\n- `cpa_proxy` 显式设置时始终优先；远端管理类后处理继续使用原有网络隔离规则。\n\n更多参数和运行机制见 `docs/proxy-pool.md`。\n\n'''
           marker = '### DuckMail\n'
           if '### 代理与代理池\n' not in text:
               if marker not in text: raise SystemExit('README marker missing')
               text = text.replace(marker, section + marker, 1)
           p.write_text(text, encoding='utf-8')
 
-          # Focused regression tests for managed browser fallback policy and probe-provider switch.
-          Path('tests/test_proxy_pool_completion.py').write_text('''import unittest\nfrom unittest.mock import Mock, patch\n\nfrom app_config import DEFAULT_CONFIG\nfrom proxy_pool import ProxyPoolManager\n\n\nclass ProxyPoolCompletionTests(unittest.TestCase):\n    def config(self, **updates):\n        cfg = dict(DEFAULT_CONFIG)\n        cfg.update(updates)\n        return cfg\n\n    def test_ipinfo_probe_provider_is_honored(self):\n        manager = ProxyPoolManager(self.config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_provider="ipinfo"))\n        response = Mock(status_code=200)\n        response.json.return_value = {"ip": "203.0.113.7"}\n        with patch("proxy_pool.requests.get", return_value=response) as get:\n            result = manager.probe_node(manager.snapshot()["nodes"][0]["id"])\n        self.assertEqual(result["status"], "healthy")\n        self.assertEqual(result["exit_ip"], "203.0.113.7")\n        self.assertEqual(get.call_args.args[0], "https://ipinfo.io/json")\n\n    def test_periodic_probe_scheduler_is_non_blocking_and_coalesced(self):\n        manager = ProxyPoolManager(self.config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=1))\n        manager._last_probe_all = 0\n        with patch.object(manager, "probe_all", return_value=[]) as probe:\n            manager._schedule_periodic_probe_if_due()\n            manager._schedule_periodic_probe_if_due()\n            import time\n            deadline = time.time() + 1\n            while time.time() < deadline and probe.call_count == 0:\n                time.sleep(0.01)\n        self.assertEqual(probe.call_count, 1)\n\n\nif __name__ == "__main__":\n    unittest.main()\n''', encoding='utf-8')
+          Path('tests/test_proxy_pool_completion.py').write_text('''import unittest\nfrom unittest.mock import Mock, patch\n\nfrom app_config import DEFAULT_CONFIG\nfrom proxy_pool import ProxyPoolManager\n\n\nclass ProxyPoolCompletionTests(unittest.TestCase):\n    def config(self, **updates):\n        cfg = dict(DEFAULT_CONFIG)\n        cfg.update(updates)\n        return cfg\n\n    def test_ipinfo_probe_provider_is_honored(self):\n        manager = ProxyPoolManager(self.config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_provider="ipinfo"))\n        response = Mock(status_code=200, text="")\n        response.json.return_value = {"ip": "203.0.113.7"}\n        with patch("proxy_pool.requests.get", return_value=response) as get:\n            result = manager.probe_node(manager.snapshot()["nodes"][0]["id"])\n        self.assertEqual(result["status"], "healthy")\n        self.assertEqual(result["exit_ip"], "203.0.113.7")\n        self.assertEqual(get.call_args.args[0], "https://ipinfo.io/json")\n\n    def test_periodic_probe_scheduler_is_coalesced(self):\n        manager = ProxyPoolManager(self.config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=1))\n        manager._last_probe_all = 0\n        import threading, time\n        entered = threading.Event()\n        release = threading.Event()\n        def fake_probe(force=False):\n            entered.set(); release.wait(1); return []\n        with patch.object(manager, "probe_all", side_effect=fake_probe) as probe:\n            manager._schedule_periodic_probe_if_due()\n            self.assertTrue(entered.wait(1))\n            manager._schedule_periodic_probe_if_due()\n            release.set()\n            time.sleep(0.05)\n        self.assertEqual(probe.call_count, 1)\n\n\nif __name__ == "__main__":\n    unittest.main()\n''', encoding='utf-8')
           PY
           if ! git diff --quiet; then
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add registration_browser.py proxy_pool.py grok_register_ttk.py README.md tests/test_proxy_pool_completion.py
+            git add registration_browser.py grok_register_ttk.py README.md tests/test_proxy_pool_completion.py
             git commit -m "feat: complete proxy pool runtime integration"
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
