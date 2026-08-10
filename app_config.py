@@ -19,7 +19,19 @@ DEFAULT_CONFIG = {
     "cloudmail_public_token": "",
     "cloudmail_domains": "",
     "cloudmail_path_messages": "/api/public/emailList",
+    "proxy_mode": "auto",
     "proxy": "",
+    "proxy_fallback": "none",
+    "proxy_pool_file": "",
+    "proxy_pool_subscription_url": "",
+    "proxy_pool_subscription_proxy": "",
+    "proxy_pool_endpoint_mode": "auto",
+    "proxy_pool_refresh_interval_sec": 900,
+    "proxy_pool_probe_interval_sec": 900,
+    "proxy_pool_probe_timeout_sec": 15,
+    "proxy_pool_probe_provider": "cloudflare",
+    "proxy_pool_max_concurrent_per_node": 1,
+    "proxy_pool_acquire_timeout_sec": 30,
     "enable_nsfw": True,
     "register_count": 1,
     "multi_thread_enabled": False,
@@ -55,6 +67,7 @@ DEFAULT_CONFIG = {
 
 
 config = DEFAULT_CONFIG.copy()
+
 
 class ConfigError(RuntimeError):
     pass
@@ -102,17 +115,29 @@ def validate_config_structure(raw):
         cfg[key] = _require_bool(cfg, key)
     cfg["register_count"] = _require_int(cfg, "register_count", 1, 2500)
     cfg["multi_thread_workers"] = _require_int(cfg, "multi_thread_workers", 1, 8)
+    cfg["proxy_pool_refresh_interval_sec"] = _require_int(cfg, "proxy_pool_refresh_interval_sec", 0, 86400)
+    cfg["proxy_pool_probe_interval_sec"] = _require_int(cfg, "proxy_pool_probe_interval_sec", 0, 86400)
+    cfg["proxy_pool_probe_timeout_sec"] = _require_int(cfg, "proxy_pool_probe_timeout_sec", 3, 120)
+    cfg["proxy_pool_max_concurrent_per_node"] = _require_int(cfg, "proxy_pool_max_concurrent_per_node", 1, 64)
+    cfg["proxy_pool_acquire_timeout_sec"] = _require_int(cfg, "proxy_pool_acquire_timeout_sec", 1, 600)
     cfg["cpa_mint_timeout_sec"] = _require_int(cfg, "cpa_mint_timeout_sec", 30, 1800)
     cfg["cpa_oidc_request_timeout_sec"] = _require_int(cfg, "cpa_oidc_request_timeout_sec", 3, 120)
     cfg["cpa_oidc_poll_timeout_sec"] = _require_int(cfg, "cpa_oidc_poll_timeout_sec", 3, 120)
     string_keys = tuple(key for key, value in DEFAULT_CONFIG.items() if isinstance(value, str))
-    path_keys = {"grok2api_local_token_file", "api_reverse_tools", "cpa_auth_dir", "cpa_hotload_dir"}
+    path_keys = {
+        "grok2api_local_token_file", "api_reverse_tools", "cpa_auth_dir", "cpa_hotload_dir",
+        "proxy_pool_file",
+    }
     for key in string_keys:
         cfg[key] = _require_string(cfg, key, path=key in path_keys)
     enums = {
         "email_provider": {"duckmail", "yyds", "cloudflare", "cloudmail"},
         "cloudflare_auth_mode": {"query-key", "bearer", "x-api-key", "x-admin-auth", "none"},
         "grok2api_pool_name": {"ssoBasic", "ssoSuper"},
+        "proxy_mode": {"auto", "direct", "single", "pool"},
+        "proxy_fallback": {"none", "direct", "single"},
+        "proxy_pool_endpoint_mode": {"auto", "fixed", "rotating"},
+        "proxy_pool_probe_provider": {"cloudflare", "ipinfo"},
     }
     for key, allowed in enums.items():
         value = cfg.get(key, DEFAULT_CONFIG.get(key, ""))
@@ -134,6 +159,7 @@ def validate_config_structure(raw):
     url_keys = {
         "cloudflare_api_base", "cloudmail_api_base",
         "grok2api_remote_base", "cpa_base_url",
+        "proxy_pool_subscription_url",
     }
     for key in url_keys:
         value = cfg[key]
@@ -164,6 +190,14 @@ def validate_run_requirements(cfg):
             raise ConfigError("Cloud Mail 模式缺少必需配置: " + ", ".join(missing))
     if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
         raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
+
+    if cfg["proxy_mode"] == "single" and not cfg["proxy"]:
+        raise ConfigError("single 代理模式必须配置 proxy")
+    if cfg["proxy_mode"] == "pool" and not (cfg["proxy_pool_file"] or cfg["proxy_pool_subscription_url"]):
+        raise ConfigError("pool 代理模式至少需要 proxy_pool_file 或 proxy_pool_subscription_url")
+    if cfg["proxy_fallback"] == "single" and not cfg["proxy"]:
+        raise ConfigError("proxy_fallback=single 时必须配置 proxy")
+
     if cfg["grok2api_auto_add_remote"]:
         if not cfg["grok2api_remote_base"]:
             raise ConfigError("远端 token 入池缺少必需配置: grok2api_remote_base")
@@ -184,7 +218,6 @@ def validate_run_requirements(cfg):
 def validate_config(raw):
     """Backward-compatible full validation used before a run or save."""
     return validate_run_requirements(raw)
-
 
 
 def _replace_config(value):
