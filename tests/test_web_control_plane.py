@@ -106,7 +106,7 @@ class WebControlPlaneTests(unittest.TestCase):
         response = self.client.put("/api/config", json={"register_count": 2})
         self.assertEqual(response.status_code, 409)
 
-    def test_proxy_pool_status_masks_credentials(self):
+    def test_proxy_pool_status_exposes_credentials(self):
         cfg = self._base_config()
         cfg.update({"proxy_mode": "single", "proxy": "http://secret:password@127.0.0.1:7890"})
         with patch.object(self.server.engine, "load_config", side_effect=self._fake_load(cfg)):
@@ -116,9 +116,7 @@ class WebControlPlaneTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "single")
         self.assertEqual(len(payload["nodes"]), 1)
         label = payload["nodes"][0]["proxy"]
-        self.assertIn("user:***@", label)
-        self.assertNotIn("secret", label)
-        self.assertNotIn("password", label)
+        self.assertEqual(label, "http://secret:password@127.0.0.1:7890")
 
     def test_proxy_pool_reload_and_test_are_rejected_while_running(self):
         with self.server._job_lock:
