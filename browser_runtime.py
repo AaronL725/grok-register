@@ -13,6 +13,7 @@ from proxy_pool import (
     ProxyTransportError,
     current_proxy_lease,
     managed_proxy_active,
+    safe_proxy_error_text,
 )
 
 _config = {}
@@ -187,7 +188,7 @@ def http_get(url, **kwargs):
     except Exception as exc:
         if is_proxy_connection_error(exc):
             if managed_proxy_active():
-                raise ProxyTransportError(str(exc)) from exc
+                raise ProxyTransportError(safe_proxy_error_text(exc)) from exc
             direct = dict(request_kwargs)
             direct.pop("proxies", None)
             return requests.get(url, **direct)
@@ -201,7 +202,7 @@ def http_post(url, **kwargs):
     except Exception as exc:
         if is_proxy_connection_error(exc):
             if managed_proxy_active():
-                raise ProxyTransportError(str(exc)) from exc
+                raise ProxyTransportError(safe_proxy_error_text(exc)) from exc
             direct = dict(request_kwargs)
             direct.pop("proxies", None)
             return requests.post(url, **direct)

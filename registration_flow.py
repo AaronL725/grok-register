@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from app_config import config as app_config
 from proxy_pool import (
+    ProxyAcquireCancelled,
     ProxyPoolError,
     begin_registration_slot,
     current_proxy_lease,
@@ -362,6 +363,7 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                     attempt_index=attempt_index,
                     worker_key=threading.current_thread().name,
                     log=callbacks.log,
+                    cancel_callback=callbacks.cancelled,
                 )
                 if first_browser_start or ops.browser_missing():
                     ops.start_browser()
@@ -383,6 +385,10 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                 last_cleanup_success_count = _record_success(
                     result, settings, callbacks, ops, account, output, last_cleanup_success_count
                 )
+            except ProxyAcquireCancelled:
+                result.cancelled = True
+                callbacks.log("[!] 已在等待代理租约时停止")
+                continue_batch = False
             except ops.cancelled_exception:
                 result.cancelled = True
                 callbacks.log("[!] 注册被停止")

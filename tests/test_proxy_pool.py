@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 
 from app_config import DEFAULT_CONFIG, validate_config_structure, validate_run_requirements
-from proxy_pool import ProxyPoolManager, parse_proxy_source
+from proxy_pool import (
+    ProxyAcquireCancelled, ProxyPoolManager, parse_proxy_source, safe_proxy_error_text,
+)
 
 
 class ProxyPoolTests(unittest.TestCase):
@@ -82,6 +84,24 @@ class ProxyPoolTests(unittest.TestCase):
         self.assertIn("user:***@", label)
         self.assertNotIn("secret", label)
         self.assertNotIn("password", label)
+
+    def test_acquire_honors_cancellation(self):
+        manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001"))
+        with self.assertRaises(ProxyAcquireCancelled):
+            manager.acquire("a", "worker", 1, 1, "session", timeout=30, cancel_callback=lambda: True)
+
+    def test_release_is_idempotent(self):
+        manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001"))
+        lease = manager.acquire("a", "worker", 1, 1, "session", timeout=1)
+        manager.release(lease)
+        manager.release(lease)
+        self.assertEqual(manager.snapshot()["nodes"][0]["inflight"], 0)
+
+    def test_proxy_error_text_masks_credentials(self):
+        value = safe_proxy_error_text("failed via socks5://secret:password@127.0.0.1:1080")
+        self.assertNotIn("secret", value)
+        self.assertNotIn("password", value)
+        self.assertIn("socks5://***@127.0.0.1:1080", value)
 
 
 if __name__ == "__main__":

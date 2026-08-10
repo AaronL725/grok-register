@@ -126,6 +126,7 @@
     } catch (_) {}
   }
   async function proxyAction(path) {
+    if (dirty.size && !await saveConfig()) return;
     const reload = document.getElementById('proxyReloadBtn');
     const test = document.getElementById('proxyTestBtn');
     if (reload) reload.disabled = true; if (test) test.disabled = true;
