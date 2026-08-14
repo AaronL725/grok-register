@@ -18,6 +18,17 @@ class ProxyPoolPreflightWebTests(unittest.TestCase):
     def setUp(self):
         with self.server._job_lock:
             self.server._job_state["running"] = False
+        self.server.engine.config.clear()
+        self.server.engine.config.update(self.server.engine.DEFAULT_CONFIG)
+        try:
+            import proxy_pool
+            proxy_pool.reset_manager()
+        except Exception:
+            pass
+
+    def tearDown(self):
+        self.server.engine.config.clear()
+        self.server.engine.config.update(self.server.engine.DEFAULT_CONFIG)
         try:
             import proxy_pool
             proxy_pool.reset_manager()
