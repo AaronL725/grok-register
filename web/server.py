@@ -20,7 +20,7 @@ PROXY_POOL_JS = Path(__file__).resolve().parent / "proxy-pool.js"
 PROXY_POOL_CSS = Path(__file__).resolve().parent / "proxy-pool.css"
 LOG_LIMIT = 2000
 
-app = FastAPI(title="grok-register WebUI", version="1.1")
+app = FastAPI(title="grok-register WebUI", version="1.2")
 
 _job_lock = threading.Lock()
 _job_thread: Optional[threading.Thread] = None
@@ -32,6 +32,7 @@ _job_state = {
     "fail": 0,
     "pending": 0,
     "warnings": 0,
+    "uncertain": 0,
     "cancelled": False,
     "started_at": None,
     "finished_at": None,
@@ -75,6 +76,7 @@ def _update_progress(batch: Any) -> None:
         _job_state["fail"] = int(batch.fail_count)
         _job_state["pending"] = int(batch.registered_unsaved_count)
         _job_state["warnings"] = int(batch.postprocess_warning_count)
+        _job_state["uncertain"] = int(getattr(batch, "uncertain_count", 0) or 0)
         _job_state["cancelled"] = bool(batch.cancelled)
 
 
@@ -97,9 +99,7 @@ def _run_job(count: int, controller: Any, accounts_file: str) -> None:
         with _job_lock:
             _job_state["running"] = False
             _job_state["finished_at"] = time.time()
-            _job_state["cancelled"] = bool(
-                _job_state["cancelled"] or controller.should_stop()
-            )
+            _job_state["cancelled"] = bool(_job_state["cancelled"] or controller.should_stop())
             _controller = None
         _append_log("[*] WebUI 任务结束")
 
@@ -139,12 +139,10 @@ async def put_config(request: Request):
     updates = await request.json()
     if not isinstance(updates, dict):
         raise HTTPException(status_code=400, detail="配置更新必须是 JSON 对象")
-
     allowed = set(engine.DEFAULT_CONFIG)
     unknown = sorted(set(updates) - allowed)
     if unknown:
         raise HTTPException(status_code=400, detail="未知配置项: " + ", ".join(unknown))
-
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="任务运行期间不能修改配置")
@@ -204,6 +202,27 @@ def proxy_pool_test():
     return {"ok": True, "results": results, **manager.snapshot()}
 
 
+@app.post("/api/proxy-pool/preflight")
+def proxy_pool_preflight(node_id: str = Query(..., min_length=1)):
+    from proxy_pool import get_manager
+    with _job_lock:
+        if _job_state["running"]:
+            raise HTTPException(status_code=409, detail="任务运行期间不能执行注册路径预检")
+        engine.load_config()
+        try:
+            cfg = engine.validate_config_structure(dict(engine.config))
+            if not cfg.get("proxy_pool_preflight_enabled", True):
+                raise HTTPException(status_code=409, detail="注册路径预检已在配置中关闭")
+            manager = get_manager(config=cfg, log=_append_log)
+            result = manager.preflight_node(node_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_log("[*] 代理节点注册路径预检完成: %s" % node_id)
+    return {"ok": True, "result": result, **manager.snapshot()}
+
+
 @app.get("/api/status")
 def status():
     return {"ok": True, **_state_snapshot()}
@@ -220,11 +239,9 @@ def logs(after: int = Query(default=0, ge=0)):
 @app.post("/api/start")
 def start():
     global _job_thread, _controller
-
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="已有注册任务正在运行")
-
         engine.load_config()
         try:
             validated = engine.validate_run_requirements(dict(engine.config))
@@ -232,31 +249,16 @@ def start():
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         engine.config.clear()
         engine.config.update(validated)
-
         count = int(engine.config["register_count"])
         controller = engine.CliStopController()
         accounts_file = _new_accounts_file()
-
         _job_state.update({
-            "running": True,
-            "target": count,
-            "success": 0,
-            "fail": 0,
-            "pending": 0,
-            "warnings": 0,
-            "cancelled": False,
-            "started_at": time.time(),
-            "finished_at": None,
-            "accounts_file": accounts_file,
-            "error": "",
+            "running": True, "target": count, "success": 0, "fail": 0, "pending": 0,
+            "warnings": 0, "uncertain": 0, "cancelled": False, "started_at": time.time(),
+            "finished_at": None, "accounts_file": accounts_file, "error": "",
         })
         _controller = controller
-        thread = threading.Thread(
-            target=_run_job,
-            args=(count, controller, accounts_file),
-            name="grok-register-web-job",
-            daemon=True,
-        )
+        thread = threading.Thread(target=_run_job, args=(count, controller, accounts_file), name="grok-register-web-job", daemon=True)
         _job_thread = thread
         try:
             thread.start()
@@ -266,7 +268,6 @@ def start():
             _controller = None
             _job_thread = None
             raise
-
     _append_log("[*] WebUI 启动注册任务，目标数量: %s" % count)
     return {"ok": True, "started": True, "target": count, "accounts_file": accounts_file}
 
@@ -285,7 +286,6 @@ def stop():
 
 def main() -> None:
     import uvicorn
-
     uvicorn.run("web.server:app", host="127.0.0.1", port=8092, workers=1)
 
 
