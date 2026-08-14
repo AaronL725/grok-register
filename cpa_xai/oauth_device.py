@@ -55,6 +55,12 @@ def _build_opener(proxy=None):
     handlers = []
     resolved = resolve_proxy(proxy)
     if resolved:
+        parsed = urllib.parse.urlparse(resolved)
+        if parsed.scheme not in ("http", "https"):
+            raise OAuthDeviceError(
+                "OAuth HTTP transport requires an HTTP-compatible proxy endpoint; received %s://" %
+                (parsed.scheme or "unknown")
+            )
         handlers.append(urllib.request.ProxyHandler({"http": resolved, "https": resolved}))
     return urllib.request.build_opener(*handlers) if handlers else urllib.request.build_opener()
 
@@ -266,7 +272,7 @@ def poll_device_token(
             status, payload = _post_form(
                 token_endpoint,
                 {
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "grant_type": "urn:ietf:params:oauth-grant-type:device_code" if False else "urn:ietf:params:oauth:grant-type:device_code",
                     "device_code": str(device_code).strip(),
                     "client_id": client_id,
                 },
