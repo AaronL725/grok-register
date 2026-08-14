@@ -18,7 +18,9 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
             path = Path(tmp) / "proxies.txt"
             source = "vless://11111111-1111-1111-1111-111111111111@vless.example.com:443?security=tls&sni=vless.example.com#VLESS"
             path.write_text(source + "\n", encoding="utf-8")
-            manager = ProxyPoolManager(self.config(proxy_mode="pool", proxy_pool_file=str(path)))
+            manager = ProxyPoolManager(self.config(
+                proxy_mode="pool", proxy_pool_file=str(path), proxy_pool_probe_interval_sec=0,
+            ))
             with patch.object(manager._runtime, "acquire", return_value=("http://127.0.0.1:32001", "runtime-key")) as acquire, patch.object(manager._runtime, "release") as release:
                 lease = manager.acquire("worker:slot:1", "worker", 1, 1, "session", timeout=1)
                 self.assertEqual(lease.proxy_url, "http://127.0.0.1:32001")
@@ -31,7 +33,9 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
             self.assertEqual(manager.snapshot()["nodes"][0]["inflight"], 0)
 
     def test_native_node_never_starts_advanced_runtime(self):
-        manager = ProxyPoolManager(self.config(proxy_mode="single", proxy="socks5://user:pass@127.0.0.1:1080"))
+        manager = ProxyPoolManager(self.config(
+            proxy_mode="single", proxy="socks5://user:pass@127.0.0.1:1080", proxy_pool_probe_interval_sec=0,
+        ))
         with patch.object(manager._runtime, "acquire") as acquire:
             lease = manager.acquire("a", "worker", 1, 1, "session", timeout=1)
         acquire.assert_not_called()
@@ -75,12 +79,16 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
                 "http://127.0.0.1:8080\n",
                 encoding="utf-8",
             )
-            manager = ProxyPoolManager(self.config(proxy_mode="pool", proxy_pool_file=str(path)))
-            with patch.object(manager._runtime, "acquire", side_effect=RuntimeError("sing-box unavailable")):
+            manager = ProxyPoolManager(self.config(
+                proxy_mode="pool", proxy_pool_file=str(path), proxy_pool_probe_interval_sec=0,
+            ))
+            vless = next(node for node in manager._nodes.values() if node.protocol == "vless")
+            http = next(node for node in manager._nodes.values() if node.protocol == "http")
+            with patch.object(manager, "_select_locked", side_effect=[vless, http]), patch.object(
+                manager._runtime, "acquire", side_effect=RuntimeError("sing-box unavailable")
+            ):
                 lease = manager.acquire("pick-vless", "worker", 1, 1, "session", timeout=1)
-            self.assertIn(lease.protocol, {"http", "vless"})
-            if lease.protocol == "vless":
-                self.fail("failed advanced runtime must not be returned as a lease")
+            self.assertEqual(lease.protocol, "http")
             state = {node["protocol"]: node for node in manager.snapshot()["nodes"]}
             self.assertFalse(state["vless"]["enabled"])
             self.assertIn("backend:", state["vless"]["last_error"])
