@@ -99,7 +99,9 @@ def _run_job(count: int, controller: Any, accounts_file: str) -> None:
         with _job_lock:
             _job_state["running"] = False
             _job_state["finished_at"] = time.time()
-            _job_state["cancelled"] = bool(_job_state["cancelled"] or controller.should_stop())
+            _job_state["cancelled"] = bool(
+                _job_state["cancelled"] or controller.should_stop()
+            )
             _controller = None
         _append_log("[*] WebUI 任务结束")
 
@@ -139,10 +141,12 @@ async def put_config(request: Request):
     updates = await request.json()
     if not isinstance(updates, dict):
         raise HTTPException(status_code=400, detail="配置更新必须是 JSON 对象")
+
     allowed = set(engine.DEFAULT_CONFIG)
     unknown = sorted(set(updates) - allowed)
     if unknown:
         raise HTTPException(status_code=400, detail="未知配置项: " + ", ".join(unknown))
+
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="任务运行期间不能修改配置")
@@ -239,9 +243,11 @@ def logs(after: int = Query(default=0, ge=0)):
 @app.post("/api/start")
 def start():
     global _job_thread, _controller
+
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="已有注册任务正在运行")
+
         engine.load_config()
         try:
             validated = engine.validate_run_requirements(dict(engine.config))
@@ -249,16 +255,32 @@ def start():
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         engine.config.clear()
         engine.config.update(validated)
+
         count = int(engine.config["register_count"])
         controller = engine.CliStopController()
         accounts_file = _new_accounts_file()
+
         _job_state.update({
-            "running": True, "target": count, "success": 0, "fail": 0, "pending": 0,
-            "warnings": 0, "uncertain": 0, "cancelled": False, "started_at": time.time(),
-            "finished_at": None, "accounts_file": accounts_file, "error": "",
+            "running": True,
+            "target": count,
+            "success": 0,
+            "fail": 0,
+            "pending": 0,
+            "warnings": 0,
+            "uncertain": 0,
+            "cancelled": False,
+            "started_at": time.time(),
+            "finished_at": None,
+            "accounts_file": accounts_file,
+            "error": "",
         })
         _controller = controller
-        thread = threading.Thread(target=_run_job, args=(count, controller, accounts_file), name="grok-register-web-job", daemon=True)
+        thread = threading.Thread(
+            target=_run_job,
+            args=(count, controller, accounts_file),
+            name="grok-register-web-job",
+            daemon=True,
+        )
         _job_thread = thread
         try:
             thread.start()
@@ -268,6 +290,7 @@ def start():
             _controller = None
             _job_thread = None
             raise
+
     _append_log("[*] WebUI 启动注册任务，目标数量: %s" % count)
     return {"ok": True, "started": True, "target": count, "accounts_file": accounts_file}
 
@@ -286,6 +309,7 @@ def stop():
 
 def main() -> None:
     import uvicorn
+
     uvicorn.run("web.server:app", host="127.0.0.1", port=8092, workers=1)
 
 
