@@ -60,7 +60,7 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
 - 支持 **GUI / CLI / WebUI** 三种操作入口。
 - 支持可选 **1–8 线程并发注册**；默认关闭。
 - 支持 `direct / single / pool` 代理模式、健康检查、冷却、订阅、固定/旋转节点和账号级稳定 Proxy Lease。
-- 代理池可混合解析 **HTTP / HTTPS / SOCKS / VLESS / VMess / Trojan / Hysteria2 / TUIC** 节点；高级协议按需通过本地 sing-box 转换为 localhost HTTP 出口。
+- 代理池可混合解析 **HTTP / HTTPS / SOCKS / VLESS / VMess / Trojan / Hysteria2 / TUIC** 节点。
 - 支持注册后尝试开启 NSFW；失败不会丢失已经注册成功的账号。
 - 支持把 SSO token 写入 grok2api 本地池或远端池。
 - 支持可选 CPA xAI OIDC 凭证导出与 CLIProxyAPI hotload。
