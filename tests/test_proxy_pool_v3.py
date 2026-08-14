@@ -61,7 +61,7 @@ class ProxyPoolV3Tests(unittest.TestCase):
         with patch.object(proxy_bridge, "_recv_exact", side_effect=responses), patch.object(socket, "getaddrinfo", return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.51.100.10", 443))]) as resolver:
             local._socks5_connect(sock, "example.com", 443)
         resolver.assert_called_once()
-        self.assertIn(b"\x01\xc63d\n", sock.sent[-1])
+        self.assertIn(b"\x01\xc6\x33\x64\x0a", sock.sent[-1])
 
         remote = LocalProxyBridge("socks5h://127.0.0.1:1080")
         sock2 = FakeSock()
