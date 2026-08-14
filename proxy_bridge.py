@@ -1,10 +1,4 @@
-"""Shared local HTTP bridge for native proxy schemes.
-
-Managed proxy consumers should not need to understand SOCKS, proxy
-credentials, or HTTPS proxy handshakes.  This module adapts those native
-upstreams to a localhost HTTP proxy endpoint that urllib, curl_cffi and
-Chromium can all consume consistently.
-"""
+"""Shared local HTTP bridge for native proxy schemes."""
 from __future__ import annotations
 
 import base64
@@ -16,10 +10,24 @@ import socketserver
 import ssl
 import struct
 import threading
+import time
 import urllib.parse
-
+from dataclasses import dataclass
 
 _SUPPORTED_SCHEMES = {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}
+
+
+@dataclass
+class ProxyBridgeDiagnostic:
+    kind: str
+    message: str
+    at: float
+
+
+class ProxyBridgeError(OSError):
+    def __init__(self, kind, message):
+        self.kind = str(kind or "bridge")
+        super().__init__("%s: %s" % (self.kind, message))
 
 
 def parse_proxy_url(proxy):
@@ -62,7 +70,7 @@ def _recv_exact(sock, size):
     while len(data) < size:
         chunk = sock.recv(size - len(data))
         if not chunk:
-            raise OSError("unexpected EOF from proxy")
+            raise ProxyBridgeError("remote_reset", "unexpected EOF from proxy")
         data += chunk
     return data
 
@@ -88,7 +96,7 @@ def _split_host_port(value, default_port):
     if text.startswith("["):
         end = text.find("]")
         if end < 0:
-            raise ValueError("invalid IPv6 target")
+            raise ProxyBridgeError("target", "invalid IPv6 target")
         host = text[1:end]
         suffix = text[end + 1:]
         port = int(suffix[1:]) if suffix.startswith(":") else default_port
@@ -107,7 +115,7 @@ def _rewrite_http_request(initial):
     first = lines[0].decode("latin1", "ignore")
     parts = first.split(" ", 2)
     if len(parts) != 3:
-        raise ValueError("invalid HTTP request line")
+        raise ProxyBridgeError("request", "invalid HTTP request line")
     method, target, version = parts
     parsed = urllib.parse.urlsplit(target)
     if parsed.scheme in ("http", "https") and parsed.hostname:
@@ -149,18 +157,18 @@ class _BridgeHandler(socketserver.BaseRequestHandler):
                         req.append("Proxy-Authorization: Basic %s" % bridge.auth_header)
                     upstream.sendall(("\r\n".join(req) + "\r\n\r\n").encode("latin1"))
                     response = _recv_until_headers(upstream, timeout=bridge.timeout)
-                    if response:
-                        self.request.sendall(response)
                     status = response.split(b"\r\n", 1)[0] if response else b""
                     if b" 200 " not in status:
-                        return
+                        code = status.decode("latin1", "ignore")
+                        kind = "http_proxy_auth" if b" 407 " in status else "http_connect"
+                        raise ProxyBridgeError(kind, code or "proxy CONNECT failed")
+                    self.request.sendall(response)
                 else:
                     host, port = _split_host_port(target, 443)
                     upstream = bridge.open_socks_target(host, port)
                     self.request.sendall(b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: local-bridge\r\n\r\n")
                 _relay(self.request, upstream, timeout=bridge.relay_timeout)
                 return
-
             if bridge.is_http_upstream:
                 upstream = bridge.open_proxy_socket()
                 upstream.sendall(bridge.inject_proxy_auth(initial))
@@ -169,8 +177,20 @@ class _BridgeHandler(socketserver.BaseRequestHandler):
                 upstream = bridge.open_socks_target(host, port)
                 upstream.sendall(request_data)
             _relay(self.request, upstream, timeout=bridge.relay_timeout)
-        except Exception:
-            return
+        except ProxyBridgeError as exc:
+            bridge.record_diagnostic(exc.kind, str(exc))
+            try:
+                self.request.sendall(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            except Exception:
+                pass
+        except ssl.SSLError as exc:
+            bridge.record_diagnostic("https_proxy_tls", str(exc))
+        except socket.gaierror as exc:
+            bridge.record_diagnostic("local_dns", str(exc))
+        except (ConnectionRefusedError, TimeoutError, socket.timeout) as exc:
+            bridge.record_diagnostic("upstream_connect", str(exc))
+        except Exception as exc:
+            bridge.record_diagnostic("bridge", str(exc))
         finally:
             if upstream is not None:
                 try:
@@ -201,16 +221,36 @@ class LocalProxyBridge(object):
         self.server = None
         self.thread = None
         self.local_proxy = ""
+        self._diag_lock = threading.Lock()
+        self._last_diagnostic = None
+
+    def record_diagnostic(self, kind, message):
+        with self._diag_lock:
+            self._last_diagnostic = ProxyBridgeDiagnostic(str(kind), str(message)[:500], time.time())
+
+    def diagnostic(self):
+        with self._diag_lock:
+            value = self._last_diagnostic
+            if value is None:
+                return None
+            return {"kind": value.kind, "message": value.message, "at": value.at}
 
     @property
     def is_http_upstream(self):
         return self.upstream_scheme in ("http", "https")
 
     def open_proxy_socket(self):
-        sock = socket.create_connection((self.upstream_host, self.upstream_port), timeout=self.timeout)
+        try:
+            sock = socket.create_connection((self.upstream_host, self.upstream_port), timeout=self.timeout)
+        except Exception as exc:
+            raise ProxyBridgeError("upstream_connect", exc) from exc
         if self.upstream_scheme == "https":
-            context = ssl.create_default_context()
-            sock = context.wrap_socket(sock, server_hostname=self.upstream_host)
+            try:
+                context = ssl.create_default_context()
+                sock = context.wrap_socket(sock, server_hostname=self.upstream_host)
+            except Exception as exc:
+                sock.close()
+                raise ProxyBridgeError("https_proxy_tls", exc) from exc
         sock.settimeout(self.timeout)
         return sock
 
@@ -221,31 +261,39 @@ class LocalProxyBridge(object):
         sock.sendall(bytes([0x05, len(methods)] + methods))
         version, method = _recv_exact(sock, 2)
         if version != 0x05 or method == 0xFF:
-            raise OSError("SOCKS5 authentication method rejected")
+            raise ProxyBridgeError("socks_auth", "SOCKS5 authentication method rejected")
         if method == 0x02:
             username = self.username.encode("utf-8")
             password = self.password.encode("utf-8")
             if len(username) > 255 or len(password) > 255:
-                raise OSError("SOCKS5 credentials too long")
+                raise ProxyBridgeError("configuration", "SOCKS5 credentials too long")
             sock.sendall(bytes([0x01, len(username)]) + username + bytes([len(password)]) + password)
             auth_version, status = _recv_exact(sock, 2)
             if auth_version != 0x01 or status != 0x00:
-                raise OSError("SOCKS5 authentication failed")
+                raise ProxyBridgeError("socks_auth", "SOCKS5 authentication failed")
         try:
             address = ipaddress.ip_address(host)
-            if address.version == 4:
-                encoded = bytes([0x01]) + address.packed
-            else:
-                encoded = bytes([0x04]) + address.packed
         except ValueError:
+            address = None
+        if address is None and self.upstream_scheme == "socks5":
+            try:
+                infos = socket.getaddrinfo(host, int(port), type=socket.SOCK_STREAM)
+                if not infos:
+                    raise socket.gaierror("no addresses")
+                address = ipaddress.ip_address(infos[0][4][0])
+            except Exception as exc:
+                raise ProxyBridgeError("local_dns", exc) from exc
+        if address is not None:
+            encoded = bytes([0x01 if address.version == 4 else 0x04]) + address.packed
+        else:
             raw_host = host.encode("idna")
             if len(raw_host) > 255:
-                raise OSError("SOCKS5 hostname too long")
+                raise ProxyBridgeError("remote_dns", "SOCKS5 hostname too long")
             encoded = bytes([0x03, len(raw_host)]) + raw_host
         sock.sendall(bytes([0x05, 0x01, 0x00]) + encoded + struct.pack("!H", int(port)))
         head = _recv_exact(sock, 4)
         if head[0] != 0x05 or head[1] != 0x00:
-            raise OSError("SOCKS5 connect failed with status %s" % head[1])
+            raise ProxyBridgeError("socks_connect", "SOCKS5 connect failed with status %s" % head[1])
         atyp = head[3]
         if atyp == 0x01:
             _recv_exact(sock, 4)
@@ -255,7 +303,7 @@ class LocalProxyBridge(object):
             size = _recv_exact(sock, 1)[0]
             _recv_exact(sock, size)
         else:
-            raise OSError("SOCKS5 returned invalid address type")
+            raise ProxyBridgeError("socks_connect", "SOCKS5 returned invalid address type")
         _recv_exact(sock, 2)
 
     def _socks4_connect(self, sock, host, port):
@@ -267,17 +315,23 @@ class LocalProxyBridge(object):
             if remote_dns:
                 address = b"\x00\x00\x00\x01"
             else:
-                address = socket.inet_aton(socket.gethostbyname(host))
+                try:
+                    address = socket.inet_aton(socket.gethostbyname(host))
+                except Exception as exc:
+                    raise ProxyBridgeError("local_dns", exc) from exc
         payload = b"\x04\x01" + struct.pack("!H", int(port)) + address + user + b"\x00"
         if remote_dns and address == b"\x00\x00\x00\x01":
             payload += host.encode("idna") + b"\x00"
         sock.sendall(payload)
         response = _recv_exact(sock, 8)
         if response[1] != 0x5A:
-            raise OSError("SOCKS4 connect failed with status %s" % response[1])
+            raise ProxyBridgeError("socks_connect", "SOCKS4 connect failed with status %s" % response[1])
 
     def open_socks_target(self, host, port):
-        sock = socket.create_connection((self.upstream_host, self.upstream_port), timeout=self.timeout)
+        try:
+            sock = socket.create_connection((self.upstream_host, self.upstream_port), timeout=self.timeout)
+        except Exception as exc:
+            raise ProxyBridgeError("upstream_connect", exc) from exc
         sock.settimeout(self.timeout)
         try:
             if self.upstream_scheme in ("socks5", "socks5h"):
@@ -319,7 +373,6 @@ class LocalProxyBridge(object):
         self.local_proxy = ""
 
 
-# Historical public name used by Chromium/CPA callers.
 LocalAuthProxyBridge = LocalProxyBridge
 
 
@@ -348,7 +401,6 @@ def prepare_chromium_proxy(proxy, log=None):
     parsed = parse_proxy_url(raw)
     if not parsed or not parsed.hostname:
         raise ValueError("proxy URL is invalid")
-    scheme = (parsed.scheme or "http").lower()
     if proxy_has_auth(raw):
         bridge = LocalProxyBridge(raw)
         local_proxy = bridge.start()
@@ -358,13 +410,6 @@ def prepare_chromium_proxy(proxy, log=None):
 
 
 def prepare_http_compatible_proxy(proxy, log=None):
-    """Return an endpoint accepted by urllib/curl/Chromium plus an owned bridge.
-
-    Plain unauthenticated HTTP proxies are already the common denominator and
-    are returned unchanged.  HTTPS proxy endpoints, SOCKS endpoints, and HTTP
-    proxies carrying credentials are exposed through a localhost HTTP bridge.
-    The caller owns the returned bridge and must stop it when done.
-    """
     logger = log or (lambda _message: None)
     raw = str(proxy or "").strip()
     if not raw:

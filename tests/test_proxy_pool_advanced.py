@@ -45,19 +45,22 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
             manager.release(lease)
             release.assert_called_once_with("bridge-key")
 
-    def test_advanced_probe_uses_runtime_and_releases_it(self):
+    def test_advanced_probe_uses_runtime_and_releases_every_dual_stack_acquire(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "proxies.txt"
             path.write_text("trojan://secret@trojan.example.com:443?sni=trojan.example.com#Trojan\n", encoding="utf-8")
             manager = ProxyPoolManager(self.config(proxy_mode="pool", proxy_pool_file=str(path)))
             response = Mock(status_code=200, text="ip=203.0.113.5\n")
             node_id = manager.snapshot()["nodes"][0]["id"]
-            with patch.object(manager._runtime, "acquire", return_value=("http://127.0.0.1:32002", "runtime-key")), patch.object(manager._runtime, "release") as release, patch("proxy_pool.requests.get", return_value=response) as get:
+            with patch.object(manager._runtime, "acquire", return_value=("http://127.0.0.1:32002", "runtime-key")) as acquire, patch.object(manager._runtime, "release") as release, patch("proxy_pool.requests.get", return_value=response) as get:
                 result = manager.probe_node(node_id)
             self.assertEqual(result["status"], "healthy")
             self.assertEqual(result["exit_ip"], "203.0.113.5")
+            self.assertGreaterEqual(acquire.call_count, 1)
+            self.assertEqual(release.call_count, acquire.call_count)
+            for call in release.call_args_list:
+                self.assertEqual(call.args, ("runtime-key",))
             self.assertEqual(get.call_args.kwargs["proxies"]["https"], "http://127.0.0.1:32002")
-            release.assert_called_once_with("runtime-key")
 
     def test_subscription_snapshot_reports_protocol_counts(self):
         with tempfile.TemporaryDirectory() as tmp:

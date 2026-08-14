@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -37,19 +38,28 @@ class ProtocolRuntimeTests(unittest.TestCase):
         self.assertIsNone(key)
         self.assertEqual(manager.active_snapshot(), {})
 
-    def test_socks_descriptor_is_normalized_to_local_http_endpoint(self):
-        manager = ProtocolRuntimeManager({"proxy_protocol_backend": "auto"})
+    def test_socks_descriptor_is_normalized_to_local_http_endpoint_and_cached_idle(self):
+        manager = ProtocolRuntimeManager({"proxy_protocol_backend": "auto", "proxy_runtime_idle_ttl_sec": 120})
         node = parse_proxy_line("socks5://user:pass@127.0.0.1:1080")
         endpoint, key = manager.acquire(node)
-        try:
-            self.assertTrue(endpoint.startswith("http://127.0.0.1:"))
-            self.assertEqual(key, node.node_id)
-            state = manager.active_snapshot()[key]
-            self.assertEqual(state["kind"], "bridge")
-            self.assertTrue(state["alive"])
-            self.assertEqual(state["refcount"], 1)
-        finally:
-            manager.release(key)
+        self.assertTrue(endpoint.startswith("http://127.0.0.1:"))
+        self.assertEqual(key, node.node_id)
+        state = manager.active_snapshot()[key]
+        self.assertEqual(state["kind"], "bridge")
+        self.assertTrue(state["alive"])
+        self.assertEqual(state["refcount"], 1)
+        manager.release(key)
+        self.assertEqual(manager.active_snapshot()[key]["refcount"], 0)
+        manager.shutdown()
+        self.assertEqual(manager.active_snapshot(), {})
+
+    def test_idle_ttl_zero_stops_runtime_immediately(self):
+        manager = ProtocolRuntimeManager({"proxy_protocol_backend": "auto", "proxy_runtime_idle_ttl_sec": 0})
+        self.assertEqual(manager.idle_ttl, 0)
+        node = parse_proxy_line("socks5://127.0.0.1:1080")
+        endpoint, key = manager.acquire(node)
+        self.assertTrue(endpoint.startswith("http://127.0.0.1:"))
+        manager.release(key)
         self.assertEqual(manager.active_snapshot(), {})
 
     def test_build_config_exposes_local_http_and_advanced_outbound(self):
@@ -63,8 +73,8 @@ class ProtocolRuntimeTests(unittest.TestCase):
         self.assertEqual(value["outbounds"][0]["tag"], "proxy")
         self.assertEqual(value["route"]["final"], "proxy")
 
-    def test_advanced_runtime_is_lazy_reused_and_stopped_at_zero_refs(self):
-        manager = ProtocolRuntimeManager({})
+    def test_advanced_runtime_is_lazy_reused_then_cached_idle(self):
+        manager = ProtocolRuntimeManager({"proxy_runtime_idle_ttl_sec": 120})
         node = parse_proxy_line("vless://11111111-1111-1111-1111-111111111111@a.example.com:443?security=tls")
         fd, path = tempfile.mkstemp()
         os.close(fd)
@@ -82,6 +92,10 @@ class ProtocolRuntimeTests(unittest.TestCase):
             manager.release(first_key)
             self.assertEqual(manager.active_snapshot()[node.node_id]["refcount"], 1)
             manager.release(second_key)
+            self.assertEqual(manager.active_snapshot()[node.node_id]["refcount"], 0)
+            self.assertEqual(stop.call_count, 0)
+            manager._entries[node.node_id].idle_since = time.time() - 121
+            manager.cleanup_idle()
             self.assertEqual(manager.active_snapshot(), {})
             stop.assert_called_once()
         try:
@@ -90,7 +104,7 @@ class ProtocolRuntimeTests(unittest.TestCase):
             pass
 
     def test_native_only_allows_native_bridge_but_rejects_advanced_protocols(self):
-        manager = ProtocolRuntimeManager({"proxy_protocol_backend": "native-only"})
+        manager = ProtocolRuntimeManager({"proxy_protocol_backend": "native-only", "proxy_runtime_idle_ttl_sec": 0})
         socks = parse_proxy_line("socks5://127.0.0.1:1080")
         endpoint, key = manager.acquire(socks)
         try:

@@ -14,6 +14,7 @@ mail_credentials.txt
 
 config.json
 config.local.json
+proxy_pool_state.json
 
 *.log
 .DS_Store
