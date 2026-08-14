@@ -32,6 +32,9 @@ DEFAULT_CONFIG = {
     "proxy_pool_probe_provider": "cloudflare",
     "proxy_pool_max_concurrent_per_node": 1,
     "proxy_pool_acquire_timeout_sec": 30,
+    "proxy_protocol_backend": "auto",
+    "proxy_singbox_path": "",
+    "proxy_protocol_start_timeout_sec": 10,
     "enable_nsfw": True,
     "register_count": 1,
     "multi_thread_enabled": False,
@@ -120,13 +123,14 @@ def validate_config_structure(raw):
     cfg["proxy_pool_probe_timeout_sec"] = _require_int(cfg, "proxy_pool_probe_timeout_sec", 3, 120)
     cfg["proxy_pool_max_concurrent_per_node"] = _require_int(cfg, "proxy_pool_max_concurrent_per_node", 1, 64)
     cfg["proxy_pool_acquire_timeout_sec"] = _require_int(cfg, "proxy_pool_acquire_timeout_sec", 1, 600)
+    cfg["proxy_protocol_start_timeout_sec"] = _require_int(cfg, "proxy_protocol_start_timeout_sec", 3, 60)
     cfg["cpa_mint_timeout_sec"] = _require_int(cfg, "cpa_mint_timeout_sec", 30, 1800)
     cfg["cpa_oidc_request_timeout_sec"] = _require_int(cfg, "cpa_oidc_request_timeout_sec", 3, 120)
     cfg["cpa_oidc_poll_timeout_sec"] = _require_int(cfg, "cpa_oidc_poll_timeout_sec", 3, 120)
     string_keys = tuple(key for key, value in DEFAULT_CONFIG.items() if isinstance(value, str))
     path_keys = {
         "grok2api_local_token_file", "api_reverse_tools", "cpa_auth_dir", "cpa_hotload_dir",
-        "proxy_pool_file",
+        "proxy_pool_file", "proxy_singbox_path",
     }
     for key in string_keys:
         cfg[key] = _require_string(cfg, key, path=key in path_keys)
@@ -138,6 +142,7 @@ def validate_config_structure(raw):
         "proxy_fallback": {"none", "direct", "single"},
         "proxy_pool_endpoint_mode": {"auto", "fixed", "rotating"},
         "proxy_pool_probe_provider": {"cloudflare", "ipinfo"},
+        "proxy_protocol_backend": {"auto", "sing-box", "native-only"},
     }
     for key, allowed in enums.items():
         value = cfg.get(key, DEFAULT_CONFIG.get(key, ""))
