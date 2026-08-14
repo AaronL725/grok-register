@@ -13,7 +13,10 @@ class ProxyPoolCompletionTests(unittest.TestCase):
         return cfg
 
     def test_ipinfo_probe_provider_is_honored(self):
-        manager = ProxyPoolManager(self.config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_provider="ipinfo"))
+        manager = ProxyPoolManager(self.config(
+            proxy_mode="single", proxy="http://127.0.0.1:8001",
+            proxy_pool_probe_provider="ipinfo", proxy_pool_probe_dual_stack=False,
+        ))
         response = Mock(status_code=200, text="")
         response.json.return_value = {"ip": "203.0.113.7"}
         with patch("proxy_pool.requests.get", return_value=response) as get:
