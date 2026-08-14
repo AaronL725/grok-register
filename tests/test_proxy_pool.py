@@ -72,6 +72,7 @@ class ProxyPoolTests(unittest.TestCase):
             proxy_mode="single",
             proxy="http://user-{account}:pass@127.0.0.1:8001",
             proxy_pool_endpoint_mode="auto",
+            proxy_pool_probe_interval_sec=0,
         ))
         with patch.object(
             manager._runtime, "acquire", return_value=("http://127.0.0.1:32100", "bridge-key")
