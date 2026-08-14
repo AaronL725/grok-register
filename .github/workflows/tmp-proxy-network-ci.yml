@@ -1,6 +1,9 @@
 name: Temporary proxy network validation
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - fix/unify-proxy-network-paths
