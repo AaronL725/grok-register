@@ -65,6 +65,18 @@ class ProxyPoolTests(unittest.TestCase):
         self.assertGreaterEqual(state["cooldown_sec"], 29)
         manager.release(lease)
 
+    def test_configuration_failure_does_not_count_as_business_health_sample(self):
+        manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=0))
+        lease = manager.acquire("a", "worker", 1, 1, "session", timeout=1)
+        manager.report_transport_failure(lease, RuntimeError("SOCKS5 authentication failed"))
+        state = manager.snapshot()["nodes"][0]
+        self.assertEqual(state["configuration_failures"], 1)
+        self.assertEqual(state["business_samples"], 0)
+        self.assertEqual(state["health"], 1.0)
+        self.assertEqual(state["cooldown_sec"], 0)
+        self.assertFalse(state["enabled"])
+        manager.release(lease)
+
     def test_rotating_gateway_has_gateway_statistics_without_global_health_or_cooldown(self):
         manager = ProxyPoolManager(self._config(
             proxy_mode="single", proxy="http://user-{account}:pass@127.0.0.1:8001",
