@@ -89,6 +89,32 @@ class ProxyProtocolParserTests(unittest.TestCase):
         self.assertEqual(tls["reality"]["public_key"], "PUBLICKEY")
         self.assertEqual(tls["reality"]["short_id"], "abcd")
 
+    def test_common_aliases_and_edge_cases_are_normalized(self):
+        vless = parse_proxy_line(
+            "vless://11111111-1111-1111-1111-111111111111@a.example.com:443?"
+            "security=tls&allow_insecure=1&packetEncoding=xudp&headerType=none"
+        )
+        self.assertTrue(vless.outbound_config["tls"]["insecure"])
+        self.assertEqual(vless.outbound_config["packet_encoding"], "xudp")
+        hy2 = parse_proxy_line(
+            "hysteria2://secret@b.example.com:443?sni=b.example.com&obfs=none"
+        )
+        self.assertNotIn("obfs", hy2.outbound_config)
+
+    def test_non_none_vless_and_vmess_header_types_are_rejected(self):
+        with self.assertRaises(Exception):
+            parse_proxy_line(
+                "vless://11111111-1111-1111-1111-111111111111@a.example.com:443?headerType=http"
+            )
+        payload = {
+            "v": "2", "ps": "bad", "add": "vmess.example.com", "port": "443",
+            "id": "11111111-1111-1111-1111-111111111111", "aid": "0",
+            "net": "tcp", "type": "http", "tls": ""
+        }
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        with self.assertRaises(Exception):
+            parse_proxy_line("vmess://" + encoded)
+
 
 if __name__ == "__main__":
     unittest.main()

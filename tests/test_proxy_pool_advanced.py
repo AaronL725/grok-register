@@ -94,6 +94,16 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
             self.assertIn("backend:", state["vless"]["last_error"])
             manager.release(lease)
 
+    def test_zero_refresh_and_probe_intervals_are_preserved(self):
+        manager = ProxyPoolManager(self.config(
+            proxy_mode="single",
+            proxy="http://127.0.0.1:8080",
+            proxy_pool_refresh_interval_sec=0,
+            proxy_pool_probe_interval_sec=0,
+        ))
+        self.assertEqual(manager.refresh_interval, 0)
+        self.assertEqual(manager.probe_interval, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

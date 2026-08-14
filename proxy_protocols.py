@@ -176,7 +176,7 @@ def _tls_from_query(query, default_enabled=False):
     alpn = _split_csv(_first(query, "alpn"))
     if alpn:
         tls["alpn"] = alpn
-    if _truthy(_first(query, "insecure", "allowInsecure", "skip-cert-verify")):
+    if _truthy(_first(query, "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify", "skip_cert_verify")):
         tls["insecure"] = True
     fingerprint = _first(query, "fp", "fingerprint")
     if fingerprint:
@@ -227,6 +227,12 @@ def _parse_vless(raw):
     flow = _first(query, "flow")
     if flow:
         outbound["flow"] = flow
+    packet_encoding = _first(query, "packetEncoding", "packet_encoding")
+    if packet_encoding:
+        outbound["packet_encoding"] = packet_encoding
+    header_type = _first(query, "headerType", "header_type")
+    if header_type and header_type.lower() not in ("none",):
+        raise ProxyProtocolError("unsupported VLESS headerType: %s" % header_type)
     transport = _transport_from_values(
         _first(query, "type", "network"), _first(query, "host"), _first(query, "path"),
         _first(query, "serviceName", "service_name")
@@ -267,8 +273,8 @@ def _parse_hysteria2(raw):
     outbound = {"password": password}
     tls = _tls_from_query(query, default_enabled=True) or {"enabled": True}
     outbound["tls"] = tls
-    obfs_type = _first(query, "obfs")
-    if obfs_type:
+    obfs_type = _first(query, "obfs").strip()
+    if obfs_type and obfs_type.lower() != "none":
         obfs = {"type": obfs_type}
         obfs_password = _first(query, "obfs-password", "obfs_password")
         if obfs_password:
@@ -321,6 +327,9 @@ def _parse_vmess(raw):
     if not server or not port or not uuid:
         raise ProxyProtocolError("VMess node is missing server, port or UUID")
     name = str(value.get("ps") or "")
+    header_type = str(value.get("type") or "").strip()
+    if header_type and header_type.lower() not in ("none",):
+        raise ProxyProtocolError("unsupported VMess header type: %s" % header_type)
     security = str(value.get("scy") or value.get("security") or "auto")
     outbound = {"uuid": uuid, "security": security}
     try:
