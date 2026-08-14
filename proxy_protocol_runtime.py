@@ -31,6 +31,8 @@ class RuntimeEntry:
     refcount: int = 0
     bridge: Optional[LocalProxyBridge] = None
     kind: str = "sing-box"
+    idle_since: Optional[float] = None
+    last_used: float = 0.0
 
     @property
     def proxy_url(self):
@@ -42,15 +44,14 @@ class RuntimeEntry:
             return bool(self.bridge is not None and self.bridge.server is not None)
         return bool(self.process is not None and self.process.poll() is None)
 
+    def diagnostic(self):
+        if self.bridge is None:
+            return None
+        return self.bridge.diagnostic()
+
 
 class ProtocolRuntimeManager:
-    """Resolve native and advanced nodes into consumer-compatible endpoints.
-
-    Plain unauthenticated HTTP is already the common denominator and remains
-    direct.  SOCKS, HTTPS proxy endpoints, and authenticated HTTP proxies are
-    exposed through the shared Python bridge.  Advanced protocols use sing-box
-    and expose the same localhost HTTP contract.
-    """
+    """Resolve native and advanced nodes into consumer-compatible endpoints."""
 
     def __init__(self, config=None, log=None):
         self.config = dict(config or {})
@@ -58,6 +59,8 @@ class ProtocolRuntimeManager:
         self.backend = str(self.config.get("proxy_protocol_backend") or "auto").strip().lower()
         self.executable = str(self.config.get("proxy_singbox_path") or "").strip()
         self.start_timeout = max(3, int(self.config.get("proxy_protocol_start_timeout_sec") or 10))
+        self.idle_ttl = max(0, int(self.config.get("proxy_runtime_idle_ttl_sec", 120)))
+        self.cache_max = max(1, int(self.config.get("proxy_runtime_cache_max", 32)))
         self._condition = threading.Condition(threading.RLock())
         self._entries = {}
         self._starting = set()
@@ -67,7 +70,7 @@ class ProtocolRuntimeManager:
             raise ProxyRuntimeError("高级代理协议已被 proxy_protocol_backend=native-only 禁用")
         candidate = os.path.expanduser(self.executable) if self.executable else shutil.which("sing-box")
         if not candidate:
-            raise ProxyRuntimeError("检测到 VLESS/VMess/Trojan/Hysteria2/TUIC 节点，但未找到 sing-box；请安装到 PATH 或配置 proxy_singbox_path")
+            raise ProxyRuntimeError("检测到高级代理节点，但未找到 sing-box；请安装到 PATH 或配置 proxy_singbox_path")
         if not os.path.isfile(candidate):
             resolved = shutil.which(candidate)
             if not resolved:
@@ -92,14 +95,7 @@ class ProtocolRuntimeManager:
         outbound["tag"] = "proxy"
         return {
             "log": {"level": "warn", "timestamp": True},
-            "inbounds": [
-                {
-                    "type": "http",
-                    "tag": "local-http",
-                    "listen": "127.0.0.1",
-                    "listen_port": int(port),
-                }
-            ],
+            "inbounds": [{"type": "http", "tag": "local-http", "listen": "127.0.0.1", "listen_port": int(port)}],
             "outbounds": [outbound],
             "route": {"final": "proxy"},
         }
@@ -130,11 +126,8 @@ class ProtocolRuntimeManager:
     def _check_config(self, executable, path):
         try:
             completed = subprocess.run(
-                [executable, "check", "-c", path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=self.start_timeout,
+                [executable, "check", "-c", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=self.start_timeout,
             )
         except subprocess.TimeoutExpired as exc:
             raise ProxyRuntimeError("sing-box 配置检查超时") from exc
@@ -160,12 +153,7 @@ class ProtocolRuntimeManager:
         process = None
         try:
             self._check_config(executable, path)
-            process = subprocess.Popen(
-                [executable, "run", "-c", path],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            process = subprocess.Popen([executable, "run", "-c", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             deadline = time.time() + self.start_timeout
             while time.time() < deadline:
                 code = process.poll()
@@ -173,14 +161,14 @@ class ProtocolRuntimeManager:
                     raise ProxyRuntimeError("sing-box 在本地代理就绪前退出，code=%s" % code)
                 if self._port_ready(port):
                     self.log("[*] 高级代理运行时已就绪: %s -> 127.0.0.1:%s" % (descriptor.protocol, port))
-                    return RuntimeEntry(descriptor.node_id, process, port, path, 0)
+                    now = time.time()
+                    return RuntimeEntry(descriptor.node_id, process, port, path, 0, last_used=now)
                 time.sleep(0.05)
             raise ProxyRuntimeError("等待 sing-box 本地代理启动超时")
         except Exception:
             if process is not None:
                 try:
-                    process.terminate()
-                    process.wait(timeout=2)
+                    process.terminate(); process.wait(timeout=2)
                 except Exception:
                     try:
                         process.kill()
@@ -206,7 +194,7 @@ class ProtocolRuntimeManager:
             bridge.stop()
             raise ProxyRuntimeError("本地 HTTP 代理桥未返回有效端口")
         self.log("[*] 原生代理已标准化为本地 HTTP 出口: %s -> %s" % (descriptor.protocol, endpoint))
-        return RuntimeEntry(descriptor.node_id, None, port, "", 0, bridge=bridge, kind="bridge")
+        return RuntimeEntry(descriptor.node_id, None, port, "", 0, bridge=bridge, kind="bridge", last_used=time.time())
 
     @staticmethod
     def _stop_entry(entry):
@@ -223,8 +211,7 @@ class ProtocolRuntimeManager:
                 try:
                     entry.process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    entry.process.kill()
-                    entry.process.wait(timeout=2)
+                    entry.process.kill(); entry.process.wait(timeout=2)
         except Exception:
             pass
         if entry.config_path:
@@ -239,23 +226,62 @@ class ProtocolRuntimeManager:
         scheme = (parsed.scheme or "http").lower()
         return scheme != "http" or proxy_has_auth(descriptor.canonical_uri)
 
+    def _cleanup_locked(self, now=None):
+        now = time.time() if now is None else float(now)
+        stale = []
+        for key, entry in list(self._entries.items()):
+            if not entry.alive:
+                stale.append(self._entries.pop(key))
+            elif entry.refcount == 0 and entry.idle_since is not None and (self.idle_ttl == 0 or now - entry.idle_since >= self.idle_ttl):
+                stale.append(self._entries.pop(key))
+        idle = sorted(
+            ((key, value) for key, value in self._entries.items() if value.refcount == 0),
+            key=lambda pair: pair[1].last_used,
+        )
+        while len(self._entries) > self.cache_max and idle:
+            key, entry = idle.pop(0)
+            if self._entries.pop(key, None) is entry:
+                stale.append(entry)
+        return stale
+
+    def cleanup_idle(self):
+        with self._condition:
+            stale = self._cleanup_locked()
+        for entry in stale:
+            self._stop_entry(entry)
+        return len(stale)
+
     def _acquire_runtime_entry(self, descriptor, starter):
         while True:
+            stale = []
             with self._condition:
+                stale = self._cleanup_locked()
                 current = self._entries.get(descriptor.node_id)
                 if current is not None and current.alive:
                     current.refcount += 1
-                    return current.proxy_url, descriptor.node_id
-                if current is not None:
-                    self._entries.pop(descriptor.node_id, None)
-                    self._stop_entry(current)
+                    current.idle_since = None
+                    current.last_used = time.time()
+                    endpoint = current.proxy_url
+                    runtime_key = descriptor.node_id
+                    self._condition.notify_all()
+                    break
                 if descriptor.node_id not in self._starting:
                     self._starting.add(descriptor.node_id)
+                    endpoint = runtime_key = None
                     break
                 self._condition.wait(timeout=0.2)
+            for entry in stale:
+                self._stop_entry(entry)
+            if endpoint is not None:
+                return endpoint, runtime_key
+        for entry in stale:
+            self._stop_entry(entry)
+        if endpoint is not None:
+            return endpoint, runtime_key
         try:
             entry = starter(descriptor)
             entry.refcount = 1
+            entry.last_used = time.time()
             with self._condition:
                 self._entries[descriptor.node_id] = entry
                 return entry.proxy_url, descriptor.node_id
@@ -276,26 +302,45 @@ class ProtocolRuntimeManager:
     def release(self, runtime_key):
         if not runtime_key:
             return
-        entry = None
+        stop_now = None
         with self._condition:
             current = self._entries.get(runtime_key)
             if current is None:
                 return
             current.refcount = max(0, current.refcount - 1)
+            current.last_used = time.time()
             if current.refcount == 0:
-                entry = self._entries.pop(runtime_key, None)
+                current.idle_since = current.last_used
+                if self.idle_ttl == 0:
+                    stop_now = self._entries.pop(runtime_key, None)
             self._condition.notify_all()
-        if entry is not None:
-            self._stop_entry(entry)
+        if stop_now is not None:
+            self._stop_entry(stop_now)
+
+    def diagnostic_for(self, runtime_key, max_age=15):
+        if not runtime_key:
+            return None
+        with self._condition:
+            entry = self._entries.get(runtime_key)
+            diagnostic = None if entry is None else entry.diagnostic()
+        if not diagnostic:
+            return None
+        if time.time() - float(diagnostic.get("at") or 0) > float(max_age):
+            return None
+        return diagnostic
 
     def active_snapshot(self):
+        self.cleanup_idle()
         with self._condition:
+            now = time.time()
             return {
                 key: {
                     "port": value.port,
                     "refcount": value.refcount,
                     "alive": value.alive,
                     "kind": value.kind,
+                    "idle_sec": int(max(0, now - value.idle_since)) if value.idle_since else 0,
+                    "diagnostic": value.diagnostic(),
                 }
                 for key, value in self._entries.items()
             }
