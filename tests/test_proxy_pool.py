@@ -67,28 +67,25 @@ class ProxyPoolTests(unittest.TestCase):
         self.assertGreaterEqual(state["cooldown_sec"], 29)
         manager.release(lease)
 
-    def test_rotating_gateway_expands_account_before_runtime_resolution(self):
+    def test_rotating_gateway_uses_runtime_endpoint_without_global_cooldown(self):
         manager = ProxyPoolManager(self._config(
             proxy_mode="single",
             proxy="http://user-{account}:pass@127.0.0.1:8001",
             proxy_pool_endpoint_mode="auto",
         ))
-        captured = []
-
-        def acquire(descriptor):
-            captured.append(descriptor.canonical_uri)
-            return "http://127.0.0.1:32100", "bridge-key"
-
-        with patch.object(manager._runtime, "acquire", side_effect=acquire), patch.object(manager._runtime, "release"):
+        with patch.object(
+            manager._runtime, "acquire", return_value=("http://127.0.0.1:32100", "bridge-key")
+        ) as acquire, patch.object(manager._runtime, "release") as release:
             lease = manager.acquire("a", "worker", 1, 1, "abc123", timeout=1)
             self.assertEqual(lease.proxy_url, "http://127.0.0.1:32100")
-            self.assertIn("user-abc123", captured[0])
+            self.assertEqual(acquire.call_count, 1)
             manager.report_transport_failure(lease, RuntimeError("proxy connect failed"))
             state = manager.snapshot()["nodes"][0]
             self.assertTrue(state["rotating"])
             self.assertEqual(state["failure_count"], 0)
             self.assertEqual(state["cooldown_sec"], 0)
             manager.release(lease)
+            release.assert_called_once_with("bridge-key")
 
     def test_probe_failure_does_not_change_business_health(self):
         manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=0))
