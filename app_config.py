@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
     "defaultDomains": "",
 }
 
+
 config = DEFAULT_CONFIG.copy()
 
 
@@ -116,10 +117,11 @@ def validate_config_structure(raw):
     cfg = {**DEFAULT_CONFIG, **raw}
     bool_keys = (
         "enable_nsfw", "grok2api_auto_add_local", "grok2api_auto_add_remote",
-        "grok2api_allow_legacy_full_save", "cpa_export_enabled", "cpa_copy_to_hotload",
-        "cpa_headless", "cpa_force_standalone", "cpa_mint_cookie_inject", "multi_thread_enabled",
-        "proxy_pool_probe_dual_stack", "proxy_pool_persist_health", "proxy_pool_subscription_public_only",
-        "proxy_pool_preflight_enabled",
+        "grok2api_allow_legacy_full_save", "cpa_export_enabled",
+        "cpa_copy_to_hotload", "cpa_headless", "cpa_force_standalone",
+        "cpa_mint_cookie_inject", "multi_thread_enabled",
+        "proxy_pool_probe_dual_stack", "proxy_pool_persist_health",
+        "proxy_pool_subscription_public_only", "proxy_pool_preflight_enabled",
     )
     for key in bool_keys:
         cfg[key] = _require_bool(cfg, key)
@@ -158,13 +160,23 @@ def validate_config_structure(raw):
         if value not in allowed:
             raise ConfigError(f"配置项 {key} 的值无效: {value!r}; 允许值: {sorted(allowed)}")
         cfg[key] = value
-    api_path_keys = {"cloudflare_path_domains", "cloudflare_path_accounts", "cloudflare_path_token", "cloudflare_path_messages", "cloudmail_path_messages"}
+
+    api_path_keys = {
+        "cloudflare_path_domains", "cloudflare_path_accounts",
+        "cloudflare_path_token", "cloudflare_path_messages",
+        "cloudmail_path_messages",
+    }
     for key in api_path_keys:
         value = cfg[key]
         if value and not value.startswith("/"):
             value = "/" + value
         cfg[key] = value
-    url_keys = {"cloudflare_api_base", "cloudmail_api_base", "grok2api_remote_base", "cpa_base_url", "proxy_pool_subscription_url"}
+
+    url_keys = {
+        "cloudflare_api_base", "cloudmail_api_base",
+        "grok2api_remote_base", "cpa_base_url",
+        "proxy_pool_subscription_url",
+    }
     for key in url_keys:
         value = cfg[key]
         if not value:
@@ -172,6 +184,7 @@ def validate_config_structure(raw):
         parsed = urllib.parse.urlsplit(value)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ConfigError(f"配置项 {key} 必须是有效的 http/https URL")
+
     for key in path_keys:
         value = cfg[key]
         if value.startswith("~"):
@@ -185,11 +198,15 @@ def validate_run_requirements(cfg):
     if provider == "cloudflare" and not cfg["cloudflare_api_base"]:
         raise ConfigError("Cloudflare 模式需要配置 cloudflare_api_base")
     if provider == "cloudmail":
-        missing = [key for key in ("cloudmail_api_base", "cloudmail_public_token", "cloudmail_domains") if not cfg[key]]
+        missing = [
+            key for key in ("cloudmail_api_base", "cloudmail_public_token", "cloudmail_domains")
+            if not cfg[key]
+        ]
         if missing:
             raise ConfigError("Cloud Mail 模式缺少必需配置: " + ", ".join(missing))
     if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
         raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
+
     if cfg["proxy_mode"] == "single" and not cfg["proxy"]:
         raise ConfigError("single 代理模式必须配置 proxy")
     if cfg["proxy_mode"] == "pool" and not (cfg["proxy_pool_file"] or cfg["proxy_pool_subscription_url"]):
@@ -198,6 +215,7 @@ def validate_run_requirements(cfg):
         raise ConfigError("proxy_fallback=single 时必须配置 proxy")
     if cfg["proxy_pool_persist_health"] and not cfg["proxy_pool_state_file"]:
         raise ConfigError("启用代理健康状态持久化时必须配置 proxy_pool_state_file")
+
     if cfg["grok2api_auto_add_remote"]:
         if not cfg["grok2api_remote_base"]:
             raise ConfigError("远端 token 入池缺少必需配置: grok2api_remote_base")
@@ -216,11 +234,14 @@ def validate_run_requirements(cfg):
 
 
 def validate_config(raw):
+    """Backward-compatible full validation used before a run or save."""
     return validate_run_requirements(raw)
 
 
 def _replace_config(value):
-    config.clear(); config.update(value); return config
+    config.clear()
+    config.update(value)
+    return config
 
 
 def load_config():
@@ -239,24 +260,39 @@ def load_config():
 def save_config():
     normalized = validate_config_structure(config)
     _replace_config(normalized)
-    config_dir = os.path.dirname(os.path.abspath(CONFIG_FILE)); os.makedirs(config_dir, exist_ok=True)
-    fd = None; temp_path = None
+    config_dir = os.path.dirname(os.path.abspath(CONFIG_FILE))
+    os.makedirs(config_dir, exist_ok=True)
+    fd = None
+    temp_path = None
     try:
         fd, temp_path = tempfile.mkstemp(prefix=".config-", suffix=".json.tmp", dir=config_dir)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = None; json.dump(config, handle, indent=4, ensure_ascii=False); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
-        try: os.chmod(temp_path, 0o600)
-        except Exception: pass
-        os.replace(temp_path, CONFIG_FILE); temp_path = None
-        try: os.chmod(CONFIG_FILE, 0o600)
-        except Exception: pass
+            fd = None
+            json.dump(config, handle, indent=4, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.chmod(temp_path, 0o600)
+        except Exception:
+            pass
+        os.replace(temp_path, CONFIG_FILE)
+        temp_path = None
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except Exception:
+            pass
     except Exception as exc:
         raise ConfigError(f"保存配置失败: {exc}") from exc
     finally:
         if fd is not None:
-            try: os.close(fd)
-            except Exception: pass
+            try:
+                os.close(fd)
+            except Exception:
+                pass
         if temp_path and os.path.exists(temp_path):
-            try: os.unlink(temp_path)
-            except Exception: pass
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
     return config
