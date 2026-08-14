@@ -1,7 +1,6 @@
-"""Proxy pool, health tracking, subscription loading, and registration-scoped leases."""
+"""Proxy pool, health tracking, multi-protocol subscriptions, and registration-scoped leases."""
 from __future__ import annotations
 
-import base64
 import hashlib
 import os
 import secrets
@@ -14,10 +13,17 @@ from typing import Optional
 
 from curl_cffi import requests
 
+from proxy_protocol_runtime import ProtocolRuntimeManager, ProxyRuntimeError
+from proxy_protocols import (
+    NATIVE_SCHEMES,
+    ProxyDescriptor,
+    ProxyProtocolError,
+    parse_proxy_line,
+    parse_subscription_source,
+)
+
 _ROOT = os.path.dirname(os.path.abspath(__file__))
-_ALLOWED_SCHEMES = {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}
 _MAX_SOURCE_BYTES = 2 << 20
-_MAX_SOURCE_ENTRIES = 10000
 _TLS = threading.local()
 _MANAGER_LOCK = threading.RLock()
 _MANAGER = None
@@ -44,6 +50,10 @@ class ProxyNode:
     id: str
     source: str
     proxy_url: str
+    descriptor: ProxyDescriptor
+    protocol: str = "http"
+    name: str = ""
+    backend: str = "native"
     enabled: bool = True
     rotating: bool = False
     health: float = 1.0
@@ -67,6 +77,9 @@ class ProxyLease:
     attempt_index: int
     affinity: str
     session_key: str
+    source_uri: str = ""
+    protocol: str = ""
+    runtime_key: Optional[str] = None
     released: bool = False
 
 
@@ -77,7 +90,8 @@ def _config_signature(config):
         "proxy_pool_endpoint_mode", "proxy_pool_refresh_interval_sec",
         "proxy_pool_probe_interval_sec", "proxy_pool_probe_timeout_sec",
         "proxy_pool_probe_provider", "proxy_pool_max_concurrent_per_node",
-        "proxy_pool_acquire_timeout_sec",
+        "proxy_pool_acquire_timeout_sec", "proxy_protocol_backend",
+        "proxy_singbox_path", "proxy_protocol_start_timeout_sec",
     )
     return tuple((key, config.get(key)) for key in keys)
 
@@ -86,43 +100,18 @@ def normalize_proxy_url(value):
     raw = str(value or "").strip()
     if not raw:
         return ""
-    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
-        raise ProxyPoolError("代理地址包含控制字符")
-    if "://" not in raw:
-        # Keep the common host:port shorthand, but do not accidentally treat
-        # arbitrary single-line/Base64 source text as a proxy hostname.
-        if ":" not in raw:
-            raise ProxyPoolError("代理地址缺少协议或端口")
-        raw = "http://" + raw
     try:
-        parsed = urllib.parse.urlsplit(raw)
-        port = parsed.port
-    except Exception as exc:
-        raise ProxyPoolError("代理地址格式无效: %s" % exc) from exc
-    scheme = (parsed.scheme or "http").lower()
-    if scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
-        raise ProxyPoolError("代理协议必须是 HTTP、HTTPS、SOCKS4 或 SOCKS5")
-    host = parsed.hostname
-    if ":" in host and not host.startswith("["):
-        host = "[%s]" % host
-    userinfo = ""
-    if parsed.username is not None:
-        userinfo = urllib.parse.quote(urllib.parse.unquote(parsed.username), safe="{}-._~")
-        if parsed.password is not None:
-            userinfo += ":" + urllib.parse.quote(urllib.parse.unquote(parsed.password), safe="{}-._~")
-        userinfo += "@"
-    netloc = userinfo + host + ((":%s" % port) if port else "")
-    return urllib.parse.urlunsplit((scheme, netloc, parsed.path or "", parsed.query or "", ""))
+        descriptor = parse_proxy_line(raw)
+    except ProxyProtocolError as exc:
+        raise ProxyPoolError(str(exc)) from exc
+    if descriptor.backend != "native":
+        raise ProxyPoolError("该配置项只接受 HTTP/HTTPS/SOCKS 代理")
+    return descriptor.canonical_uri
 
 
 def proxy_log_label(value):
     raw = str(value or "").strip()
-    if not raw:
-        return "direct"
-    try:
-        return normalize_proxy_url(raw)
-    except Exception:
-        return raw
+    return raw or "direct"
 
 
 def safe_proxy_error_text(value):
@@ -130,54 +119,19 @@ def safe_proxy_error_text(value):
 
 
 def _node_id(proxy_url):
-    return hashlib.sha256(proxy_url.encode("utf-8")).hexdigest()[:20]
-
-
-def _decode_source_text(value):
-    text = str(value or "").lstrip("\ufeff")
-    if len(text.encode("utf-8", "ignore")) > _MAX_SOURCE_BYTES:
-        raise ProxyPoolError("代理源内容超过 2 MiB 限制")
-    return text
-
-
-def _parse_lines(text):
-    entries = []
-    skipped = 0
-    seen = set()
-    for raw_line in _decode_source_text(text).splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if len(entries) >= _MAX_SOURCE_ENTRIES:
-            raise ProxyPoolError("代理源超过 10000 个节点限制")
-        try:
-            value = normalize_proxy_url(line)
-        except ProxyPoolError:
-            skipped += 1
-            continue
-        if value and value not in seen:
-            seen.add(value)
-            entries.append(value)
-    return entries, skipped
+    try:
+        return parse_proxy_line(proxy_url).node_id
+    except Exception:
+        return hashlib.sha256(str(proxy_url).encode("utf-8")).hexdigest()[:20]
 
 
 def parse_proxy_source(text):
-    entries, skipped = _parse_lines(text)
-    if entries:
-        return entries, skipped
-    compact = "".join(str(text or "").strip().split())
-    if compact:
-        for decoder in (base64.b64decode, base64.urlsafe_b64decode):
-            try:
-                padding = "=" * ((4 - len(compact) % 4) % 4)
-                decoded = decoder((compact + padding).encode("ascii"))
-                value = decoded.decode("utf-8")
-            except Exception:
-                continue
-            entries, decoded_skipped = _parse_lines(value)
-            if entries:
-                return entries, decoded_skipped
-    raise ProxyPoolError("代理源中没有可用的 HTTP 或 SOCKS 代理")
+    """Backward-compatible parser API; now recognizes native and advanced nodes."""
+    try:
+        result = parse_subscription_source(text)
+    except ProxyProtocolError as exc:
+        raise ProxyPoolError(str(exc)) from exc
+    return [node.canonical_uri for node in result.nodes], result.skipped
 
 
 def _expand_account_placeholder(proxy_url, session_key):
@@ -222,6 +176,8 @@ class ProxyPoolManager:
         self._last_refresh = 0.0
         self._last_probe_all = 0.0
         self._probe_all_running = False
+        self._source_diagnostics = {}
+        self._runtime = ProtocolRuntimeManager(self.config, log=self.log)
         self.reload_sources(force=True)
 
     @property
@@ -232,12 +188,20 @@ class ProxyPoolManager:
         with self._lock:
             return sum(node.inflight for node in self._nodes.values())
 
-    def _rotating_for(self, proxy_url):
+    def shutdown(self):
+        self._runtime.shutdown()
+
+    def _rotating_for(self, descriptor):
         if self.endpoint_mode == "rotating":
             return True
         if self.endpoint_mode == "fixed":
             return False
-        return "{account}" in proxy_url
+        return descriptor.backend == "native" and "{account}" in descriptor.canonical_uri
+
+    def _remember_diagnostics(self, source, result):
+        self._source_diagnostics[source] = result.as_dict()
+        if result.skipped:
+            self.log("[!] %s 跳过 %s 个无法解析的节点" % (source, result.skipped))
 
     def _read_file_source(self):
         path = str(self.config.get("proxy_pool_file") or "").strip()
@@ -247,10 +211,12 @@ class ProxyPoolManager:
         if not os.path.isabs(path):
             path = os.path.join(_ROOT, path)
         with open(path, "r", encoding="utf-8-sig") as handle:
-            entries, skipped = parse_proxy_source(handle.read())
-        if skipped:
-            self.log("[!] 代理池文件跳过 %s 个无效节点" % skipped)
-        return [("file", item) for item in entries]
+            try:
+                result = parse_subscription_source(handle.read())
+            except ProxyProtocolError as exc:
+                raise ProxyPoolError(str(exc)) from exc
+        self._remember_diagnostics("file", result)
+        return [("file", item) for item in result.nodes]
 
     def _fetch_subscription(self):
         url = str(self.config.get("proxy_pool_subscription_url") or "").strip()
@@ -294,21 +260,25 @@ class ProxyPoolManager:
         body = str(response.text or "")
         if len(body.encode("utf-8", "ignore")) > _MAX_SOURCE_BYTES:
             raise ProxyPoolError("代理订阅内容超过 2 MiB 限制")
-        entries, skipped = parse_proxy_source(body)
-        if skipped:
-            self.log("[!] 代理订阅跳过 %s 个无效节点" % skipped)
-        return [("subscription", item) for item in entries]
+        try:
+            result = parse_subscription_source(body)
+        except ProxyProtocolError as exc:
+            raise ProxyPoolError(str(exc)) from exc
+        self._remember_diagnostics("subscription", result)
+        return [("subscription", item) for item in result.nodes]
 
     def _source_entries(self):
         if self.mode == "single":
-            value = normalize_proxy_url(self.config.get("proxy"))
-            if not value:
-                raise ProxyPoolError("single 模式需要配置 proxy")
-            return [("single", value)]
+            try:
+                descriptor = parse_proxy_line(self.config.get("proxy"))
+            except ProxyProtocolError as exc:
+                raise ProxyPoolError(str(exc)) from exc
+            return [("single", descriptor)]
         if self.mode != "pool":
             return []
         values = []
         errors = []
+        self._source_diagnostics = {}
         for loader in (self._read_file_source, self._fetch_subscription):
             try:
                 values.extend(loader())
@@ -316,13 +286,15 @@ class ProxyPoolManager:
                 errors.append(safe_proxy_error_text(exc))
         unique = []
         seen = set()
-        for source, value in values:
-            if value not in seen:
-                seen.add(value)
-                unique.append((source, value))
+        for source, descriptor in values:
+            if descriptor.node_id not in seen:
+                seen.add(descriptor.node_id)
+                unique.append((source, descriptor))
         if not unique:
             detail = "; ".join(errors) if errors else "未配置代理池文件或订阅"
             raise ProxyPoolError("代理池没有可用节点: %s" % detail)
+        if errors:
+            self._source_diagnostics["errors"] = list(errors)
         return unique
 
     def reload_sources(self, force=False):
@@ -336,21 +308,29 @@ class ProxyPoolManager:
         with self._condition:
             previous = self._nodes
             updated = {}
-            for source, proxy_url in entries:
-                node_id = _node_id(proxy_url)
+            for source, descriptor in entries:
+                node_id = descriptor.node_id
                 old = previous.get(node_id)
                 if old is not None:
                     old.source = source
-                    old.proxy_url = proxy_url
-                    old.rotating = self._rotating_for(proxy_url)
+                    old.proxy_url = descriptor.canonical_uri
+                    old.descriptor = descriptor
+                    old.protocol = descriptor.protocol
+                    old.name = descriptor.name
+                    old.backend = descriptor.backend
+                    old.rotating = self._rotating_for(descriptor)
                     old.retired = False
                     updated[node_id] = old
                 else:
                     updated[node_id] = ProxyNode(
                         id=node_id,
                         source=source,
-                        proxy_url=proxy_url,
-                        rotating=self._rotating_for(proxy_url),
+                        proxy_url=descriptor.canonical_uri,
+                        descriptor=descriptor,
+                        protocol=descriptor.protocol,
+                        name=descriptor.name,
+                        backend=descriptor.backend,
+                        rotating=self._rotating_for(descriptor),
                     )
             for node_id, old in previous.items():
                 if node_id not in updated and old.inflight > 0:
@@ -415,12 +395,29 @@ class ProxyPoolManager:
 
     def _fallback_lease_locked(self, worker_key, slot_index, attempt_index, affinity, session_key):
         if self.fallback == "direct":
-            return ProxyLease("direct", "", worker_key, slot_index, attempt_index, affinity, session_key)
+            return ProxyLease("direct", "", worker_key, slot_index, attempt_index, affinity, session_key, protocol="direct")
         if self.fallback == "single":
             proxy_url = normalize_proxy_url(self.config.get("proxy"))
             if proxy_url:
-                return ProxyLease("fallback-single", _expand_account_placeholder(proxy_url, session_key), worker_key, slot_index, attempt_index, affinity, session_key)
+                endpoint = _expand_account_placeholder(proxy_url, session_key)
+                return ProxyLease("fallback-single", endpoint, worker_key, slot_index, attempt_index, affinity, session_key, source_uri=proxy_url, protocol=urllib.parse.urlsplit(proxy_url).scheme)
         return None
+
+    def _resolve_node_endpoint(self, node, session_key):
+        descriptor = node.descriptor
+        if descriptor.backend == "native":
+            return _expand_account_placeholder(descriptor.canonical_uri, session_key), None
+        return self._runtime.acquire(descriptor)
+
+    def _rollback_runtime_failure(self, node_id, error):
+        with self._condition:
+            node = self._nodes.get(node_id)
+            if node is not None:
+                node.inflight = max(0, node.inflight - 1)
+                node.enabled = False
+                node.probe_status = "unavailable"
+                node.last_error = "backend: %s" % safe_proxy_error_text(error)[:300]
+            self._condition.notify_all()
 
     def acquire(self, affinity, worker_key, slot_index, attempt_index, session_key, timeout=None, cancel_callback=None):
         if not self.managed:
@@ -428,39 +425,57 @@ class ProxyPoolManager:
         self.refresh_if_due()
         self._schedule_periodic_probe_if_due()
         deadline = time.time() + float(timeout if timeout is not None else self.acquire_timeout)
-        with self._condition:
-            while True:
-                if cancel_callback and cancel_callback():
-                    raise ProxyAcquireCancelled("代理租约等待已取消")
-                now = time.time()
-                eligible = self._eligible_locked(now)
-                if eligible:
-                    node = self._select_locked(eligible, affinity)
-                    node.inflight += 1
-                    url = _expand_account_placeholder(node.proxy_url, session_key)
-                    return ProxyLease(node.id, url, worker_key, slot_index, attempt_index, affinity, session_key)
-                active_nodes = [node for node in self._nodes.values() if node.enabled and not node.retired]
-                if not active_nodes:
-                    fallback = self._fallback_lease_locked(worker_key, slot_index, attempt_index, affinity, session_key)
-                    if fallback is not None:
-                        return fallback
-                    raise ProxyPoolError("代理池当前没有可用节点")
-                remaining = deadline - now
-                if remaining <= 0:
-                    fallback = self._fallback_lease_locked(worker_key, slot_index, attempt_index, affinity, session_key)
-                    if fallback is not None:
-                        return fallback
-                    raise ProxyAcquireTimeout("等待可用代理超时")
-                wake_after = min(remaining, 1.0)
-                cooldowns = [node.cooldown_until for node in active_nodes if node.cooldown_until and node.cooldown_until > now]
-                if cooldowns:
-                    wake_after = min(wake_after, max(0.05, min(cooldowns) - now))
-                self._condition.wait(timeout=wake_after)
+        last_runtime_error = None
+        while True:
+            selected = None
+            with self._condition:
+                while selected is None:
+                    if cancel_callback and cancel_callback():
+                        raise ProxyAcquireCancelled("代理租约等待已取消")
+                    now = time.time()
+                    eligible = self._eligible_locked(now)
+                    if eligible:
+                        selected = self._select_locked(eligible, affinity)
+                        selected.inflight += 1
+                        break
+                    active_nodes = [node for node in self._nodes.values() if node.enabled and not node.retired]
+                    if not active_nodes:
+                        fallback = self._fallback_lease_locked(worker_key, slot_index, attempt_index, affinity, session_key)
+                        if fallback is not None:
+                            return fallback
+                        detail = ": %s" % last_runtime_error if last_runtime_error else ""
+                        raise ProxyPoolError("代理池当前没有可用节点%s" % detail)
+                    remaining = deadline - now
+                    if remaining <= 0:
+                        fallback = self._fallback_lease_locked(worker_key, slot_index, attempt_index, affinity, session_key)
+                        if fallback is not None:
+                            return fallback
+                        raise ProxyAcquireTimeout("等待可用代理超时")
+                    wake_after = min(remaining, 1.0)
+                    cooldowns = [node.cooldown_until for node in active_nodes if node.cooldown_until and node.cooldown_until > now]
+                    if cooldowns:
+                        wake_after = min(wake_after, max(0.05, min(cooldowns) - now))
+                    self._condition.wait(timeout=wake_after)
+            try:
+                endpoint, runtime_key = self._resolve_node_endpoint(selected, session_key)
+                return ProxyLease(
+                    selected.id, endpoint, worker_key, slot_index, attempt_index, affinity, session_key,
+                    source_uri=selected.descriptor.raw_uri,
+                    protocol=selected.protocol,
+                    runtime_key=runtime_key,
+                )
+            except Exception as exc:
+                last_runtime_error = safe_proxy_error_text(exc)
+                self._rollback_runtime_failure(selected.id, exc)
+                if time.time() >= deadline:
+                    raise ProxyPoolError("代理协议运行时不可用: %s" % last_runtime_error) from exc
 
     def release(self, lease):
         if lease is None or lease.released:
             return
         lease.released = True
+        if lease.runtime_key:
+            self._runtime.release(lease.runtime_key)
         if lease.node_id in ("direct", "fallback-single"):
             return
         with self._condition:
@@ -482,6 +497,7 @@ class ProxyPoolManager:
             node.failure_count = 0
             node.cooldown_until = None
             node.last_error = ""
+            node.probe_status = "healthy" if node.probe_status == "unavailable" else node.probe_status
             self._condition.notify_all()
 
     def report_soft_failure(self, lease, error):
@@ -490,7 +506,7 @@ class ProxyPoolManager:
         with self._lock:
             node = self._nodes.get(lease.node_id)
             if node is not None:
-                node.last_error = "soft: %s" % safe_proxy_error_text(error)[:160]
+                node.last_error = "soft: %s" % safe_proxy_error_text(error)[:300]
 
     def report_transport_failure(self, lease, error):
         if lease is None or lease.node_id in ("direct", "fallback-single"):
@@ -513,10 +529,6 @@ class ProxyPoolManager:
             self._condition.notify_all()
         if node_for_probe:
             self._schedule_failure_probe(node_for_probe)
-
-    def _probe_url(self, node):
-        session_key = secrets.token_hex(8)
-        return _expand_account_placeholder(node.proxy_url, session_key)
 
     def _probe_endpoint(self):
         if self.probe_provider == "ipinfo":
@@ -541,12 +553,18 @@ class ProxyPoolManager:
             node = self._nodes.get(node_id)
             if node is None:
                 raise ProxyPoolError("代理节点不存在")
-            proxy_url = self._probe_url(node)
+            descriptor = node.descriptor
+            session_key = secrets.token_hex(8)
+        runtime_key = None
         started = time.monotonic()
         status = "unhealthy"
         exit_ip = ""
         error = ""
         try:
+            if descriptor.backend == "native":
+                proxy_url = _expand_account_placeholder(descriptor.canonical_uri, session_key)
+            else:
+                proxy_url, runtime_key = self._runtime.acquire(descriptor)
             response = requests.get(
                 self._probe_endpoint(),
                 proxies={"http": proxy_url, "https": proxy_url},
@@ -559,6 +577,9 @@ class ProxyPoolManager:
             status = "healthy"
         except Exception as exc:
             error = safe_proxy_error_text(exc)
+        finally:
+            if runtime_key:
+                self._runtime.release(runtime_key)
         latency = int((time.monotonic() - started) * 1000)
         with self._condition:
             node = self._nodes.get(node_id)
@@ -568,14 +589,15 @@ class ProxyPoolManager:
                 node.probe_latency_ms = latency
                 node.exit_ip = exit_ip
                 if status == "healthy":
+                    node.enabled = True
                     node.health = max(node.health, 0.8)
-                    if node.last_error == "transport":
+                    if node.last_error == "transport" or node.last_error.startswith("backend:"):
                         node.health = 1.0
                         node.failure_count = 0
                         node.cooldown_until = None
                         node.last_error = ""
                 elif not node.rotating:
-                    node.last_error = node.last_error or ("probe: %s" % error[:160])
+                    node.last_error = node.last_error or ("probe: %s" % error[:300])
                 self._condition.notify_all()
         return {"id": node_id, "status": status, "latency_ms": latency, "exit_ip": exit_ip, "error": error}
 
@@ -605,7 +627,7 @@ class ProxyPoolManager:
         with self._lock:
             if not force and self.probe_interval > 0 and now - self._last_probe_all < self.probe_interval:
                 return []
-            node_ids = [node.id for node in self._nodes.values() if node.enabled and not node.retired]
+            node_ids = [node.id for node in self._nodes.values() if not node.retired]
             self._last_probe_all = now
         results = []
         if not node_ids:
@@ -616,7 +638,7 @@ class ProxyPoolManager:
                 try:
                     results.append(future.result())
                 except Exception as exc:
-                    results.append({"id": futures[future], "status": "unhealthy", "error": str(exc)})
+                    results.append({"id": futures[future], "status": "unhealthy", "error": safe_proxy_error_text(exc)})
         return results
 
     def snapshot(self):
@@ -630,13 +652,16 @@ class ProxyPoolManager:
                 nodes.append({
                     "id": node.id,
                     "source": node.source,
-                    "proxy": proxy_log_label(node.proxy_url),
+                    "proxy": node.descriptor.raw_uri,
+                    "name": node.name,
+                    "protocol": node.protocol,
+                    "backend": node.backend,
                     "enabled": bool(node.enabled),
                     "rotating": bool(node.rotating),
                     "health": round(float(node.health), 3),
                     "failure_count": int(node.failure_count),
                     "cooldown_sec": cooldown,
-                    "last_error": str(node.last_error or "")[:160],
+                    "last_error": str(node.last_error or "")[:300],
                     "probe_status": node.probe_status,
                     "probe_latency_ms": int(node.probe_latency_ms or 0),
                     "exit_ip": node.exit_ip,
@@ -649,6 +674,8 @@ class ProxyPoolManager:
                 "fallback": self.fallback,
                 "capacity": self.capacity,
                 "nodes": nodes,
+                "sources": dict(self._source_diagnostics),
+                "runtime": self._runtime.active_snapshot(),
             }
 
 
@@ -662,9 +689,12 @@ def get_manager(config=None, log=None):
         if _MANAGER is None:
             _MANAGER = ProxyPoolManager(config, log=log)
         elif _MANAGER.signature != signature and _MANAGER.total_inflight() == 0:
+            old = _MANAGER
             _MANAGER = ProxyPoolManager(config, log=log)
+            old.shutdown()
         elif log is not None:
             _MANAGER.log = log
+            _MANAGER._runtime.log = log
         return _MANAGER
 
 
@@ -673,7 +703,10 @@ def reset_manager():
     with _MANAGER_LOCK:
         if _MANAGER is not None and _MANAGER.total_inflight() > 0:
             raise ProxyPoolError("仍有代理租约使用中，不能重置代理池")
+        old = _MANAGER
         _MANAGER = None
+    if old is not None:
+        old.shutdown()
 
 
 def current_proxy_lease():
@@ -711,7 +744,10 @@ def begin_registration_slot(slot_index, attempt_index=1, worker_key=None, log=No
     )
     _TLS.lease = lease
     if log is not None:
-        log("[*] 当前账号代理: %s" % proxy_log_label(lease.proxy_url))
+        label = lease.source_uri or lease.proxy_url
+        log("[*] 当前账号代理: %s" % proxy_log_label(label))
+        if lease.source_uri and lease.proxy_url and lease.source_uri != lease.proxy_url:
+            log("[*] 当前代理本地出口: %s" % lease.proxy_url)
     return lease
 
 
@@ -741,4 +777,10 @@ def manager_snapshot(config=None):
     try:
         return get_manager(config=config).snapshot()
     except Exception as exc:
-        return {"mode": str((config or {}).get("proxy_mode") or "auto"), "managed": False, "nodes": [], "error": safe_proxy_error_text(exc)}
+        return {
+            "mode": str((config or {}).get("proxy_mode") or "auto"),
+            "managed": False,
+            "nodes": [],
+            "sources": {},
+            "error": safe_proxy_error_text(exc),
+        }
