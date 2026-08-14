@@ -1,4 +1,4 @@
-"""Lazy local runtime that exposes advanced proxy nodes as localhost HTTP proxies."""
+"""Lazy local runtime that exposes every managed proxy through a common endpoint."""
 from __future__ import annotations
 
 import copy
@@ -10,9 +10,11 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass
 from typing import Optional
 
+from proxy_bridge import LocalProxyBridge, proxy_has_auth
 from proxy_protocols import ProxyDescriptor
 
 
@@ -23,17 +25,33 @@ class ProxyRuntimeError(RuntimeError):
 @dataclass
 class RuntimeEntry:
     node_id: str
-    process: subprocess.Popen
+    process: Optional[subprocess.Popen]
     port: int
     config_path: str
     refcount: int = 0
+    bridge: Optional[LocalProxyBridge] = None
+    kind: str = "sing-box"
 
     @property
     def proxy_url(self):
         return "http://127.0.0.1:%s" % self.port
 
+    @property
+    def alive(self):
+        if self.kind == "bridge":
+            return bool(self.bridge is not None and self.bridge.server is not None)
+        return bool(self.process is not None and self.process.poll() is None)
+
 
 class ProtocolRuntimeManager:
+    """Resolve native and advanced nodes into consumer-compatible endpoints.
+
+    Plain unauthenticated HTTP is already the common denominator and remains
+    direct.  SOCKS, HTTPS proxy endpoints, and authenticated HTTP proxies are
+    exposed through the shared Python bridge.  Advanced protocols use sing-box
+    and expose the same localhost HTTP contract.
+    """
+
     def __init__(self, config=None, log=None):
         self.config = dict(config or {})
         self.log = log or (lambda _message: None)
@@ -174,10 +192,33 @@ class ProtocolRuntimeManager:
                 pass
             raise
 
+    def _start_bridge_entry(self, descriptor):
+        bridge = LocalProxyBridge(descriptor.canonical_uri)
+        try:
+            endpoint = bridge.start()
+        except Exception as exc:
+            raise ProxyRuntimeError("本地 HTTP 代理桥启动失败: %s" % exc) from exc
+        try:
+            port = int(urllib.parse.urlsplit(endpoint).port or 0)
+        except Exception:
+            port = 0
+        if port <= 0:
+            bridge.stop()
+            raise ProxyRuntimeError("本地 HTTP 代理桥未返回有效端口")
+        self.log("[*] 原生代理已标准化为本地 HTTP 出口: %s -> %s" % (descriptor.protocol, endpoint))
+        return RuntimeEntry(descriptor.node_id, None, port, "", 0, bridge=bridge, kind="bridge")
+
     @staticmethod
     def _stop_entry(entry):
+        if entry.kind == "bridge":
+            if entry.bridge is not None:
+                try:
+                    entry.bridge.stop()
+                except Exception:
+                    pass
+            return
         try:
-            if entry.process.poll() is None:
+            if entry.process is not None and entry.process.poll() is None:
                 entry.process.terminate()
                 try:
                     entry.process.wait(timeout=3)
@@ -186,31 +227,34 @@ class ProtocolRuntimeManager:
                     entry.process.wait(timeout=2)
         except Exception:
             pass
-        try:
-            os.unlink(entry.config_path)
-        except Exception:
-            pass
+        if entry.config_path:
+            try:
+                os.unlink(entry.config_path)
+            except Exception:
+                pass
 
-    def acquire(self, descriptor):
-        if descriptor.backend == "native":
-            return descriptor.canonical_uri, None
-        if descriptor.backend != "sing-box":
-            raise ProxyRuntimeError("未知高级代理后端: %s" % descriptor.backend)
+    @staticmethod
+    def _native_requires_bridge(descriptor):
+        parsed = urllib.parse.urlsplit(descriptor.canonical_uri)
+        scheme = (parsed.scheme or "http").lower()
+        return scheme != "http" or proxy_has_auth(descriptor.canonical_uri)
+
+    def _acquire_runtime_entry(self, descriptor, starter):
         while True:
             with self._condition:
                 current = self._entries.get(descriptor.node_id)
-                if current is not None and current.process.poll() is None:
+                if current is not None and current.alive:
                     current.refcount += 1
                     return current.proxy_url, descriptor.node_id
                 if current is not None:
                     self._entries.pop(descriptor.node_id, None)
+                    self._stop_entry(current)
                 if descriptor.node_id not in self._starting:
                     self._starting.add(descriptor.node_id)
                     break
                 self._condition.wait(timeout=0.2)
-        entry = None
         try:
-            entry = self._start_entry(descriptor)
+            entry = starter(descriptor)
             entry.refcount = 1
             with self._condition:
                 self._entries[descriptor.node_id] = entry
@@ -219,6 +263,15 @@ class ProtocolRuntimeManager:
             with self._condition:
                 self._starting.discard(descriptor.node_id)
                 self._condition.notify_all()
+
+    def acquire(self, descriptor):
+        if descriptor.backend == "native":
+            if not self._native_requires_bridge(descriptor):
+                return descriptor.canonical_uri, None
+            return self._acquire_runtime_entry(descriptor, self._start_bridge_entry)
+        if descriptor.backend != "sing-box":
+            raise ProxyRuntimeError("未知高级代理后端: %s" % descriptor.backend)
+        return self._acquire_runtime_entry(descriptor, self._start_entry)
 
     def release(self, runtime_key):
         if not runtime_key:
@@ -238,7 +291,12 @@ class ProtocolRuntimeManager:
     def active_snapshot(self):
         with self._condition:
             return {
-                key: {"port": value.port, "refcount": value.refcount, "alive": value.process.poll() is None}
+                key: {
+                    "port": value.port,
+                    "refcount": value.refcount,
+                    "alive": value.alive,
+                    "kind": value.kind,
+                }
                 for key, value in self._entries.items()
             }
 
