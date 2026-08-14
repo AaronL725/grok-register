@@ -9,10 +9,11 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 NATIVE_SCHEMES = {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}
-ADVANCED_SCHEMES = {"vless", "vmess", "trojan", "hysteria2", "hy2", "tuic"}
+ADVANCED_SCHEMES = {"vless", "vmess", "trojan", "hysteria2", "hy2", "tuic", "ss"}
 SUPPORTED_SCHEMES = NATIVE_SCHEMES | ADVANCED_SCHEMES | {"socks"}
 MAX_SOURCE_BYTES = 2 << 20
 MAX_SOURCE_ENTRIES = 10000
+_PROXY_ACCOUNT_PLACEHOLDER = "{account}"
 
 
 class ProxyProtocolError(ValueError):
@@ -82,7 +83,7 @@ def _split_csv(value):
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
-def _decode_b64_text(value):
+def _decode_b64_bytes(value):
     compact = "".join(str(value or "").strip().split())
     if not compact:
         raise ProxyProtocolError("empty Base64 payload")
@@ -90,41 +91,66 @@ def _decode_b64_text(value):
     last = None
     for decoder in (base64.b64decode, base64.urlsafe_b64decode):
         try:
-            return decoder((compact + padding).encode("ascii")).decode("utf-8")
+            return decoder((compact + padding).encode("ascii"))
         except Exception as exc:
             last = exc
     raise ProxyProtocolError("invalid Base64 payload: %s" % last)
+
+
+def _decode_b64_text(value):
+    try:
+        return _decode_b64_bytes(value).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProxyProtocolError("invalid UTF-8 Base64 payload") from exc
 
 
 def _normalize_native(raw):
     value = str(raw or "").strip()
     if not value:
         raise ProxyProtocolError("empty proxy URL")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in value):
+        raise ProxyProtocolError("proxy URL contains control characters")
     if "://" not in value:
         if ":" not in value:
             raise ProxyProtocolError("proxy URL is missing scheme or port")
         value = "http://" + value
-    parsed = urllib.parse.urlsplit(value)
+    if value.count(_PROXY_ACCOUNT_PLACEHOLDER) > 1:
+        raise ProxyProtocolError("proxy URL may contain at most one {account} placeholder")
+    sentinel = "grok_register_account_placeholder"
+    if sentinel in value:
+        raise ProxyProtocolError("proxy URL contains reserved placeholder text")
+    parse_value = value.replace(_PROXY_ACCOUNT_PLACEHOLDER, sentinel)
+    parsed = urllib.parse.urlsplit(parse_value)
     scheme = (parsed.scheme or "http").lower()
     if scheme == "socks":
         scheme = "socks5"
     if scheme not in NATIVE_SCHEMES or not parsed.hostname:
         raise ProxyProtocolError("unsupported native proxy protocol")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ProxyProtocolError("native proxy URL cannot contain path, query or fragment")
     try:
         port = parsed.port
     except Exception as exc:
         raise ProxyProtocolError("invalid proxy port: %s" % exc) from exc
+    if not port:
+        raise ProxyProtocolError("native proxy URL is missing port")
+    has_placeholder = _PROXY_ACCOUNT_PLACEHOLDER in value
+    if has_placeholder:
+        if parsed.username is None or sentinel not in parsed.username:
+            raise ProxyProtocolError("{account} may only appear in the proxy username")
+        if sentinel in (parsed.password or "") or sentinel in (parsed.hostname or ""):
+            raise ProxyProtocolError("{account} may only appear in the proxy username")
     host = parsed.hostname
     if ":" in host and not host.startswith("["):
         host = "[%s]" % host
     userinfo = ""
     if parsed.username is not None:
-        userinfo = urllib.parse.quote(_unquote(parsed.username), safe="{}-._~")
+        username = _unquote(parsed.username).replace(sentinel, _PROXY_ACCOUNT_PLACEHOLDER)
+        userinfo = urllib.parse.quote(username, safe="{}-._~")
         if parsed.password is not None:
-            userinfo += ":" + urllib.parse.quote(_unquote(parsed.password), safe="{}-._~")
+            userinfo += ":" + urllib.parse.quote(_unquote(parsed.password), safe="-._~")
         userinfo += "@"
-    netloc = userinfo + host + ((":%s" % port) if port else "")
-    return urllib.parse.urlunsplit((scheme, netloc, parsed.path or "", parsed.query or "", ""))
+    return "%s://%s%s:%s" % (scheme, userinfo, host, port)
 
 
 def _transport_from_values(kind, host="", path="", service_name=""):
@@ -210,7 +236,7 @@ def _uri_parts(raw):
 
 def _advanced_descriptor(protocol, raw, name, server, port, outbound):
     outbound = dict(outbound)
-    outbound["type"] = protocol
+    outbound.setdefault("type", protocol)
     outbound["server"] = server
     outbound["server_port"] = int(port)
     stable = json.dumps(outbound, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -233,10 +259,7 @@ def _parse_vless(raw):
     header_type = _first(query, "headerType", "header_type")
     if header_type and header_type.lower() not in ("none",):
         raise ProxyProtocolError("unsupported VLESS headerType: %s" % header_type)
-    transport = _transport_from_values(
-        _first(query, "type", "network"), _first(query, "host"), _first(query, "path"),
-        _first(query, "serviceName", "service_name")
-    )
+    transport = _transport_from_values(_first(query, "type", "network"), _first(query, "host"), _first(query, "path"), _first(query, "serviceName", "service_name"))
     if transport:
         outbound["transport"] = transport
     tls = _tls_from_query(query)
@@ -253,10 +276,7 @@ def _parse_trojan(raw):
     if not password:
         raise ProxyProtocolError("Trojan node is missing password")
     outbound = {"password": password}
-    transport = _transport_from_values(
-        _first(query, "type", "network"), _first(query, "host"), _first(query, "path"),
-        _first(query, "serviceName", "service_name")
-    )
+    transport = _transport_from_values(_first(query, "type", "network"), _first(query, "host"), _first(query, "path"), _first(query, "serviceName", "service_name"))
     if transport:
         outbound["transport"] = transport
     tls = _tls_from_query(query, default_enabled=True)
@@ -271,8 +291,7 @@ def _parse_hysteria2(raw):
     if parsed.password is not None:
         password += ":" + _unquote(parsed.password)
     outbound = {"password": password}
-    tls = _tls_from_query(query, default_enabled=True) or {"enabled": True}
-    outbound["tls"] = tls
+    outbound["tls"] = _tls_from_query(query, default_enabled=True) or {"enabled": True}
     obfs_type = _first(query, "obfs").strip()
     if obfs_type and obfs_type.lower() != "none":
         obfs = {"type": obfs_type}
@@ -338,10 +357,7 @@ def _parse_vmess(raw):
         alter_id = 0
     if alter_id:
         outbound["alter_id"] = alter_id
-    transport = _transport_from_values(
-        value.get("net"), str(value.get("host") or ""), str(value.get("path") or ""),
-        str(value.get("serviceName") or value.get("service_name") or "")
-    )
+    transport = _transport_from_values(value.get("net"), str(value.get("host") or ""), str(value.get("path") or ""), str(value.get("serviceName") or value.get("service_name") or ""))
     if transport:
         outbound["transport"] = transport
     query = {
@@ -357,6 +373,54 @@ def _parse_vmess(raw):
     return _advanced_descriptor("vmess", raw, name, server, port, outbound)
 
 
+def _parse_shadowsocks(raw):
+    payload = raw[len("ss://"):]
+    payload, _, fragment = payload.partition("#")
+    name = _unquote(fragment)
+    payload, sep, raw_query = payload.partition("?")
+    if sep and raw_query:
+        query = urllib.parse.parse_qs(raw_query, keep_blank_values=True)
+        if any(key != "plugin" for key in query):
+            raise ProxyProtocolError("unsupported Shadowsocks query parameters")
+        if _first(query, "plugin"):
+            raise ProxyProtocolError("Shadowsocks plugins are not supported")
+    method = password = host = ""
+    port = 0
+    if "@" in payload:
+        user_part, server_part = payload.rsplit("@", 1)
+        decoded_user = _unquote(user_part)
+        if ":" not in decoded_user:
+            decoded_user = _decode_b64_text(decoded_user)
+        if ":" not in decoded_user:
+            raise ProxyProtocolError("Shadowsocks credentials are invalid")
+        method, password = decoded_user.split(":", 1)
+        parsed_server = urllib.parse.urlsplit("ss://" + server_part)
+        host = parsed_server.hostname or ""
+        port = int(parsed_server.port or 0)
+    else:
+        decoded = _decode_b64_text(payload)
+        if "@" not in decoded:
+            raise ProxyProtocolError("legacy Shadowsocks URL is invalid")
+        user_part, server_part = decoded.rsplit("@", 1)
+        if ":" not in user_part:
+            raise ProxyProtocolError("Shadowsocks credentials are invalid")
+        method, password = user_part.split(":", 1)
+        parsed_server = urllib.parse.urlsplit("ss://" + server_part)
+        host = parsed_server.hostname or ""
+        port = int(parsed_server.port or 0)
+    method = method.strip().lower()
+    if not method or not password or not host or not port:
+        raise ProxyProtocolError("Shadowsocks URL is missing method, password, server or port")
+    supported_methods = {
+        "aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20-ietf-poly1305",
+        "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
+    }
+    if method not in supported_methods:
+        raise ProxyProtocolError("unsupported Shadowsocks method: %s" % method)
+    outbound = {"type": "shadowsocks", "method": method, "password": password}
+    return _advanced_descriptor("ss", raw, name, host, port, outbound)
+
+
 def parse_proxy_line(line):
     raw = str(line or "").strip()
     if not raw:
@@ -369,7 +433,7 @@ def parse_proxy_line(line):
     if scheme in NATIVE_SCHEMES or scheme == "socks":
         canonical = _normalize_native(raw)
         parsed = urllib.parse.urlsplit(canonical)
-        return ProxyDescriptor(parsed.scheme, raw, canonical, _unquote(urllib.parse.urlsplit(raw).fragment), parsed.hostname or "", int(parsed.port or 0), "native")
+        return ProxyDescriptor(parsed.scheme, raw, canonical, "", parsed.hostname or "", int(parsed.port or 0), "native")
     if scheme == "vless":
         return _parse_vless(raw)
     if scheme == "vmess":
@@ -380,6 +444,8 @@ def parse_proxy_line(line):
         return _parse_hysteria2(raw)
     if scheme == "tuic":
         return _parse_tuic(raw)
+    if scheme == "ss":
+        return _parse_shadowsocks(raw)
     raise ProxyProtocolError("unsupported proxy protocol: %s" % scheme)
 
 
