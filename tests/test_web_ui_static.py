@@ -64,6 +64,9 @@ class WebUIStaticTests(unittest.TestCase):
             "proxy_pool_file", "proxy_pool_subscription_url", "proxy_pool_endpoint_mode",
             "/api/proxy-pool/status", "/api/proxy-pool/reload", "/api/proxy-pool/test",
             "proxyPoolRows", "proxy_pool_max_concurrent_per_node",
+            "proxy_protocol_backend", "proxy_singbox_path", "proxy_protocol_start_timeout_sec",
+            "proxyProtocol:'协议'", "proxyBackend:'后端'", "protocol_counts",
+            "VLESS/VMess/Trojan/Hysteria2/TUIC",
         ):
             self.assertIn(marker, self.proxy_js)
         self.assertIn(".proxy-table", self.proxy_css)
