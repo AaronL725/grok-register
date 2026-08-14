@@ -59,7 +59,8 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
 - 支持 **DuckMail / YYDS / Cloudflare 临时邮箱 / Cloud Mail** 四种邮箱来源。
 - 支持 **GUI / CLI / WebUI** 三种操作入口。
 - 支持可选 **1–8 线程并发注册**；默认关闭。
-- 支持 `direct / single / pool` 代理模式，以及健康检查、冷却、订阅、固定/旋转节点和账号级稳定 Proxy Lease。
+- 支持 `direct / single / pool` 代理模式、健康检查、冷却、订阅、固定/旋转节点和账号级稳定 Proxy Lease。
+- 代理池可混合解析 **HTTP / HTTPS / SOCKS / VLESS / VMess / Trojan / Hysteria2 / TUIC** 节点；高级协议按需通过本地 sing-box 转换为 localhost HTTP 出口。
 - 支持注册后尝试开启 NSFW；失败不会丢失已经注册成功的账号。
 - 支持把 SSO token 写入 grok2api 本地池或远端池。
 - 支持可选 CPA xAI OIDC 凭证导出与 CLIProxyAPI hotload。
@@ -90,6 +91,7 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
 - Google Chrome 或 Chromium
 - 可访问注册页面和所选邮箱 API 的网络环境
 - GUI 需要 Tkinter；没有 Tkinter 时可以使用 CLI 或 WebUI
+- **仅当使用 VLESS / VMess / Trojan / Hysteria2 / TUIC 节点时需要 sing-box**；HTTP/SOCKS 继续使用项目原生代理实现
 
 ### 2. 安装
 
@@ -129,8 +131,6 @@ copy config.example.json config.json
 
 ### 3. 先完成最小配置
 
-第一次使用只需要优先确认这几个字段：
-
 ```json
 {
   "email_provider": "cloudflare",
@@ -141,36 +141,17 @@ copy config.example.json config.json
 }
 ```
 
-然后根据你选择的 `email_provider` 填写对应邮箱配置。完整字段可直接参考 [`config.example.json`](config.example.json)。
+然后根据 `email_provider` 填写对应邮箱配置。完整字段见 [`config.example.json`](config.example.json)。
 
 ### 4. 启动
 
-最简单的 GUI：
+GUI：
 
 ```bash
 python grok_register_ttk.py
 ```
 
-或使用 WebUI：
-
-```bash
-python -m pip install -r requirements-web.txt
-python -m web.server
-```
-
-浏览器打开：
-
-```text
-http://127.0.0.1:8092
-```
-
-> GUI、CLI 和 WebUI 共用同一个 `config.json` 和同一套注册逻辑。建议同一时间只使用一个入口启动任务。
-
-## 运行方式
-
-### WebUI（可选）
-
-WebUI 适合直接在浏览器中修改配置、启动/停止任务、查看统计和实时日志。
+WebUI：
 
 ```bash
 python -m pip install -r requirements-web.txt
@@ -183,16 +164,18 @@ python -m web.server
 http://127.0.0.1:8092
 ```
 
-WebUI 默认监听 `127.0.0.1`，主要提供：
+> GUI、CLI 和 WebUI 共用同一个 `config.json` 和同一套注册逻辑。建议同一时间只使用一个入口启动任务。
 
-- 中英双语界面
-- 配置读取与保存
-- 开始 / 停止注册
-- 成功、失败、待恢复、警告统计
-- 实时日志
-- 代理池配置、节点状态、重新加载和手动测试
+## 运行方式
 
-任务运行期间配置修改、代理池 reload/test 会被锁定。
+### WebUI（可选）
+
+```bash
+python -m pip install -r requirements-web.txt
+python -m web.server
+```
+
+WebUI 默认监听 `127.0.0.1:8092`，提供中英双语配置、开始/停止、批次统计、实时日志、代理池节点状态、订阅解析统计、重新加载和手动测试。
 
 ### GUI
 
@@ -224,7 +207,7 @@ CLI 读取 `config.json`，通过校验后提示：
 
 ## 配置说明
 
-项目启动时会做结构校验，真正开始任务时再检查当前启用功能所需的字段。因此你可以先打开 GUI / WebUI，再逐步完成配置。
+项目启动时做结构校验，真正开始任务时再检查当前启用功能所需字段，因此可以先打开 GUI / WebUI 再逐步配置。
 
 ### 基础配置
 
@@ -249,8 +232,6 @@ CLI 读取 `config.json`，通过校验后提示：
   "duckmail_api_key": ""
 }
 ```
-
-`duckmail_api_key` 可按所使用服务情况填写。
 
 #### YYDS
 
@@ -305,19 +286,6 @@ Admin 创建示例：
 }
 ```
 
-Admin 密码只用于创建邮箱；读取邮件仍使用创建接口返回的邮箱 JWT。
-
-需要单独验证 Cloudflare 邮箱接口时可以运行：
-
-```bash
-python cf_mail_debug.py \
-  --api-base "https://你的-worker-api-域名" \
-  --auth-mode x-admin-auth \
-  --api-key "你的 ADMIN_PASSWORD" \
-  --create-path /admin/new_address \
-  --domain "example.com"
-```
-
 #### Cloud Mail 无人收件模式
 
 ```json
@@ -329,8 +297,6 @@ python cf_mail_debug.py \
   "cloudmail_path_messages": "/api/public/emailList"
 }
 ```
-
-该模式直接生成随机邮箱地址，不需要预先创建邮箱账户。
 
 ## 代理与代理池
 
@@ -347,12 +313,16 @@ python cf_mail_debug.py \
 
 ### 单代理
 
+原生代理：
+
 ```json
 {
   "proxy_mode": "single",
   "proxy": "http://user:password@127.0.0.1:7890"
 }
 ```
+
+`single` 也可以直接填写受支持的高级协议 URI；高级协议需要本机可执行的 `sing-box`。
 
 ### 代理池
 
@@ -363,32 +333,41 @@ python cf_mail_debug.py \
   "proxy_pool_file": "./proxies.txt",
   "proxy_pool_subscription_url": "",
   "proxy_pool_endpoint_mode": "auto",
-  "proxy_pool_max_concurrent_per_node": 1
+  "proxy_pool_max_concurrent_per_node": 1,
+  "proxy_protocol_backend": "auto",
+  "proxy_singbox_path": "",
+  "proxy_protocol_start_timeout_sec": 10
 }
 ```
 
-`proxies.txt` 一行一个代理，例如：
+代理源支持普通文本或整份 Base64 编码，解码后可以混合：
 
 ```text
-http://127.0.0.1:8080
-http://user:password@127.0.0.1:8080
-socks5://user:password@127.0.0.1:1080
-http://user-{account}:password@proxy.example.com:8000
+http://...
+socks5://...
+vless://...
+vmess://...
+trojan://...
+hysteria2://...
+tuic://...
 ```
 
-代理池支持：
+当前支持：
 
-- HTTP / HTTPS / SOCKS4 / SOCKS4A / SOCKS5 / SOCKS5H
-- 本地文件和 HTTP/HTTPS 订阅
-- Base64 代理列表
-- 固定代理与旋转入口
-- `{account}` session 占位符
-- 节点健康度、探测、失败冷却和自动恢复
-- 单节点并发限制与账号级稳定 Proxy Lease
+- HTTP / HTTPS / SOCKS / SOCKS4 / SOCKS4A / SOCKS5 / SOCKS5H
+- VLESS / VMess / Trojan / Hysteria2 (`hy2`) / TUIC
+- 本地文件与 HTTP/HTTPS 订阅
+- 标准 Base64 与 URL-safe Base64 订阅
+- VLESS/VMess/Trojan 常见 TCP/WS/gRPC/HTTP/HTTPUpgrade/QUIC transport
+- VLESS TLS / uTLS / Reality 常见参数
+- 节点解析统计、健康探测、失败冷却和自动恢复
+- 固定/旋转入口、`{account}`、并发限制和账号级稳定 Proxy Lease
 
-同一个账号 attempt 内，浏览器、邮箱、NSFW 和默认 CPA 会保持同一个 Lease；邮箱重试不会中途更换代理。
+高级协议采用 lazy runtime：只有节点实际被选中或测试时才启动 sing-box，并向现有注册流程提供 `http://127.0.0.1:<port>`；HTTP/SOCKS 节点不会启动 sing-box。没有活动 Lease 后对应 runtime 会停止。
 
-WebUI 会直接显示完整代理地址和认证信息。详细配置、健康度和调度规则见 [`docs/proxy-pool.md`](docs/proxy-pool.md)。
+同一个账号 attempt 内，浏览器、邮箱、NSFW 和默认 CPA 保持同一个 Lease；邮箱重试不会中途更换代理。
+
+完整参数、协议映射、运行时和健康度规则见 [`docs/proxy-pool.md`](docs/proxy-pool.md)。
 
 ## 可选多线程注册
 
@@ -401,7 +380,7 @@ WebUI 会直接显示完整代理地址和认证信息。详细配置、健康�
 }
 ```
 
-需要并发时改为：
+需要并发时：
 
 ```json
 {
@@ -410,12 +389,10 @@ WebUI 会直接显示完整代理地址和认证信息。详细配置、健康�
 }
 ```
 
-说明：
-
-- worker 范围为 `1–8`，实际数量不会超过本次 `register_count`。
-- 每个 worker 使用独立的邮箱模块和浏览器运行状态。
-- 账号输出、邮箱凭据、pending 和 CPA 失败记录使用锁保护共享写入。
-- 启用代理池时，所有 worker 共享代理健康状态，但每个账号拥有独立 Proxy Lease。
+- worker 范围 `1–8`，实际数量不会超过 `register_count`。
+- 每个 worker 使用独立邮箱模块和浏览器运行状态。
+- 共享输出使用锁保护。
+- 代理健康状态由所有 worker 共享，但每个账号拥有独立 Proxy Lease。
 
 ## grok2api token 入池
 
@@ -433,12 +410,10 @@ WebUI 会直接显示完整代理地址和认证信息。详细配置、健康�
 
 ### 远端池
 
-支持两种凭据方式，二选一：
+远端支持两种凭据方式，二选一：
 
-1. `grok2api_remote_app_key`：旧版增量管理接口
-2. `grok2api_remote_admin_username` + `grok2api_remote_admin_password`：管理员导入接口
-
-示例：
+1. `grok2api_remote_app_key`
+2. `grok2api_remote_admin_username` + `grok2api_remote_admin_password`
 
 ```json
 {
@@ -452,11 +427,9 @@ WebUI 会直接显示完整代理地址和认证信息。详细配置、健康�
 }
 ```
 
-两套远端凭据不能同时填写。远程地址要求 HTTPS；本机地址可以使用 HTTP。旧版全量保存回退默认关闭。
+两套远端凭据不能同时填写。远程地址要求 HTTPS；本机地址可以使用 HTTP。
 
 ## CPA / xAI OIDC 导出
-
-注册成功后可以继续生成 CPA xAI OIDC 凭证：
 
 ```json
 {
@@ -472,16 +445,12 @@ WebUI 会直接显示完整代理地址和认证信息。详细配置、健康�
 }
 ```
 
-说明：
-
 - `cpa_copy_to_hotload=true` 时必须填写 `cpa_hotload_dir`。
-- 显式配置 `cpa_proxy` 时优先使用该代理。
-- 未配置 `cpa_proxy` 且注册正在使用 Proxy Lease 时，CPA 会继承当前账号代理。
-- CPA 导出失败只会记录后处理警告，不会删除或重新统计已保存账号。
+- 显式 `cpa_proxy` 始终优先。
+- 未配置 `cpa_proxy` 且当前账号使用 Proxy Lease 时，CPA 会继承同一个出口，包括高级协议对应的 localhost runtime。
+- CPA 导出失败只记录后处理警告，不会删除已保存账号。
 
 ## 输出与 pending 恢复
-
-运行过程中可能生成：
 
 | 文件 / 目录 | 内容 |
 | --- | --- |
@@ -499,21 +468,7 @@ WebUI 会直接显示完整代理地址和认证信息。详细配置、健康�
 python grok_register_ttk.py retry-pending <pending文件> [输出文件]
 ```
 
-例如：
-
-```bash
-python grok_register_ttk.py retry-pending accounts_20260715_120000.txt.pending.jsonl
-```
-
-或指定恢复目标：
-
-```bash
-python grok_register_ttk.py retry-pending \
-  accounts_20260715_120000.txt.pending.jsonl \
-  recovered_accounts.txt
-```
-
-恢复过程会使用文件锁、去重和原子替换，因此重复执行不会重复写入已经恢复成功的同一账号。
+恢复过程使用文件锁、去重和原子替换，重复执行不会重复写入已经恢复成功的同一账号。
 
 ## 项目结构
 
@@ -525,6 +480,8 @@ python grok_register_ttk.py retry-pending \
 ├── registration_browser.py    # 主注册浏览器流程
 ├── browser_runtime.py         # HTTP、Chromium options 与代理适配
 ├── proxy_pool.py              # 代理池、健康度、Lease、订阅与探测
+├── proxy_protocols.py         # HTTP/SOCKS/VLESS/VMess/Trojan/HY2/TUIC 订阅解析
+├── proxy_protocol_runtime.py  # 高级协议 lazy sing-box → localhost HTTP 适配
 ├── mail_service.py            # 四种邮箱服务
 ├── app_config.py              # 默认配置、校验、加载与保存
 ├── account_outputs.py         # 账号、pending 与 token 输出
@@ -552,13 +509,21 @@ CLI 只是不启动 Tk GUI。注册页交互、验证码提交和 SSO cookie 获
 
 确认 Python 环境包含 Tkinter。Linux 发行版可能需要单独安装 `python3-tk`。也可以改用 CLI 或 WebUI。
 
+### 为什么高级协议节点显示 unavailable？
+
+VLESS / VMess / Trojan / Hysteria2 / TUIC 需要本地 sing-box。默认从系统 `PATH` 查找，也可以在 WebUI / `config.json` 设置 `proxy_singbox_path`。HTTP/SOCKS 不受影响。
+
+### 为什么某些 V2Ray 订阅节点会被跳过？
+
+WebUI 会显示订阅协议数量和解析错误。无法映射的 transport 或无效 URI 会只跳过对应节点，不影响同一订阅里的其他有效节点。详细映射范围见 [`docs/proxy-pool.md`](docs/proxy-pool.md)。
+
 ### 为什么配置文件不完整时 GUI / WebUI 仍能打开？
 
-配置保存和运行校验是分开的。界面允许先打开并编辑配置，真正开始注册时才检查当前启用服务所需的字段。
+配置保存和运行校验分开。界面允许先打开并编辑配置，开始注册时才检查当前启用服务所需字段。
 
 ### 注册成功后 grok2api 或 CPA 失败怎么办？
 
-账号本身仍然属于成功。此类错误只会计入“后处理警告”，不需要重新注册账号。
+账号本身仍然属于成功。此类错误只计入“后处理警告”。
 
 ### NSFW 开启失败会丢失账号吗？
 
@@ -570,7 +535,7 @@ CLI 只是不启动 Tk GUI。注册页交互、验证码提交和 SSO cookie 获
 
 ### 如何查看代理池更详细的参数？
 
-参见 [`docs/proxy-pool.md`](docs/proxy-pool.md)。其中包含节点调度、冷却、探测、旋转代理、`{account}` 和 fallback 的完整说明。
+参见 [`docs/proxy-pool.md`](docs/proxy-pool.md)。
 
 ### 为什么账号会进入 pending？
 

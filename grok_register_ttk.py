@@ -941,6 +941,20 @@ class GrokRegisterGUI:
         self.proxy_test_btn = tk_button(config_frame, text="测试代理池", command=self.test_proxy_pool)
         add_field(self.proxy_test_btn, 18, 3, sticky=tk.W)
 
+        add_label(19, 0, "高级协议后端:")
+        self.proxy_protocol_backend_var = tk.StringVar(value=str(config.get("proxy_protocol_backend", "auto")))
+        self.proxy_protocol_backend_combo = tk_option_menu(config_frame, self.proxy_protocol_backend_var, ["auto", "sing-box", "native-only"], width=12)
+        add_field(self.proxy_protocol_backend_combo, 19, 1, sticky=tk.W)
+        add_label(19, 2, "sing-box 路径:")
+        self.proxy_singbox_path_var = tk.StringVar(value=str(config.get("proxy_singbox_path", "")))
+        self.proxy_singbox_path_entry = tk_entry(config_frame, textvariable=self.proxy_singbox_path_var, width=34)
+        add_field(self.proxy_singbox_path_entry, 19, 3)
+
+        add_label(20, 0, "协议启动超时(秒):")
+        self.proxy_protocol_start_timeout_var = tk.StringVar(value=str(config.get("proxy_protocol_start_timeout_sec", 10)))
+        self.proxy_protocol_start_timeout_spinbox = tk.Spinbox(config_frame, from_=3, to=60, width=8, textvariable=self.proxy_protocol_start_timeout_var, bg=UI_ENTRY_BG, fg=UI_FG, insertbackground=UI_FG, buttonbackground=UI_BUTTON_BG, relief=tk.SOLID)
+        add_field(self.proxy_protocol_start_timeout_spinbox, 20, 1, sticky=tk.W)
+
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
         self.start_btn = tk_button(btn_frame, text="开始注册", command=self.start_registration)
@@ -1067,6 +1081,9 @@ class GrokRegisterGUI:
                     "proxy_pool_subscription_url": self.proxy_subscription_var.get().strip(),
                     "proxy_pool_endpoint_mode": self.proxy_endpoint_mode_var.get().strip() or "auto",
                     "proxy_pool_max_concurrent_per_node": int(self.proxy_capacity_var.get()),
+                    "proxy_protocol_backend": self.proxy_protocol_backend_var.get().strip() or "auto",
+                    "proxy_singbox_path": self.proxy_singbox_path_var.get().strip(),
+                    "proxy_protocol_start_timeout_sec": int(self.proxy_protocol_start_timeout_var.get()),
                 })
                 candidate = validate_config_structure(candidate)
                 from proxy_pool import get_manager, reset_manager
@@ -1096,6 +1113,8 @@ class GrokRegisterGUI:
         config["proxy_pool_file"] = self.proxy_pool_file_var.get().strip()
         config["proxy_pool_subscription_url"] = self.proxy_subscription_var.get().strip()
         config["proxy_pool_endpoint_mode"] = self.proxy_endpoint_mode_var.get().strip() or "auto"
+        config["proxy_protocol_backend"] = self.proxy_protocol_backend_var.get().strip() or "auto"
+        config["proxy_singbox_path"] = self.proxy_singbox_path_var.get().strip()
         config["duckmail_api_key"] = self.api_key_var.get().strip()
         config["cloudflare_api_base"] = self.cloudflare_api_base_var.get().strip()
         config["cloudflare_api_key"] = self.cloudflare_api_key_var.get().strip()
@@ -1125,6 +1144,7 @@ class GrokRegisterGUI:
             config["register_count"] = count
             config["multi_thread_workers"] = int(self.multi_thread_workers_var.get())
             config["proxy_pool_max_concurrent_per_node"] = int(self.proxy_capacity_var.get())
+            config["proxy_protocol_start_timeout_sec"] = int(self.proxy_protocol_start_timeout_var.get())
             validated = validate_run_requirements(config)
             config.clear()
             config.update(validated)
