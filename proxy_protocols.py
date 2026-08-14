@@ -126,8 +126,10 @@ def _normalize_native(raw):
         scheme = "socks5"
     if scheme not in NATIVE_SCHEMES or not parsed.hostname:
         raise ProxyProtocolError("unsupported native proxy protocol")
-    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
-        raise ProxyProtocolError("native proxy URL cannot contain path, query or fragment")
+    # Fragment is metadata commonly used as the subscription display name.
+    # It never enters the canonical routing URL or node identity.
+    if parsed.path not in ("", "/") or parsed.query:
+        raise ProxyProtocolError("native proxy URL cannot contain path or query")
     try:
         port = parsed.port
     except Exception as exc:
@@ -433,7 +435,8 @@ def parse_proxy_line(line):
     if scheme in NATIVE_SCHEMES or scheme == "socks":
         canonical = _normalize_native(raw)
         parsed = urllib.parse.urlsplit(canonical)
-        return ProxyDescriptor(parsed.scheme, raw, canonical, "", parsed.hostname or "", int(parsed.port or 0), "native")
+        name = _unquote(urllib.parse.urlsplit(raw).fragment)
+        return ProxyDescriptor(parsed.scheme, raw, canonical, name, parsed.hostname or "", int(parsed.port or 0), "native")
     if scheme == "vless":
         return _parse_vless(raw)
     if scheme == "vmess":
