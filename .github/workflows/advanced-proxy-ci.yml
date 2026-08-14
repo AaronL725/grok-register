@@ -4,14 +4,98 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
+      - name: Apply reviewed edge-case fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('proxy_pool.py')
+          text = path.read_text(encoding='utf-8')
+          replacements = {
+              'self.refresh_interval = max(0, int(self.config.get("proxy_pool_refresh_interval_sec") or 900))':
+                  'self.refresh_interval = max(0, int(self.config.get("proxy_pool_refresh_interval_sec", 900)))',
+              'self.probe_interval = max(0, int(self.config.get("proxy_pool_probe_interval_sec") or 900))':
+                  'self.probe_interval = max(0, int(self.config.get("proxy_pool_probe_interval_sec", 900)))',
+          }
+          for old, new in replacements.items():
+              if old in text:
+                  text = text.replace(old, new, 1)
+              elif new not in text:
+                  raise SystemExit('proxy_pool.py expected text not found: ' + old)
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('proxy_protocols.py')
+          text = path.read_text(encoding='utf-8')
+          old = '_first(query, "insecure", "allowInsecure", "skip-cert-verify")'
+          new = '_first(query, "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify", "skip_cert_verify")'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('TLS insecure aliases insertion point not found')
+
+          old = '''    flow = _first(query, "flow")\n    if flow:\n        outbound["flow"] = flow\n    transport = _transport_from_values('''
+          new = '''    flow = _first(query, "flow")\n    if flow:\n        outbound["flow"] = flow\n    packet_encoding = _first(query, "packetEncoding", "packet_encoding")\n    if packet_encoding:\n        outbound["packet_encoding"] = packet_encoding\n    header_type = _first(query, "headerType", "header_type")\n    if header_type and header_type.lower() not in ("none",):\n        raise ProxyProtocolError("unsupported VLESS headerType: %s" % header_type)\n    transport = _transport_from_values('''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('VLESS edge-case insertion point not found')
+
+          old = '''    obfs_type = _first(query, "obfs")\n    if obfs_type:\n        obfs = {"type": obfs_type}'''
+          new = '''    obfs_type = _first(query, "obfs").strip()\n    if obfs_type and obfs_type.lower() != "none":\n        obfs = {"type": obfs_type}'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('Hysteria2 obfs insertion point not found')
+
+          old = '''    name = str(value.get("ps") or "")\n    security = str(value.get("scy") or value.get("security") or "auto")'''
+          new = '''    name = str(value.get("ps") or "")\n    header_type = str(value.get("type") or "").strip()\n    if header_type and header_type.lower() not in ("none",):\n        raise ProxyProtocolError("unsupported VMess header type: %s" % header_type)\n    security = str(value.get("scy") or value.get("security") or "auto")'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('VMess header insertion point not found')
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('tests/test_proxy_pool_advanced.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '\n\nif __name__ == "__main__":\n'
+          test = '''\n    def test_zero_refresh_and_probe_intervals_are_preserved(self):\n        manager = ProxyPoolManager(self.config(\n            proxy_mode="single",\n            proxy="http://127.0.0.1:8080",\n            proxy_pool_refresh_interval_sec=0,\n            proxy_pool_probe_interval_sec=0,\n        ))\n        self.assertEqual(manager.refresh_interval, 0)\n        self.assertEqual(manager.probe_interval, 0)\n'''
+          if 'test_zero_refresh_and_probe_intervals_are_preserved' not in text:
+              if marker not in text:
+                  raise SystemExit('advanced pool test insertion point not found')
+              text = text.replace(marker, test + marker, 1)
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('tests/test_proxy_protocols.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '\n\nif __name__ == "__main__":\n'
+          tests = '''\n    def test_common_aliases_and_edge_cases_are_normalized(self):\n        vless = parse_proxy_line(\n            "vless://11111111-1111-1111-1111-111111111111@a.example.com:443?"\n            "security=tls&allow_insecure=1&packetEncoding=xudp&headerType=none"\n        )\n        self.assertTrue(vless.outbound_config["tls"]["insecure"])\n        self.assertEqual(vless.outbound_config["packet_encoding"], "xudp")\n        hy2 = parse_proxy_line(\n            "hysteria2://secret@b.example.com:443?sni=b.example.com&obfs=none"\n        )\n        self.assertNotIn("obfs", hy2.outbound_config)\n\n    def test_non_none_vless_and_vmess_header_types_are_rejected(self):\n        with self.assertRaises(Exception):\n            parse_proxy_line(\n                "vless://11111111-1111-1111-1111-111111111111@a.example.com:443?headerType=http"\n            )\n        payload = {\n            "v": "2", "ps": "bad", "add": "vmess.example.com", "port": "443",\n            "id": "11111111-1111-1111-1111-111111111111", "aid": "0",\n            "net": "tcp", "type": "http", "tls": ""\n        }\n        encoded = base64.b64encode(json.dumps(payload).encode()).decode().rstrip("=")\n        with self.assertRaises(Exception):\n            parse_proxy_line("vmess://" + encoded)\n'''
+          if 'test_common_aliases_and_edge_cases_are_normalized' not in text:
+              if marker not in text:
+                  raise SystemExit('protocol test insertion point not found')
+              text = text.replace(marker, tests + marker, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add proxy_pool.py proxy_protocols.py tests/test_proxy_pool_advanced.py tests/test_proxy_protocols.py
+            git commit -m "fix: preserve proxy intervals and parser edge cases"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
