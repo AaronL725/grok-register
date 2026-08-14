@@ -1,11 +1,14 @@
 import base64
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from app_config import DEFAULT_CONFIG, validate_config_structure, validate_run_requirements
 from proxy_pool import (
-    ProxyAcquireCancelled, ProxyPoolManager, parse_proxy_source, safe_proxy_error_text,
+    ProxyAcquireCancelled, ProxyPoolManager, classify_proxy_network_error,
+    parse_proxy_source, safe_proxy_error_text,
 )
 
 
@@ -59,24 +62,77 @@ class ProxyPoolTests(unittest.TestCase):
         manager.report_transport_failure(lease, RuntimeError("proxy connect failed"))
         state = manager.snapshot()["nodes"][0]
         self.assertAlmostEqual(state["health"], 0.7)
+        self.assertEqual(state["business_samples"], 1)
         self.assertEqual(state["failure_count"], 1)
         self.assertGreaterEqual(state["cooldown_sec"], 29)
         manager.release(lease)
 
-    def test_rotating_gateway_does_not_cool_entire_node(self):
+    def test_rotating_gateway_uses_runtime_endpoint_without_global_cooldown(self):
         manager = ProxyPoolManager(self._config(
             proxy_mode="single",
             proxy="http://user-{account}:pass@127.0.0.1:8001",
             proxy_pool_endpoint_mode="auto",
+            proxy_pool_probe_interval_sec=0,
         ))
-        lease = manager.acquire("a", "worker", 1, 1, "abc123", timeout=1)
-        self.assertIn("user-abc123", lease.proxy_url)
-        manager.report_transport_failure(lease, RuntimeError("proxy connect failed"))
+        with patch.object(
+            manager._runtime, "acquire", return_value=("http://127.0.0.1:32100", "bridge-key")
+        ) as acquire, patch.object(manager._runtime, "release") as release:
+            lease = manager.acquire("a", "worker", 1, 1, "abc123", timeout=1)
+            self.assertEqual(lease.proxy_url, "http://127.0.0.1:32100")
+            self.assertEqual(acquire.call_count, 1)
+            manager.report_transport_failure(lease, RuntimeError("proxy connect failed"))
+            state = manager.snapshot()["nodes"][0]
+            self.assertTrue(state["rotating"])
+            self.assertEqual(state["failure_count"], 0)
+            self.assertEqual(state["cooldown_sec"], 0)
+            manager.release(lease)
+            release.assert_called_once_with("bridge-key")
+
+    def test_probe_failure_does_not_change_business_health(self):
+        manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=0))
+        node_id = manager.snapshot()["nodes"][0]["id"]
+        with patch("proxy_pool.requests.get", side_effect=RuntimeError("TLS connect error")):
+            result = manager.probe_node(node_id)
         state = manager.snapshot()["nodes"][0]
-        self.assertTrue(state["rotating"])
+        self.assertEqual(result["status"], "unhealthy")
+        self.assertEqual(state["health"], 1.0)
+        self.assertEqual(state["business_samples"], 0)
+        self.assertEqual(state["probe_status"], "unhealthy")
+        self.assertIn("TLS connect error", state["probe_error"])
+
+    def test_healthy_probe_repairs_transport_failure_only(self):
+        manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=0))
+        manager._schedule_failure_probe = lambda _node_id: None
+        lease = manager.acquire("a", "worker", 1, 1, "session", timeout=1)
+        manager.report_transport_failure(lease, RuntimeError("proxy connect failed"))
+        response = Mock(status_code=200, text="ip=203.0.113.9\n")
+        with patch("proxy_pool.requests.get", return_value=response):
+            manager.probe_node(lease.node_id)
+        state = manager.snapshot()["nodes"][0]
+        self.assertEqual(state["probe_status"], "healthy")
+        self.assertEqual(state["health"], 1.0)
         self.assertEqual(state["failure_count"], 0)
         self.assertEqual(state["cooldown_sec"], 0)
         manager.release(lease)
+
+    def test_suspected_failure_is_penalized_only_after_failed_probe(self):
+        manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://127.0.0.1:8001", proxy_pool_probe_interval_sec=0))
+        lease = manager.acquire("a", "worker", 1, 1, "session", timeout=1)
+        with patch.object(manager, "probe_node", return_value={"status": "unhealthy", "error": "probe failed"}):
+            manager.report_suspected_transport_failure(lease, RuntimeError("TLS connect error"))
+            deadline = time.time() + 2
+            while time.time() < deadline and manager.snapshot()["nodes"][0]["failure_count"] == 0:
+                time.sleep(0.02)
+        state = manager.snapshot()["nodes"][0]
+        self.assertEqual(state["failure_count"], 1)
+        self.assertAlmostEqual(state["health"], 0.7)
+        manager.release(lease)
+
+    def test_error_classifier_separates_compatibility_and_transport(self):
+        self.assertEqual(classify_proxy_network_error("unknown url type: socks5"), "compatibility")
+        self.assertEqual(classify_proxy_network_error("SOCKS5 authentication failed"), "hard")
+        self.assertEqual(classify_proxy_network_error("TLS connect error: handshake"), "suspected")
+        self.assertEqual(classify_proxy_network_error("HTTP 401"), "application")
 
     def test_snapshot_exposes_proxy_credentials(self):
         manager = ProxyPoolManager(self._config(proxy_mode="single", proxy="http://secret:password@127.0.0.1:8001"))

@@ -32,16 +32,18 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
                 release.assert_called_once_with("runtime-key")
             self.assertEqual(manager.snapshot()["nodes"][0]["inflight"], 0)
 
-    def test_native_node_never_starts_advanced_runtime(self):
+    def test_native_socks_node_is_normalized_through_shared_runtime(self):
         manager = ProxyPoolManager(self.config(
             proxy_mode="single", proxy="socks5://user:pass@127.0.0.1:1080", proxy_pool_probe_interval_sec=0,
         ))
-        with patch.object(manager._runtime, "acquire") as acquire:
+        with patch.object(manager._runtime, "acquire", return_value=("http://127.0.0.1:32111", "bridge-key")) as acquire, patch.object(manager._runtime, "release") as release:
             lease = manager.acquire("a", "worker", 1, 1, "session", timeout=1)
-        acquire.assert_not_called()
-        self.assertTrue(lease.proxy_url.startswith("socks5://"))
-        self.assertEqual(lease.protocol, "socks5")
-        manager.release(lease)
+            self.assertEqual(lease.proxy_url, "http://127.0.0.1:32111")
+            self.assertEqual(lease.protocol, "socks5")
+            self.assertEqual(lease.runtime_key, "bridge-key")
+            acquire.assert_called_once()
+            manager.release(lease)
+            release.assert_called_once_with("bridge-key")
 
     def test_advanced_probe_uses_runtime_and_releases_it(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -84,8 +86,14 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
             ))
             vless = next(node for node in manager._nodes.values() if node.protocol == "vless")
             http = next(node for node in manager._nodes.values() if node.protocol == "http")
+
+            def acquire(descriptor):
+                if descriptor.protocol == "vless":
+                    raise RuntimeError("sing-box unavailable")
+                return descriptor.canonical_uri, None
+
             with patch.object(manager, "_select_locked", side_effect=[vless, http]), patch.object(
-                manager._runtime, "acquire", side_effect=RuntimeError("sing-box unavailable")
+                manager._runtime, "acquire", side_effect=acquire
             ):
                 lease = manager.acquire("pick-vless", "worker", 1, 1, "session", timeout=1)
             self.assertEqual(lease.protocol, "http")

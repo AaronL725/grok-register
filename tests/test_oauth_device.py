@@ -66,6 +66,10 @@ class OAuthDeviceTests(unittest.TestCase):
         self.assertEqual(result.refresh_token, "r")
         self.assertEqual(waits, [6])
 
+    def test_raw_socks_proxy_fails_fast_with_actionable_message(self):
+        with self.assertRaisesRegex(oauth.OAuthDeviceError, "HTTP-compatible proxy endpoint"):
+            oauth._build_opener("socks5://127.0.0.1:1080")
+
 
 if __name__ == "__main__":
     unittest.main()

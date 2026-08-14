@@ -29,12 +29,27 @@ class FakeProcess:
 
 
 class ProtocolRuntimeTests(unittest.TestCase):
-    def test_native_descriptor_returns_direct_endpoint_without_process(self):
+    def test_plain_http_descriptor_returns_direct_endpoint_without_runtime(self):
         manager = ProtocolRuntimeManager({"proxy_protocol_backend": "auto"})
-        node = parse_proxy_line("socks5://user:pass@127.0.0.1:1080")
+        node = parse_proxy_line("http://127.0.0.1:8080")
         endpoint, key = manager.acquire(node)
         self.assertEqual(endpoint, node.canonical_uri)
         self.assertIsNone(key)
+        self.assertEqual(manager.active_snapshot(), {})
+
+    def test_socks_descriptor_is_normalized_to_local_http_endpoint(self):
+        manager = ProtocolRuntimeManager({"proxy_protocol_backend": "auto"})
+        node = parse_proxy_line("socks5://user:pass@127.0.0.1:1080")
+        endpoint, key = manager.acquire(node)
+        try:
+            self.assertTrue(endpoint.startswith("http://127.0.0.1:"))
+            self.assertEqual(key, node.node_id)
+            state = manager.active_snapshot()[key]
+            self.assertEqual(state["kind"], "bridge")
+            self.assertTrue(state["alive"])
+            self.assertEqual(state["refcount"], 1)
+        finally:
+            manager.release(key)
         self.assertEqual(manager.active_snapshot(), {})
 
     def test_build_config_exposes_local_http_and_advanced_outbound(self):
@@ -74,8 +89,14 @@ class ProtocolRuntimeTests(unittest.TestCase):
         except FileNotFoundError:
             pass
 
-    def test_native_only_rejects_advanced_protocols(self):
+    def test_native_only_allows_native_bridge_but_rejects_advanced_protocols(self):
         manager = ProtocolRuntimeManager({"proxy_protocol_backend": "native-only"})
+        socks = parse_proxy_line("socks5://127.0.0.1:1080")
+        endpoint, key = manager.acquire(socks)
+        try:
+            self.assertTrue(endpoint.startswith("http://127.0.0.1:"))
+        finally:
+            manager.release(key)
         node = parse_proxy_line("trojan://secret@a.example.com:443?sni=a.example.com")
         with self.assertRaises(ProxyRuntimeError):
             manager.acquire(node)

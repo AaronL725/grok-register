@@ -13,9 +13,8 @@ from typing import Optional
 
 from curl_cffi import requests
 
-from proxy_protocol_runtime import ProtocolRuntimeManager, ProxyRuntimeError
+from proxy_protocol_runtime import ProtocolRuntimeManager
 from proxy_protocols import (
-    NATIVE_SCHEMES,
     ProxyDescriptor,
     ProxyProtocolError,
     parse_proxy_line,
@@ -57,12 +56,14 @@ class ProxyNode:
     enabled: bool = True
     rotating: bool = False
     health: float = 1.0
+    business_samples: int = 0
     failure_count: int = 0
     cooldown_until: Optional[float] = None
     last_error: str = ""
     probe_status: str = "unknown"
     last_probed_at: Optional[float] = None
     probe_latency_ms: int = 0
+    probe_error: str = ""
     exit_ip: str = ""
     inflight: int = 0
     retired: bool = False
@@ -140,15 +141,38 @@ def _expand_account_placeholder(proxy_url, session_key):
     return proxy_url.replace("{account}", session_key)
 
 
-def _is_transport_error_text(value):
+def classify_proxy_network_error(value):
+    """Classify an error without turning application failures into node failures."""
     text = str(value or "").lower()
-    markers = (
-        "err_proxy", "proxy connection", "proxy server", "proxy authentication",
-        "proxy connect", "tunnel connection", "tunnel failed", "socks",
-        "connection refused", "connection reset", "failed to connect",
-        "could not connect", "connect error", "timed out", "timeout",
+    if not text:
+        return "application"
+    compatibility = (
+        "unknown url type", "unsupported proxy scheme", "http-compatible proxy endpoint",
+        "does not support scheme", "代理协议不受", "proxy scheme is unsupported",
     )
-    return any(marker in text for marker in markers)
+    if any(marker in text for marker in compatibility):
+        return "compatibility"
+    hard = (
+        "proxy authentication", "proxy auth", "socks5 authentication", "socks4 connect failed",
+        "socks5 connect failed", "proxy connection failed", "proxy server refused",
+        "tunnel connection failed", "could not connect to proxy", "failed to connect to proxy",
+        "local proxy bridge", "err_proxy_connection_failed", "err_tunnel_connection_failed",
+    )
+    if any(marker in text for marker in hard):
+        return "hard"
+    suspected = (
+        "tls connect error", "ssl", "handshake", "unexpected eof", "unexpected_eof",
+        "connection reset", "connection aborted", "remote end closed", "broken pipe",
+        "timed out", "timeout", "temporarily unavailable", "network is unreachable",
+        "connection refused", "connect error", "failed to connect", "could not connect",
+    )
+    if any(marker in text for marker in suspected):
+        return "suspected"
+    return "application"
+
+
+def _is_transport_error_text(value):
+    return classify_proxy_network_error(value) in ("hard", "suspected")
 
 
 def is_proxy_transport_exception(exc):
@@ -393,20 +417,31 @@ class ProxyPoolManager:
             return selected
         return max(nodes, key=lambda value: (value.health, -value.inflight, value.id))
 
+    def _descriptor_for_session(self, descriptor, session_key):
+        if descriptor.backend != "native" or "{account}" not in descriptor.canonical_uri:
+            return descriptor
+        expanded = _expand_account_placeholder(descriptor.canonical_uri, session_key)
+        try:
+            return parse_proxy_line(expanded)
+        except ProxyProtocolError as exc:
+            raise ProxyPoolError(str(exc)) from exc
+
     def _fallback_lease_locked(self, worker_key, slot_index, attempt_index, affinity, session_key):
         if self.fallback == "direct":
             return ProxyLease("direct", "", worker_key, slot_index, attempt_index, affinity, session_key, protocol="direct")
         if self.fallback == "single":
             proxy_url = normalize_proxy_url(self.config.get("proxy"))
             if proxy_url:
-                endpoint = _expand_account_placeholder(proxy_url, session_key)
-                return ProxyLease("fallback-single", endpoint, worker_key, slot_index, attempt_index, affinity, session_key, source_uri=proxy_url, protocol=urllib.parse.urlsplit(proxy_url).scheme)
+                descriptor = parse_proxy_line(_expand_account_placeholder(proxy_url, session_key))
+                endpoint, runtime_key = self._runtime.acquire(descriptor)
+                return ProxyLease(
+                    "fallback-single", endpoint, worker_key, slot_index, attempt_index, affinity, session_key,
+                    source_uri=proxy_url, protocol=descriptor.protocol, runtime_key=runtime_key,
+                )
         return None
 
     def _resolve_node_endpoint(self, node, session_key):
-        descriptor = node.descriptor
-        if descriptor.backend == "native":
-            return _expand_account_placeholder(descriptor.canonical_uri, session_key), None
+        descriptor = self._descriptor_for_session(node.descriptor, session_key)
         return self._runtime.acquire(descriptor)
 
     def _rollback_runtime_failure(self, node_id, error):
@@ -416,6 +451,7 @@ class ProxyPoolManager:
                 node.inflight = max(0, node.inflight - 1)
                 node.enabled = False
                 node.probe_status = "unavailable"
+                node.probe_error = safe_proxy_error_text(error)[:300]
                 node.last_error = "backend: %s" % safe_proxy_error_text(error)[:300]
             self._condition.notify_all()
 
@@ -493,11 +529,12 @@ class ProxyPoolManager:
             node = self._nodes.get(lease.node_id)
             if node is None:
                 return
+            node.business_samples += 1
             node.health = min(1.0, node.health + 0.1)
             node.failure_count = 0
             node.cooldown_until = None
-            node.last_error = ""
-            node.probe_status = "healthy" if node.probe_status == "unavailable" else node.probe_status
+            if not node.last_error.startswith("backend:"):
+                node.last_error = ""
             self._condition.notify_all()
 
     def report_soft_failure(self, lease, error):
@@ -508,17 +545,16 @@ class ProxyPoolManager:
             if node is not None:
                 node.last_error = "soft: %s" % safe_proxy_error_text(error)[:300]
 
-    def report_transport_failure(self, lease, error):
-        if lease is None or lease.node_id in ("direct", "fallback-single"):
-            return
+    def _apply_transport_failure(self, node_id, error, schedule_probe=True):
         node_for_probe = None
         with self._condition:
-            node = self._nodes.get(lease.node_id)
+            node = self._nodes.get(node_id)
             if node is None:
                 return
             if node.rotating:
                 node.last_error = "transport: rotating exit"
                 return
+            node.business_samples += 1
             node.failure_count += 1
             node.health = max(0.05, node.health * 0.7)
             exponent = min(max(node.failure_count - 1, 0), 4)
@@ -527,8 +563,18 @@ class ProxyPoolManager:
             node.last_error = "transport"
             node_for_probe = node.id
             self._condition.notify_all()
-        if node_for_probe:
+        if node_for_probe and schedule_probe:
             self._schedule_failure_probe(node_for_probe)
+
+    def report_transport_failure(self, lease, error):
+        if lease is None or lease.node_id in ("direct", "fallback-single"):
+            return
+        self._apply_transport_failure(lease.node_id, error, schedule_probe=True)
+
+    def report_suspected_transport_failure(self, lease, error):
+        if lease is None or lease.node_id in ("direct", "fallback-single"):
+            return
+        self._schedule_failure_probe(lease.node_id, penalize_on_failure=True, suspected_error=error)
 
     def _probe_endpoint(self):
         if self.probe_provider == "ipinfo":
@@ -561,10 +607,8 @@ class ProxyPoolManager:
         exit_ip = ""
         error = ""
         try:
-            if descriptor.backend == "native":
-                proxy_url = _expand_account_placeholder(descriptor.canonical_uri, session_key)
-            else:
-                proxy_url, runtime_key = self._runtime.acquire(descriptor)
+            resolved_descriptor = self._descriptor_for_session(descriptor, session_key)
+            proxy_url, runtime_key = self._runtime.acquire(resolved_descriptor)
             response = requests.get(
                 self._probe_endpoint(),
                 proxies={"http": proxy_url, "https": proxy_url},
@@ -587,21 +631,22 @@ class ProxyPoolManager:
                 node.probe_status = status
                 node.last_probed_at = time.time()
                 node.probe_latency_ms = latency
-                node.exit_ip = exit_ip
+                node.probe_error = error[:300] if status != "healthy" else ""
+                node.exit_ip = exit_ip if status == "healthy" else ""
                 if status == "healthy":
                     node.enabled = True
-                    node.health = max(node.health, 0.8)
+                    # A connectivity probe is not a business-health sample.
+                    # It only repairs a state that was explicitly caused by a
+                    # transport/backend failure.
                     if node.last_error == "transport" or node.last_error.startswith("backend:"):
                         node.health = 1.0
                         node.failure_count = 0
                         node.cooldown_until = None
                         node.last_error = ""
-                elif not node.rotating:
-                    node.last_error = node.last_error or ("probe: %s" % error[:300])
                 self._condition.notify_all()
         return {"id": node_id, "status": status, "latency_ms": latency, "exit_ip": exit_ip, "error": error}
 
-    def _schedule_failure_probe(self, node_id):
+    def _schedule_failure_probe(self, node_id, penalize_on_failure=False, suspected_error=None):
         with self._lock:
             existing = self._probe_events.get(node_id)
             if existing is not None and not existing.is_set():
@@ -610,10 +655,14 @@ class ProxyPoolManager:
             self._probe_events[node_id] = event
 
         def runner():
+            result = None
             try:
-                self.probe_node(node_id)
+                result = self.probe_node(node_id)
+                if penalize_on_failure and result.get("status") != "healthy":
+                    self._apply_transport_failure(node_id, suspected_error or result.get("error") or "probe failed", schedule_probe=False)
             except Exception:
-                pass
+                if penalize_on_failure:
+                    self._apply_transport_failure(node_id, suspected_error or "probe failed", schedule_probe=False)
             finally:
                 event.set()
                 with self._lock:
@@ -659,11 +708,13 @@ class ProxyPoolManager:
                     "enabled": bool(node.enabled),
                     "rotating": bool(node.rotating),
                     "health": round(float(node.health), 3),
+                    "business_samples": int(node.business_samples),
                     "failure_count": int(node.failure_count),
                     "cooldown_sec": cooldown,
                     "last_error": str(node.last_error or "")[:300],
                     "probe_status": node.probe_status,
                     "probe_latency_ms": int(node.probe_latency_ms or 0),
+                    "probe_error": str(node.probe_error or "")[:300],
                     "exit_ip": node.exit_ip,
                     "inflight": int(node.inflight),
                     "retired": bool(node.retired),
@@ -771,6 +822,13 @@ def report_current_transport_failure(error):
     if lease is None:
         return
     get_manager().report_transport_failure(lease, error)
+
+
+def report_current_suspected_transport_failure(error):
+    lease = current_proxy_lease()
+    if lease is None:
+        return
+    get_manager().report_suspected_transport_failure(lease, error)
 
 
 def manager_snapshot(config=None):

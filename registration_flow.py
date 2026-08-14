@@ -7,9 +7,12 @@ from app_config import config as app_config
 from proxy_pool import (
     ProxyAcquireCancelled,
     ProxyPoolError,
+    ProxyTransportError,
     begin_registration_slot,
+    classify_proxy_network_error,
     current_proxy_lease,
     end_registration_slot,
+    get_manager,
     is_proxy_transport_exception,
 )
 
@@ -51,6 +54,8 @@ class RegistrationResult:
     profile: Dict[str, Any] = field(default_factory=dict)
     error: str = ""
     retryable: bool = False
+    proxy_feedback_kind: str = "application"
+    proxy_feedback_error: str = ""
 
 
 @dataclass
@@ -83,11 +88,30 @@ class BatchResult:
     results: list = field(default_factory=list)
 
 
+def _stronger_feedback(current_kind, current_error, candidate_error):
+    candidate_kind = classify_proxy_network_error(candidate_error)
+    priority = {"application": 0, "compatibility": 0, "suspected": 1, "hard": 2}
+    if priority.get(candidate_kind, 0) > priority.get(current_kind, 0):
+        return candidate_kind, str(candidate_error or "")
+    return current_kind, current_error
+
+
+def _feedback_from_output(account, output):
+    kind = str(getattr(account, "proxy_feedback_kind", "application") or "application")
+    error = str(getattr(account, "proxy_feedback_error", "") or "")
+    cpa = output.cpa if output is not None and isinstance(output.cpa, dict) else {}
+    if cpa and not cpa.get("skipped") and not cpa.get("ok"):
+        kind, error = _stronger_feedback(kind, error, cpa.get("error") or "")
+    return kind, error
+
+
 def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
     email = ""
     dev_token = ""
     code = ""
     mail_ok = False
+    proxy_feedback_kind = "application"
+    proxy_feedback_error = ""
     for mail_try in range(1, max_mail_retry + 1):
         if callbacks.cancelled():
             raise ops.cancelled_exception()
@@ -128,14 +152,22 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
                 callbacks.log(f"[+] NSFW 开启成功: {nsfw_msg}")
             else:
                 callbacks.log(f"[!] NSFW 未开启，继续保存账号: {nsfw_msg}")
+                proxy_feedback_kind, proxy_feedback_error = _stronger_feedback(
+                    proxy_feedback_kind, proxy_feedback_error, nsfw_msg
+                )
         except Exception as exc:
             callbacks.log(f"[!] NSFW 开启异常，继续保存账号: {exc}")
+            proxy_feedback_kind, proxy_feedback_error = _stronger_feedback(
+                proxy_feedback_kind, proxy_feedback_error, exc
+            )
     return RegistrationResult(
         ok=True,
         email=email,
         password=str(profile.get("password") or ""),
         sso=sso,
         profile=profile,
+        proxy_feedback_kind=proxy_feedback_kind,
+        proxy_feedback_error=proxy_feedback_error,
     )
 
 
@@ -380,6 +412,16 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                     max_mail_retry=settings.max_mail_retry,
                 )
                 output = persist_account_result(account, callbacks, ops)
+                feedback_kind, feedback_error = _feedback_from_output(account, output)
+                lease = current_proxy_lease()
+                if lease is not None and feedback_kind == "hard":
+                    transport_error = ProxyTransportError(feedback_error or "postprocess proxy failure")
+                    callbacks.log("[!] 后处理确认代理传输失败，节点将进入失败反馈/冷却")
+                elif lease is not None and feedback_kind == "suspected":
+                    get_manager().report_suspected_transport_failure(lease, feedback_error)
+                    callbacks.log("[*] 后处理出现可疑网络错误，已安排当前节点立即复测")
+                elif feedback_kind == "compatibility":
+                    callbacks.log("[Debug] 后处理属于本地网络组件兼容错误，不计入代理节点健康度")
                 slot_success = bool(account and account.ok)
                 retry_count_for_slot = 0
                 last_cleanup_success_count = _record_success(
@@ -421,8 +463,6 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                         retry_count_for_slot = 0
                         callbacks.log(f"[-] 当前账号代理重试达到上限，跳过: {exc}")
                 else:
-                    # Once inside an account attempt, non-proxy failures retain
-                    # the same statistics as the historical in-loop behavior.
                     result.fail_count += 1
                     result.processed_count += 1
                     retry_count_for_slot = 0

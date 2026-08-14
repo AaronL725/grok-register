@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from filelock import FileLock
+from proxy_bridge import http_compatible_proxy
 from proxy_pool import current_proxy_url
 
 _ROOT = Path(__file__).resolve().parent
@@ -161,17 +162,22 @@ def export_cpa_xai_for_account(email, password, page=None, cookies=None, sso=Non
 
     settings.auth_dir.mkdir(parents=True, exist_ok=True)
     log("[cpa] mint OIDC for %s -> %s" % (email, settings.auth_dir))
-    result = mint_and_export(
-        email=email, password=password, auth_dir=settings.auth_dir,
-        page=None if settings.force_standalone else page,
-        proxy=settings.proxy or None, headless=settings.headless,
-        base_url=settings.base_url, browser_timeout_sec=settings.mint_timeout,
-        force_standalone=settings.force_standalone, cookies=use_cookies,
-        reuse_browser=True, recycle_every=15,
-        log=lambda message: log("[cpa] %s" % message), cancel=cancel_callback,
-        request_timeout_sec=settings.request_timeout,
-        poll_timeout_sec=settings.poll_timeout,
-    )
+    try:
+        with http_compatible_proxy(settings.proxy or None, log=lambda message: log("[cpa] %s" % message)) as compatible_proxy:
+            result = mint_and_export(
+                email=email, password=password, auth_dir=settings.auth_dir,
+                page=None if settings.force_standalone else page,
+                proxy=compatible_proxy or None, headless=settings.headless,
+                base_url=settings.base_url, browser_timeout_sec=settings.mint_timeout,
+                force_standalone=settings.force_standalone, cookies=use_cookies,
+                reuse_browser=True, recycle_every=15,
+                log=lambda message: log("[cpa] %s" % message), cancel=cancel_callback,
+                request_timeout_sec=settings.request_timeout,
+                poll_timeout_sec=settings.poll_timeout,
+            )
+    except Exception as exc:
+        result = {"ok": False, "email": email, "error": str(exc)}
+        log("[cpa] proxy/mint failed: %s" % exc)
     result = _normalize_result(result, email)
     if result.get("ok") and result.get("path") and settings.copy_to_hotload and settings.hotload_dir:
         try:
