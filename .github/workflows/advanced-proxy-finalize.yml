@@ -1,0 +1,116 @@
+name: advanced-proxy-finalize
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Add compact advanced-protocol GUI controls
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('grok_register_ttk.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''        self.proxy_test_btn = tk_button(config_frame, text="测试代理池", command=self.test_proxy_pool)\n        add_field(self.proxy_test_btn, 18, 3, sticky=tk.W)\n\n        btn_frame = tk.Frame(main_frame, bg=UI_BG)'''
+          new = '''        self.proxy_test_btn = tk_button(config_frame, text="测试代理池", command=self.test_proxy_pool)\n        add_field(self.proxy_test_btn, 18, 3, sticky=tk.W)\n\n        add_label(19, 0, "高级协议后端:")\n        self.proxy_protocol_backend_var = tk.StringVar(value=str(config.get("proxy_protocol_backend", "auto")))\n        self.proxy_protocol_backend_combo = tk_option_menu(config_frame, self.proxy_protocol_backend_var, ["auto", "sing-box", "native-only"], width=12)\n        add_field(self.proxy_protocol_backend_combo, 19, 1, sticky=tk.W)\n        add_label(19, 2, "sing-box 路径:")\n        self.proxy_singbox_path_var = tk.StringVar(value=str(config.get("proxy_singbox_path", "")))\n        self.proxy_singbox_path_entry = tk_entry(config_frame, textvariable=self.proxy_singbox_path_var, width=34)\n        add_field(self.proxy_singbox_path_entry, 19, 3)\n\n        add_label(20, 0, "协议启动超时(秒):")\n        self.proxy_protocol_start_timeout_var = tk.StringVar(value=str(config.get("proxy_protocol_start_timeout_sec", 10)))\n        self.proxy_protocol_start_timeout_spinbox = tk.Spinbox(config_frame, from_=3, to=60, width=8, textvariable=self.proxy_protocol_start_timeout_var, bg=UI_ENTRY_BG, fg=UI_FG, insertbackground=UI_FG, buttonbackground=UI_BUTTON_BG, relief=tk.SOLID)\n        add_field(self.proxy_protocol_start_timeout_spinbox, 20, 1, sticky=tk.W)\n\n        btn_frame = tk.Frame(main_frame, bg=UI_BG)'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('GUI control insertion point not found')
+
+          old = '''                    "proxy_pool_endpoint_mode": self.proxy_endpoint_mode_var.get().strip() or "auto",\n                    "proxy_pool_max_concurrent_per_node": int(self.proxy_capacity_var.get()),\n                })'''
+          new = '''                    "proxy_pool_endpoint_mode": self.proxy_endpoint_mode_var.get().strip() or "auto",\n                    "proxy_pool_max_concurrent_per_node": int(self.proxy_capacity_var.get()),\n                    "proxy_protocol_backend": self.proxy_protocol_backend_var.get().strip() or "auto",\n                    "proxy_singbox_path": self.proxy_singbox_path_var.get().strip(),\n                    "proxy_protocol_start_timeout_sec": int(self.proxy_protocol_start_timeout_var.get()),\n                })'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('GUI test candidate insertion point not found')
+
+          old = '''        config["proxy_pool_subscription_url"] = self.proxy_subscription_var.get().strip()\n        config["proxy_pool_endpoint_mode"] = self.proxy_endpoint_mode_var.get().strip() or "auto"\n        config["duckmail_api_key"] = self.api_key_var.get().strip()'''
+          new = '''        config["proxy_pool_subscription_url"] = self.proxy_subscription_var.get().strip()\n        config["proxy_pool_endpoint_mode"] = self.proxy_endpoint_mode_var.get().strip() or "auto"\n        config["proxy_protocol_backend"] = self.proxy_protocol_backend_var.get().strip() or "auto"\n        config["proxy_singbox_path"] = self.proxy_singbox_path_var.get().strip()\n        config["duckmail_api_key"] = self.api_key_var.get().strip()'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('GUI save string insertion point not found')
+
+          old = '''            config["multi_thread_workers"] = int(self.multi_thread_workers_var.get())\n            config["proxy_pool_max_concurrent_per_node"] = int(self.proxy_capacity_var.get())\n            validated = validate_run_requirements(config)'''
+          new = '''            config["multi_thread_workers"] = int(self.multi_thread_workers_var.get())\n            config["proxy_pool_max_concurrent_per_node"] = int(self.proxy_capacity_var.get())\n            config["proxy_protocol_start_timeout_sec"] = int(self.proxy_protocol_start_timeout_var.get())\n            validated = validate_run_requirements(config)'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('GUI timeout save insertion point not found')
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('tests/test_proxy_pool_completion.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''        for marker in ("self.proxy_mode_var", "self.proxy_pool_file_var", "self.proxy_subscription_var", "self.proxy_capacity_var", "def test_proxy_pool(self):"):\n            self.assertIn(marker, source)'''
+          new = '''        for marker in (\n            "self.proxy_mode_var", "self.proxy_pool_file_var", "self.proxy_subscription_var",\n            "self.proxy_capacity_var", "self.proxy_protocol_backend_var",\n            "self.proxy_singbox_path_var", "self.proxy_protocol_start_timeout_var",\n            "def test_proxy_pool(self):",\n        ):\n            self.assertIn(marker, source)\n        self.assertIn('config["proxy_protocol_backend"] = self.proxy_protocol_backend_var.get()', source)\n        self.assertIn('config["proxy_singbox_path"] = self.proxy_singbox_path_var.get()', source)\n        self.assertIn('config["proxy_protocol_start_timeout_sec"] = int(self.proxy_protocol_start_timeout_var.get())', source)'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('GUI regression test insertion point not found')
+          path.write_text(text, encoding='utf-8')
+          PY
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add grok_register_ttk.py tests/test_proxy_pool_completion.py
+            git commit -m "feat: expose advanced proxy runtime in GUI"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-web.txt
+      - name: Compile
+        run: python -m compileall -q .
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Validate generated configs with sing-box
+        run: |
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v1.13.18/sing-box-1.13.18-linux-amd64.tar.gz" -o /tmp/sing-box.tar.gz
+          tar -xzf /tmp/sing-box.tar.gz -C /tmp
+          SINGBOX="/tmp/sing-box-1.13.18-linux-amd64/sing-box"
+          chmod +x "$SINGBOX"
+          SINGBOX="$SINGBOX" python - <<'PY'
+          import base64, json, os, subprocess, tempfile
+          from proxy_protocol_runtime import ProtocolRuntimeManager
+          from proxy_protocols import parse_proxy_line
+          vmess = {"v":"2","ps":"VMess","add":"vmess.example.com","port":"443","id":"11111111-1111-1111-1111-111111111111","aid":"0","scy":"auto","net":"ws","type":"none","host":"cdn.example.com","path":"/ws","tls":"tls","sni":"vmess.example.com"}
+          vmess_uri = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode().rstrip("=")
+          uris = [
+              "vless://11111111-1111-1111-1111-111111111111@vless.example.com:443?security=tls&sni=vless.example.com&type=ws&path=%2Fws#VLESS",
+              vmess_uri,
+              "trojan://secret@trojan.example.com:443?sni=trojan.example.com&type=grpc&serviceName=test#Trojan",
+              "hysteria2://secret@hy2.example.com:443?sni=hy2.example.com&obfs=salamander&obfs-password=test#HY2",
+              "tuic://11111111-1111-1111-1111-111111111111:secret@tuic.example.com:443?sni=tuic.example.com&congestion_control=bbr&udp_relay_mode=native#TUIC",
+          ]
+          manager = ProtocolRuntimeManager({})
+          for index, uri in enumerate(uris, 1):
+              config = manager._build_config(parse_proxy_line(uri), 34000 + index)
+              fd, path = tempfile.mkstemp(suffix='.json')
+              try:
+                  with os.fdopen(fd, 'w', encoding='utf-8') as handle: json.dump(config, handle)
+                  result = subprocess.run([os.environ['SINGBOX'], 'check', '-c', path], capture_output=True, text=True)
+                  if result.returncode: raise SystemExit(result.stderr or result.stdout)
+              finally:
+                  try: os.unlink(path)
+                  except OSError: pass
+          PY
+      - name: WebUI JavaScript syntax
+        run: node --check web/proxy-pool.js
+      - name: Diff whitespace
+        run: git diff --check origin/main...HEAD
