@@ -677,7 +677,6 @@ class ProxyPoolManager:
         with self._condition:
             node = self._nodes.get(node_id)
             if node is None: return
-            self._count_feedback_sample(node, lease)
             node.configuration_failures += 1; node.last_failure_at = time.time(); node.enabled = False
             node.last_error = "configuration: %s" % safe_proxy_error_text(error)[:260]
             self._condition.notify_all()
