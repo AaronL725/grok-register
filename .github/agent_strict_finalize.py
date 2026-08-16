@@ -26,7 +26,16 @@ replace_once(
 # then cross the commit boundary immediately before dispatching those events.
 code_anchor = """    while time.time() < deadline:\n        raise_if_cancelled(cancel_callback)\n        filled = page.run_js(\n"""
 code_probe = """    while time.time() < deadline:\n        raise_if_cancelled(cancel_callback)\n        ready = page.run_js(\n            \"\"\"\nconst code = String(arguments[0] || '').trim();\nif (!code) return 'not-ready';\nfunction isVisible(node) {\n    if (!node) return false;\n    const style = window.getComputedStyle(node);\n    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;\n    const rect = node.getBoundingClientRect();\n    return rect.width > 0 && rect.height > 0;\n}\nconst aggregate = Array.from(document.querySelectorAll(\n  'input[data-input-otp=\\\"true\\\"], input[name=\\\"code\\\"], input[autocomplete=\\\"one-time-code\\\"], input[inputmode=\\\"numeric\\\"], input[inputmode=\\\"text\\\"]'\n)).find((node) => isVisible(node) && !node.disabled && !node.readOnly && Number(node.maxLength || 6) > 1);\nif (aggregate) return 'aggregate';\nconst otpBoxes = Array.from(document.querySelectorAll('input')).filter((node) => {\n    if (!isVisible(node) || node.disabled || node.readOnly) return false;\n    const maxLength = Number(node.maxLength || 0);\n    const ac = String(node.autocomplete || '').toLowerCase();\n    return maxLength === 1 || ac === 'one-time-code';\n});\nreturn otpBoxes.length >= code.length ? 'boxes' : 'not-ready';\n            \"\"\",\n            clean_code,\n        )\n        if ready == \"not-ready\":\n            sleep_with_cancel(0.5, cancel_callback)\n            continue\n        _mark_registration_stage(\"code_submit\")\n        filled = page.run_js(\n"""
-replace_once("registration_browser.py", code_anchor, code_probe)
+p = Path("registration_browser.py")
+source = p.read_text(encoding="utf-8")
+code_start = source.index("def fill_code_and_submit(")
+code_end = source.index("def getTurnstileToken(", code_start)
+segment = source[code_start:code_end]
+if segment.count(code_anchor) != 1:
+    raise SystemExit(f"registration_browser.py code flow: expected one anchor, got {segment.count(code_anchor)}")
+segment = segment.replace(code_anchor, code_probe, 1)
+source = source[:code_start] + segment + source[code_end:]
+p.write_text(source, encoding="utf-8")
 replace_once(
     "registration_browser.py",
     """        _mark_registration_stage(\"code_submit\")\n        clicked = page.run_js(\n""",
