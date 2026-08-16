@@ -15,7 +15,7 @@ p.write_text(source[:start] + segment + source[end:], encoding="utf-8")
 test_path = Path("tests/test_reliability_final_audit.py")
 tests = test_path.read_text(encoding="utf-8")
 old_test = '''    source = pathlib.Path("registration_browser.py").read_text(encoding="utf-8")\n    code = source[source.index("def fill_code_and_submit("):source.index("def getTurnstileToken(")]\n'''
-new_test = '''    source = pathlib.Path("registration_browser.py").read_text(encoding="utf-8")\n    email = source[source.index("def fill_email_and_submit("):source.index("def fill_code_and_submit(")]\n    assert email.index("ready_to_submit = page.run_js") < email.index('_mark_registration_stage("email_submit")') < email.index("clicked = page.run_js")\n    assert email.count('_mark_registration_stage("email_submit")') == 1\n\n    code = source[source.index("def fill_code_and_submit("):source.index("def getTurnstileToken(")]\n'''
+new_test = '''    source = pathlib.Path("registration_browser.py").read_text(encoding="utf-8")\n    email = source[source.index("def fill_email_and_submit("):source.index("def fill_code_and_submit(")]\n    email_ready = email.index("ready_to_submit = page.run_js")\n    email_stage = email.index('_mark_registration_stage("email_submit")', email_ready)\n    email_commit = email.index("clicked = page.run_js", email_stage)\n    assert email_ready < email_stage < email_commit\n    assert email.count('_mark_registration_stage("email_submit")') == 1\n\n    code = source[source.index("def fill_code_and_submit("):source.index("def getTurnstileToken(")]\n'''
 if tests.count(old_test) != 1:
     raise SystemExit(f"strict audit test anchor mismatch: {tests.count(old_test)}")
 test_path.write_text(tests.replace(old_test, new_test, 1), encoding="utf-8")
