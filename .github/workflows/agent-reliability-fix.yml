@@ -51,15 +51,18 @@ jobs:
           ui_end = script.index("# Regression tests specific to this plan.", ui_start)
           ui = textwrap.dedent('''
           # 6: Web UI surfaces uncertain results already returned by the backend.
-          replace_once('web/index.html', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span>结果不确定</span>: <b id="sUncertain">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>')
+          replace_once('web/index.html', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span data-i18n="uncertain">结果不确定</span>: <b id="sUncertain">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>')
           value = text('web/index.html')
-          if 's.uncertain' not in value:
-              value, count = re.subn(r'(document\\.getElementById\\(["\\\']sPending["\\\']\\)\\.textContent\\s*=\\s*s\\.pending\\s*\\|\\|\\s*0\\s*;)', r'\\1\\n  document.getElementById("sUncertain").textContent = s.uncertain || 0;', value, count=1)
-              if count != 1:
-                  raise SystemExit('web pollStatus uncertain insertion failed')
+          replace = "$('sPending').textContent=s.pending||0;"
+          if value.count(replace) != 1:
+              raise SystemExit(f'web pollStatus pending matcher count={value.count(replace)}')
+          value = value.replace(replace, replace + "$('sUncertain').textContent=s.uncertain||0;", 1)
+          value = value.replace("pending:'待恢复',warnings:'警告'", "pending:'待恢复',uncertain:'结果不确定',warnings:'警告'", 1)
+          value = value.replace("pending:'Pending',warnings:'Warnings'", "pending:'Pending',uncertain:'Uncertain',warnings:'Warnings'", 1)
           write('web/index.html', value)
           ''').strip() + '\n\n'
           script = script[:ui_start] + ui + script[ui_end:]
+          script = script.replace("Path('tests/test_reliability_plan_regressions.py').write_text(r'''", "Path('tests/test_reliability_plan_regressions.py').write_text('''", 1)
           Path('/tmp/repair.py').write_text(script, encoding='utf-8')
           PY
           python /tmp/repair.py
