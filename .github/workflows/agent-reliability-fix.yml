@@ -33,14 +33,32 @@ jobs:
           end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
           script = textwrap.dedent('\n'.join(lines[start:end])) + '\n'
           old = '''replace_once('registration_browser.py', '        clicked = page.run_js(\\n            r\"\"\"\\nfunction isVisible(node) {\\n', '        _mark_registration_stage(\"email_submit\")\\n        clicked = page.run_js(\\n            r\"\"\"\\nfunction isVisible(node) {\\n')'''
-          new = '''value = text('registration_browser.py')\n          begin = value.index('def fill_email_and_submit(')\n          end_fn = value.index('def fill_code_and_submit(', begin)\n          segment = value[begin:end_fn]\n          needle = '        clicked = page.run_js(\\n            r\"\"\"\\nfunction isVisible(node) {\\n'\n          if segment.count(needle) != 1:\n              raise SystemExit(f'registration_browser.py: email submit matcher count={segment.count(needle)}')\n          segment = segment.replace(needle, '        _mark_registration_stage(\"email_submit\")\\n' + needle, 1)\n          write('registration_browser.py', value[:begin] + segment + value[end_fn:])'''
+          new = textwrap.dedent('''
+          value = text('registration_browser.py')
+          begin = value.index('def fill_email_and_submit(')
+          end_fn = value.index('def fill_code_and_submit(', begin)
+          segment = value[begin:end_fn]
+          needle = '        clicked = page.run_js(\\n            r\"\"\"\\nfunction isVisible(node) {\\n'
+          if segment.count(needle) != 1:
+              raise SystemExit(f'registration_browser.py: email submit matcher count={segment.count(needle)}')
+          segment = segment.replace(needle, '        _mark_registration_stage(\"email_submit\")\\n' + needle, 1)
+          write('registration_browser.py', value[:begin] + segment + value[end_fn:])
+          ''').strip()
           if old not in script:
               raise SystemExit('unable to locate original email matcher in repair script')
           script = script.replace(old, new, 1)
-          # Keep UI fix deliberately minimal and deterministic: display/update uncertain; existing literal text is retained as fallback.
           ui_start = script.index("# 6: Web UI surfaces uncertain results already returned by the backend.")
           ui_end = script.index("# Regression tests specific to this plan.", ui_start)
-          ui = '''# 6: Web UI surfaces uncertain results already returned by the backend.\nreplace_once('web/index.html', '<span data-i18n=\"pending\">待恢复</span>: <b id=\"sPending\">0</b></span><span><span data-i18n=\"warnings\">警告</span>: <b id=\"sWarnings\">0</b>', '<span data-i18n=\"pending\">待恢复</span>: <b id=\"sPending\">0</b></span><span><span>结果不确定</span>: <b id=\"sUncertain\">0</b></span><span><span data-i18n=\"warnings\">警告</span>: <b id=\"sWarnings\">0</b>')\nvalue = text('web/index.html')\nif 's.uncertain' not in value:\n    value, count = re.subn(r'(document\\.getElementById\\([\"\\\']sPending[\"\\\']\\)\\.textContent\\s*=\\s*s\\.pending\\s*\\|\\|\\s*0\\s*;)', r'\\1\\n  document.getElementById(\"sUncertain\").textContent = s.uncertain || 0;', value, count=1)\n    if count != 1:\n        raise SystemExit('web pollStatus uncertain insertion failed')\nwrite('web/index.html', value)\n\n'''
+          ui = textwrap.dedent('''
+          # 6: Web UI surfaces uncertain results already returned by the backend.
+          replace_once('web/index.html', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span>结果不确定</span>: <b id="sUncertain">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>')
+          value = text('web/index.html')
+          if 's.uncertain' not in value:
+              value, count = re.subn(r'(document\\.getElementById\\(["\\\']sPending["\\\']\\)\\.textContent\\s*=\\s*s\\.pending\\s*\\|\\|\\s*0\\s*;)', r'\\1\\n  document.getElementById("sUncertain").textContent = s.uncertain || 0;', value, count=1)
+              if count != 1:
+                  raise SystemExit('web pollStatus uncertain insertion failed')
+          write('web/index.html', value)
+          ''').strip() + '\n\n'
           script = script[:ui_start] + ui + script[ui_end:]
           Path('/tmp/repair.py').write_text(script, encoding='utf-8')
           PY
