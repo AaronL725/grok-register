@@ -1,0 +1,83 @@
+import pathlib
+
+import registration_parallel
+
+
+def test_isolated_mail_module_receives_shared_domain_allocator():
+    allocator = registration_parallel.DomainAllocator()
+    runtime = {
+        "config": {
+            "defaultDomains": "a.example,b.example,c.example",
+            "cloudmail_domains": "x.example,y.example",
+        },
+        "domain_allocator": allocator,
+    }
+    first = registration_parallel.load_isolated_module(
+        pathlib.Path("mail_service.py"), "_test_mail_allocator_one"
+    )
+    second = registration_parallel.load_isolated_module(
+        pathlib.Path("mail_service.py"), "_test_mail_allocator_two"
+    )
+    first.bind_runtime(runtime)
+    second.bind_runtime(runtime)
+    assert first.cloudflare_next_default_domain() == "a.example"
+    assert second.cloudflare_next_default_domain() == "b.example"
+    assert first.cloudmail_next_domain() == "x.example"
+    assert second.cloudmail_next_domain() == "y.example"
+
+
+def test_sso_wait_source_resets_consecutive_error_streak_after_successful_poll():
+    source = pathlib.Path("registration_browser.py").read_text(encoding="utf-8")
+    start = source.index("def wait_for_sso_cookie(")
+    block = source[start:]
+    assert 'last_consecutive_error_message = ""' in block
+    assert "# A completed polling iteration breaks any previous exception streak." in block
+    assert "if message == last_consecutive_error_message:" in block
+
+
+def test_sing_box_start_retries_after_early_exit_and_cleans_failed_config(monkeypatch, tmp_path):
+    import proxy_protocol_runtime as runtime_mod
+    from types import SimpleNamespace
+
+    manager = runtime_mod.ProtocolRuntimeManager({"proxy_protocol_start_timeout_sec": 3})
+    ports = iter([21001, 21002])
+    paths = []
+
+    class FakeProcess:
+        def __init__(self, exit_code):
+            self.exit_code = exit_code
+        def poll(self):
+            return self.exit_code
+        def terminate(self):
+            pass
+        def wait(self, timeout=None):
+            return self.exit_code
+        def kill(self):
+            self.exit_code = -9
+
+    processes = iter([FakeProcess(1), FakeProcess(None)])
+    monkeypatch.setattr(manager, "_find_executable", lambda: "/fake/sing-box")
+    monkeypatch.setattr(manager, "_free_port", lambda: next(ports))
+    monkeypatch.setattr(manager, "_build_config", lambda descriptor, port: {"port": port})
+
+    def write_config(value):
+        path = tmp_path / f"proxy-{value['port']}.json"
+        path.write_text("{}", encoding="utf-8")
+        paths.append(path)
+        return str(path)
+
+    monkeypatch.setattr(manager, "_write_config", write_config)
+    monkeypatch.setattr(manager, "_check_config", lambda executable, path: None)
+    monkeypatch.setattr(runtime_mod.subprocess, "Popen", lambda *args, **kwargs: next(processes))
+    monkeypatch.setattr(manager, "_port_ready", lambda port: port == 21002)
+
+    descriptor = SimpleNamespace(node_id="node-1", protocol="vmess")
+    entry = manager._start_entry(descriptor)
+    try:
+        assert entry.port == 21002
+        assert len(paths) == 2
+        assert not paths[0].exists()
+        assert paths[1].exists()
+    finally:
+        manager._stop_entry(entry)
+    assert not paths[1].exists()
