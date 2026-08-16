@@ -62,6 +62,7 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
 - 支持 `direct / single / pool` 代理模式、健康检查、冷却、订阅、固定/旋转节点和账号级稳定 Proxy Lease。
 - 代理池可混合解析 **HTTP / HTTPS / SOCKS / VLESS / VMess / Trojan / Hysteria2 / TUIC** 节点。
 - 支持注册后尝试开启 NSFW；失败不会丢失已经注册成功的账号。
+- 支持 SSO 入库前筛查 `botFlagSource` / `policy=deny`；命中后隔离并跳过 grok2api / CPA。
 - 支持把 SSO token 写入 grok2api 本地池或远端池。
 - 支持可选 CPA xAI OIDC 凭证导出与 CLIProxyAPI hotload。
 - 成功账号实时落盘；主结果写入失败时会进入 `*.pending.jsonl`，可稍后幂等恢复。
@@ -76,12 +77,13 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
   → 填写资料
   → 获取 SSO cookie
   → 可选开启 NSFW
+  → SSO 风控筛查（botFlagSource / policy）
   → 保存账号
   → 可选写入 grok2api
   → 可选导出 CPA/OIDC
 ```
 
-> grok2api 入池和 CPA/OIDC 都属于注册后的附加后处理。后处理失败会记录警告，但不会把已经保存成功的账号重新算作注册失败。
+> grok2api 入池和 CPA/OIDC 都属于注册后的附加后处理。后处理失败会记录警告，但不会把已经保存成功的账号重新算作注册失败。SSO 风控命中时不会写入主账号文件，也不会进入 grok2api / CPA。
 
 ## 快速开始
 
@@ -216,6 +218,8 @@ CLI 读取 `config.json`，通过校验后提示：
 | `email_provider` | `duckmail` / `yyds` / `cloudflare` / `cloudmail` |
 | `register_count` | 本批次注册数量 |
 | `enable_nsfw` | 注册后是否尝试开启 NSFW |
+| `sso_risk_gate_enabled` | 入库前是否检查 grok.com `botFlagSource` / `policy=deny`，默认 `true` |
+| `sso_risk_rejected_file` | 被风控隔离的 SSO 记录文件，默认 `./sso_risk_rejected.txt` |
 | `user_agent` | Chromium 和请求使用的 User-Agent |
 | `proxy_mode` | `auto` / `direct` / `single` / `pool` |
 | `proxy` | 单代理地址；`auto` 模式下留空即直连 |
@@ -455,6 +459,7 @@ tuic://...
 | 文件 / 目录 | 内容 |
 | --- | --- |
 | `accounts_*.txt` | 已成功保存的账号、密码和 SSO token |
+| `sso_risk_rejected.txt` | 被 `botFlagSource=1/2` 或 `policy=deny` 隔离的 SSO |
 | `mail_credentials.txt` | 临时邮箱地址与邮箱凭据 |
 | `*.pending.jsonl` | 已注册但主结果文件未成功写入的账号 |
 | 本地 `token.json` | 可选 grok2api 本地 token 池 |
@@ -485,6 +490,7 @@ python grok_register_ttk.py retry-pending <pending文件> [输出文件]
 ├── mail_service.py            # 四种邮箱服务
 ├── app_config.py              # 默认配置、校验、加载与保存
 ├── account_outputs.py         # 账号、pending 与 token 输出
+├── sso_risk.py                # SSO botFlag / policy 早停
 ├── cpa_export.py              # CPA/OIDC 导出入口
 ├── cpa_xai/                   # CPA 浏览器、OAuth、代理桥与凭证写入
 ├── web/

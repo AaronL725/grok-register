@@ -188,6 +188,9 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
             cancelled_exception=runtime_namespace["RegistrationCancelled"],
             retry_exception=runtime_namespace["AccountRetryNeeded"],
             internal_stage_markers=True,
+            screen_sso=lambda sso, email: runtime_namespace["_screen_registered_sso"](
+                sso, email, worker_log
+            ),
         )
 
         def worker_observer(batch, account, output):

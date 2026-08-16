@@ -164,6 +164,7 @@ class OptionalMultithreadTests(unittest.TestCase):
             ),
             "RegistrationCancelled": Cancelled,
             "AccountRetryNeeded": RetryNeeded,
+            "_screen_registered_sso": lambda *_args, **_kwargs: None,
         }
         observed = []
         callbacks = RegistrationCallbacks(log=lambda _message: None, cancelled=lambda: False)

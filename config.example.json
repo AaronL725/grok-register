@@ -35,6 +35,8 @@
   "proxy_pool_subscription_public_only": false,
   "proxy_pool_preflight_enabled": true,
   "enable_nsfw": true,
+  "sso_risk_gate_enabled": true,
+  "sso_risk_rejected_file": "./sso_risk_rejected.txt",
   "register_count": 1,
   "multi_thread_enabled": false,
   "multi_thread_workers": 4,
