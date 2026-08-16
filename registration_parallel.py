@@ -103,10 +103,11 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
             _ROOT / "mail_service.py",
             "_grok_mail_worker_%s_%s" % (worker_id, threading.get_ident()),
         )
-        mail_module.bind_runtime(runtime_namespace)
+        mail_runtime = dict(runtime_namespace)
+        mail_runtime["domain_allocator"] = domain_allocator
+        mail_module.bind_runtime(mail_runtime)
 
-        worker_namespace = dict(runtime_namespace)
-        worker_namespace["domain_allocator"] = domain_allocator
+        worker_namespace = dict(mail_runtime)
         for name in getattr(mail_module, "_OWN_NAMES", set()):
             if hasattr(mail_module, name):
                 worker_namespace[name] = getattr(mail_module, name)

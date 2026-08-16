@@ -1180,6 +1180,7 @@ def wait_for_sso_cookie(timeout=120, log_callback=None, cancel_callback=None):
     last_wait_exception_message = ""
     last_wait_exception_at = 0.0
     consecutive_wait_errors = 0
+    last_consecutive_error_message = ""
     last_wait_exception = None
 
     while time.time() < deadline:
@@ -1303,19 +1304,27 @@ return String(cfInput.value || '').trim().length;
                     if log_callback:
                         log_callback("[*] 已获取到 sso cookie")
                     return value
+            # A completed polling iteration breaks any previous exception streak.
+            consecutive_wait_errors = 0
+            last_consecutive_error_message = ""
         except PageDisconnectedError:
             consecutive_wait_errors = 0
+            last_consecutive_error_message = ""
             refresh_active_page()
         except AccountRetryNeeded:
             raise
         except ProxyTransportError:
             raise
         except Exception as exc:
-            consecutive_wait_errors += 1
             last_wait_exception = exc
+            message = f"{exc.__class__.__name__}: {exc}"
+            if message == last_consecutive_error_message:
+                consecutive_wait_errors += 1
+            else:
+                consecutive_wait_errors = 1
+                last_consecutive_error_message = message
             if log_callback:
                 now = time.time()
-                message = f"{exc.__class__.__name__}: {exc}"
                 if message != last_wait_exception_message or now - last_wait_exception_at >= 10:
                     log_callback(f"[Debug] 等待 sso cookie 时出现异常 ({consecutive_wait_errors}/3): {message}")
                     last_wait_exception_message = message
