@@ -82,7 +82,7 @@ def cloudflare_build_headers(content_type=False):
             headers["X-API-Key"] = key
         elif mode == "x-admin-auth":
             headers["x-admin-auth"] = key
-        elif mode != "none":
+        elif mode not in ("none", "query-key"):
             headers["Authorization"] = f"Bearer {key}"
     return headers
 
@@ -109,13 +109,12 @@ def cloudflare_create_temp_address(api_base):
         payload = {"name": generate_username(10), "enablePrefix": True}
         if domain:
             payload["domain"] = domain
-        headers = cloudflare_build_headers(content_type=True)
     else:
         payload = {}
         if domain:
             payload["domain"] = domain
-        headers = {"Content-Type": "application/json"}
-    resp = http_post(url, json=payload, headers=headers)
+    headers = cloudflare_build_headers(content_type=True)
+    resp = http_post(url, json=payload, headers=headers, params=cloudflare_apply_auth_params())
     resp.raise_for_status()
     try:
         data = resp.json()
@@ -291,6 +290,9 @@ def cloudflare_next_default_domain():
     domains = [x.strip() for x in str(config.get("defaultDomains", "") or "").split(",") if x.strip()]
     if not domains:
         return ""
+    allocator = globals().get("domain_allocator")
+    if allocator is not None:
+        return allocator.next("cloudflare", domains)
     domain = domains[_cf_domain_index % len(domains)]
     _cf_domain_index += 1
     return domain
@@ -331,6 +333,7 @@ def cloudmail_get_messages(address):
         },
         json=payload,
         timeout=20,
+        replay_safe=True,
     )
     resp.raise_for_status()
     try:
@@ -426,6 +429,9 @@ def cloudmail_next_domain():
     ]
     if not domains:
         return ""
+    allocator = globals().get("domain_allocator")
+    if allocator is not None:
+        return allocator.next("cloudmail", domains)
     domain = domains[_cloudmail_domain_index % len(domains)]
     _cloudmail_domain_index += 1
     return domain
@@ -903,6 +909,12 @@ class CloudflareMailClient:
         raw = (path or default_path).strip() or default_path
         return raw if raw.startswith("/") else "/" + raw
 
+    def build_auth_params(self, params=None):
+        merged = dict(params or {})
+        if self.api_key and self.auth_mode == "query-key":
+            merged["key"] = self.api_key
+        return merged
+
     def build_auth_headers(self, content_type=False):
         headers = {"Content-Type": "application/json"} if content_type else {}
         if not self.api_key:
@@ -933,7 +945,8 @@ class CloudflareMailClient:
             headers = self.build_auth_headers(content_type=True)
         elif str(domain).strip():
             payload["domain"] = str(domain).strip()
-        response = requests.post(self.api_base + self.create_path, json=payload, headers=headers, timeout=self.timeout)
+        headers = self.build_auth_headers(content_type=True)
+        response = requests.post(self.api_base + self.create_path, json=payload, headers=headers, params=self.build_auth_params(), timeout=self.timeout)
         response.raise_for_status()
         data, raw = self.json_or_text(response)
         if not data:

@@ -114,6 +114,9 @@ def _require_string(cfg, key, path=False):
 def validate_config_structure(raw):
     if not isinstance(raw, dict):
         raise ConfigError("config root must be a JSON object")
+    unknown = sorted(set(raw) - set(DEFAULT_CONFIG))
+    if unknown:
+        raise ConfigError("未知配置项: " + ", ".join(unknown))
     cfg = {**DEFAULT_CONFIG, **raw}
     bool_keys = (
         "enable_nsfw", "grok2api_auto_add_local", "grok2api_auto_add_remote",

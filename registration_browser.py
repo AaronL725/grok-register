@@ -7,7 +7,7 @@ import struct
 import time
 
 from DrissionPage import Chromium
-from DrissionPage.errors import PageDisconnectedError
+from DrissionPage.errors import ContextLostError, JavaScriptError, PageDisconnectedError
 from curl_cffi import requests
 from proxy_pool import ProxyTransportError, safe_proxy_error_text
 
@@ -17,6 +17,12 @@ browser_proxy_bridge = None
 browser_started_with_proxy = False
 cf_clearance = ""
 SIGNUP_URL = "https://accounts.x.ai/sign-up?redirect=grok-com"
+
+
+def _mark_registration_stage(stage):
+    # Function-local import avoids an import-time cycle while keeping the browser module reusable.
+    from registration_flow import _set_registration_stage
+    return _set_registration_stage(stage)
 
 
 def _managed_proxy_mode():
@@ -593,6 +599,36 @@ return candidates[0].text || true;
             sleep_with_cancel(0.5, cancel_callback)
             continue
         sleep_with_cancel(0.8, cancel_callback)
+        ready_to_submit = page.run_js(
+            r"""
+function isVisible(node) {
+    if (!node) return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+function textOf(node) {
+    return [node.getAttribute('placeholder'), node.getAttribute('data-testid'), node.getAttribute('name'),
+            node.getAttribute('id'), node.getAttribute('autocomplete'), node.getAttribute('aria-label')]
+        .filter(Boolean).join(' ').toLowerCase();
+}
+const direct = Array.from(document.querySelectorAll('input[data-testid="email"], input[name="email"], input[type="email"], input[autocomplete="email"], input[placeholder*="mail" i], input[aria-label*="mail" i]'));
+for (const node of Array.from(document.querySelectorAll('input, textarea'))) {
+    const type = (node.getAttribute('type') || '').toLowerCase();
+    if (['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'search'].includes(type)) continue;
+    const meta = textOf(node);
+    if (meta.includes('email') || meta.includes('e-mail') || meta.includes('mail') || meta.includes('邮箱') || meta.includes('电子邮件')) direct.push(node);
+}
+const input = Array.from(new Set(direct)).find((node) => isVisible(node) && !node.disabled && !node.readOnly) || null;
+if (!input || !(input.value || '').trim()) return false;
+return (input.getAttribute('type') || '').toLowerCase() !== 'email' || input.checkValidity();
+            """
+        )
+        if not ready_to_submit:
+            sleep_with_cancel(0.5, cancel_callback)
+            continue
+        _mark_registration_stage("email_submit")
         clicked = page.run_js(
             r"""
 function isVisible(node) {
@@ -710,6 +746,35 @@ return false;
 
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
+        ready = page.run_js(
+            """
+const code = String(arguments[0] || '').trim();
+if (!code) return 'not-ready';
+function isVisible(node) {
+    if (!node) return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+const aggregate = Array.from(document.querySelectorAll(
+  'input[data-input-otp=\"true\"], input[name=\"code\"], input[autocomplete=\"one-time-code\"], input[inputmode=\"numeric\"], input[inputmode=\"text\"]'
+)).find((node) => isVisible(node) && !node.disabled && !node.readOnly && Number(node.maxLength || 6) > 1);
+if (aggregate) return 'aggregate';
+const otpBoxes = Array.from(document.querySelectorAll('input')).filter((node) => {
+    if (!isVisible(node) || node.disabled || node.readOnly) return false;
+    const maxLength = Number(node.maxLength || 0);
+    const ac = String(node.autocomplete || '').toLowerCase();
+    return maxLength === 1 || ac === 'one-time-code';
+});
+return otpBoxes.length >= code.length ? 'boxes' : 'not-ready';
+            """,
+            clean_code,
+        )
+        if ready == "not-ready":
+            sleep_with_cancel(0.5, cancel_callback)
+            continue
+        _mark_registration_stage("code_submit")
         filled = page.run_js(
             """
 const code = String(arguments[0] || '').trim();
@@ -1104,9 +1169,7 @@ if (!submitBtn) {
     const visibleTexts = buttons.map(buttonText).filter(Boolean).slice(0, 8).join(' | ');
     return 'no-submit-button:' + visibleTexts;
 }
-submitBtn.focus();
-submitBtn.click();
-return 'submitted';
+return 'ready-to-submit';
             """
         )
 
@@ -1146,10 +1209,37 @@ return String(cfInput.value || '').trim().length;
             sleep_with_cancel(0.8, cancel_callback)
             continue
 
-        if submit_state == "submitted":
-            if log_callback:
-                log_callback(f"[*] 已填写注册资料并提交: {given_name} {family_name}")
-            return {"given_name": given_name, "family_name": family_name, "password": password}
+        if submit_state == "ready-to-submit":
+            _mark_registration_stage("profile_submit")
+            submit_state = page.run_js(
+                r"""
+function isVisible(node) {
+    if (!node) return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+function buttonText(node) {
+    return [node.innerText, node.textContent, node.getAttribute('value'), node.getAttribute('aria-label'), node.getAttribute('title')]
+      .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+const submitBtn = Array.from(document.querySelectorAll('button[type="submit"], button, [role="button"], input[type="submit"]'))
+    .filter((node) => isVisible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true')
+    .find((node) => {
+        const t = buttonText(node).replace(/\s+/g, '').toLowerCase();
+        return t.includes('完成注册') || t.includes('创建账户') || t.includes('signup') || t.includes('createaccount');
+    });
+if (!submitBtn) return 'submit-disappeared';
+submitBtn.focus();
+submitBtn.click();
+return 'submitted';
+                """
+            )
+            if submit_state == "submitted":
+                if log_callback:
+                    log_callback(f"[*] 已填写注册资料并提交: {given_name} {family_name}")
+                return {"given_name": given_name, "family_name": family_name, "password": password}
         wait_cf_since = None
         if isinstance(submit_state, str) and submit_state.startswith("no-submit-button") and log_callback:
             visible_buttons = submit_state.split(":", 1)[1] if ":" in submit_state else ""
@@ -1170,6 +1260,9 @@ def wait_for_sso_cookie(timeout=120, log_callback=None, cancel_callback=None):
     final_no_submit_timeout = 25
     last_wait_exception_message = ""
     last_wait_exception_at = 0.0
+    consecutive_wait_errors = 0
+    last_consecutive_error_message = ""
+    last_wait_exception = None
 
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
@@ -1292,23 +1385,41 @@ return String(cfInput.value || '').trim().length;
                     if log_callback:
                         log_callback("[*] 已获取到 sso cookie")
                     return value
+            # A completed polling iteration breaks any previous exception streak.
+            consecutive_wait_errors = 0
+            last_consecutive_error_message = ""
         except PageDisconnectedError:
+            consecutive_wait_errors = 0
+            last_consecutive_error_message = ""
             refresh_active_page()
         except AccountRetryNeeded:
             raise
-        except Exception as exc:
+        except ProxyTransportError:
+            raise
+        except (ContextLostError, JavaScriptError) as exc:
+            last_wait_exception = exc
+            message = f"{exc.__class__.__name__}: {exc}"
+            if message == last_consecutive_error_message:
+                consecutive_wait_errors += 1
+            else:
+                consecutive_wait_errors = 1
+                last_consecutive_error_message = message
             if log_callback:
                 now = time.time()
-                message = f"{exc.__class__.__name__}: {exc}"
                 if message != last_wait_exception_message or now - last_wait_exception_at >= 10:
-                    log_callback(f"[Debug] 等待 sso cookie 时出现异常，将继续等待: {message}")
+                    log_callback(f"[Debug] 等待 sso cookie 时出现瞬时异常 ({consecutive_wait_errors}/3): {message}")
                     last_wait_exception_message = message
                     last_wait_exception_at = now
+            if consecutive_wait_errors >= 3:
+                raise RuntimeError(f"等待 sso cookie 连续瞬时异常: {last_wait_exception.__class__.__name__}: {last_wait_exception}") from last_wait_exception
+        except Exception:
+            raise
 
         sleep_with_cancel(1, cancel_callback)
 
+    cause = "" if last_wait_exception is None else f"; last_error={last_wait_exception.__class__.__name__}: {last_wait_exception}"
     raise Exception(
-        f"等待超时：未获取到 sso cookie。已看到 cookies: {sorted(last_seen_names)}"
+        f"等待超时：未获取到 sso cookie。已看到 cookies: {sorted(last_seen_names)}{cause}"
     )
 
 

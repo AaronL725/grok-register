@@ -675,6 +675,7 @@ def run_registration_common(count, log_callback, cancel_callback, accounts_outpu
         sleep=lambda seconds: sleep_with_cancel(seconds, cancel_callback),
         cancelled_exception=RegistrationCancelled,
         retry_exception=AccountRetryNeeded,
+        internal_stage_markers=True,
     )
     return run_batch(
         count=count,

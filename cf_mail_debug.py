@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--api-base", required=True)
     parser.add_argument("--address", default="")
     parser.add_argument("--credential", default="")
-    parser.add_argument("--auth-mode", default="none", choices=["none", "bearer", "x-api-key", "x-admin-auth"])
+    parser.add_argument("--auth-mode", default="none", choices=["none", "query-key", "bearer", "x-api-key", "x-admin-auth"])
     parser.add_argument("--api-key", default="")
     parser.add_argument("--create-path", default="/api/new_address")
     parser.add_argument("--domain", default="")
