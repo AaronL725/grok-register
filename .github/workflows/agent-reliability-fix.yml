@@ -1,4 +1,4 @@
-name: agent reliability repair
+name: agent final reliability audit
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  repair-and-test:
+  audit-fix-and-test:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -20,74 +20,150 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Recover and correct scoped repair script
+      - name: Apply final integration fixes with exact assertions
         shell: bash
         run: |
-          git show b32150028297a12194bb427401268e874312db65:.github/workflows/agent-reliability-fix.yml > /tmp/original-repair.yml
           python - <<'PY'
           from pathlib import Path
-          import textwrap
-          src = Path('/tmp/original-repair.yml').read_text(encoding='utf-8')
-          lines = src.splitlines()
-          start = next(i for i, line in enumerate(lines) if "python - <<'PY'" in line) + 1
-          end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
-          script = textwrap.dedent('\n'.join(lines[start:end])) + '\n'
-          old = '''replace_once('registration_browser.py', '        clicked = page.run_js(\\n            r\"\"\"\\nfunction isVisible(node) {\\n', '        _mark_registration_stage(\"email_submit\")\\n        clicked = page.run_js(\\n            r\"\"\"\\nfunction isVisible(node) {\\n')'''
-          new = textwrap.dedent('''
-          value = text('registration_browser.py')
-          begin = value.index('def fill_email_and_submit(')
-          end_fn = value.index('def fill_code_and_submit(', begin)
-          segment = value[begin:end_fn]
-          needle = '        clicked = page.run_js(\\n            r\"\"\"\\nfunction isVisible(node) {\\n'
-          if segment.count(needle) != 1:
-              raise SystemExit(f'registration_browser.py: email submit matcher count={segment.count(needle)}')
-          segment = segment.replace(needle, '        _mark_registration_stage(\"email_submit\")\\n' + needle, 1)
-          write('registration_browser.py', value[:begin] + segment + value[end_fn:])
-          ''').strip()
-          if old not in script:
-              raise SystemExit('unable to locate original email matcher in repair script')
-          script = script.replace(old, new, 1)
-          ui_start = script.index("# 6: Web UI surfaces uncertain results already returned by the backend.")
-          ui_end = script.index("# Regression tests specific to this plan.", ui_start)
-          ui = textwrap.dedent('''
-          # 6: Web UI surfaces uncertain results already returned by the backend.
-          replace_once('web/index.html', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>', '<span data-i18n="pending">待恢复</span>: <b id="sPending">0</b></span><span><span data-i18n="uncertain">结果不确定</span>: <b id="sUncertain">0</b></span><span><span data-i18n="warnings">警告</span>: <b id="sWarnings">0</b>')
-          value = text('web/index.html')
-          replace = "$('sPending').textContent=s.pending||0;"
-          if value.count(replace) != 1:
-              raise SystemExit(f'web pollStatus pending matcher count={value.count(replace)}')
-          value = value.replace(replace, replace + "$('sUncertain').textContent=s.uncertain||0;", 1)
-          value = value.replace("pending:'待恢复',warnings:'警告'", "pending:'待恢复',uncertain:'结果不确定',warnings:'警告'", 1)
-          value = value.replace("pending:'Pending',warnings:'Warnings'", "pending:'Pending',uncertain:'Uncertain',warnings:'Warnings'", 1)
-          write('web/index.html', value)
-          ''').strip() + '\n\n'
-          script = script[:ui_start] + ui + script[ui_end:]
-          script = script.replace("Path('tests/test_reliability_plan_regressions.py').write_text(r'''", "Path('tests/test_reliability_plan_regressions.py').write_text('''", 1)
-          compat = textwrap.dedent('''
-          # Preserve the RegistrationOperations extension API: real browser adapters mark exact commit boundaries,
-          # while custom/test operations retain conservative coarse boundaries.
-          replace_once('registration_flow.py', '    retry_exception: type\\n\\n\\n@dataclass\\nclass RegistrationResult:', '    retry_exception: type\\n    internal_stage_markers: bool = False\\n\\n\\n@dataclass\\nclass RegistrationResult:')
-          replace_once('registration_flow.py', '        callbacks.log("[*] 2. 创建邮箱并提交")\\n        email, dev_token = ops.fill_email_and_submit()\\n', '        callbacks.log("[*] 2. 创建邮箱并提交")\\n        if not ops.internal_stage_markers:\\n            _set_registration_stage(STAGE_EMAIL_SUBMIT)\\n        email, dev_token = ops.fill_email_and_submit()\\n')
-          replace_once('registration_flow.py', '        try:\\n            code = ops.fill_code_and_submit(email, dev_token)\\n', '        try:\\n            if not ops.internal_stage_markers:\\n                _set_registration_stage(STAGE_CODE_SUBMIT)\\n            code = ops.fill_code_and_submit(email, dev_token)\\n')
-          replace_once('registration_flow.py', '    callbacks.log("[*] 4. 填写资料")\\n    profile = ops.fill_profile_and_submit()\\n', '    callbacks.log("[*] 4. 填写资料")\\n    if not ops.internal_stage_markers:\\n        _set_registration_stage(STAGE_PROFILE_SUBMIT)\\n    profile = ops.fill_profile_and_submit()\\n')
-          replace_once('registration_flow.py', '                else:\\n                    result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 注册失败: {exc}")\\n', '                elif disposition == SAFE_NEW_LEASE:\\n                    raise\\n                else:\\n                    result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 注册失败: {exc}")\\n')
-          replace_once('grok_register_ttk.py', '        retry_exception=AccountRetryNeeded,\\n    )\\n', '        retry_exception=AccountRetryNeeded,\\n        internal_stage_markers=True,\\n    )\\n')
-          replace_once('registration_parallel.py', '            retry_exception=runtime_namespace["AccountRetryNeeded"],\\n        )\\n', '            retry_exception=runtime_namespace["AccountRetryNeeded"],\\n            internal_stage_markers=True,\\n        )\\n')
-          ''').strip() + '\n'
-          script += '\n' + compat
-          Path('/tmp/repair.py').write_text(script, encoding='utf-8')
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              value = p.read_text(encoding='utf-8')
+              count = value.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, got {count}: {old[:120]!r}')
+              p.write_text(value.replace(old, new, 1), encoding='utf-8')
+
+          # #8 integration: the isolated mail module itself must receive the shared allocator.
+          replace_once(
+              'registration_parallel.py',
+              '''        mail_module = load_isolated_module(\n            _ROOT / "mail_service.py",\n            "_grok_mail_worker_%s_%s" % (worker_id, threading.get_ident()),\n        )\n        mail_module.bind_runtime(runtime_namespace)\n\n        worker_namespace = dict(runtime_namespace)\n        worker_namespace["domain_allocator"] = domain_allocator\n''',
+              '''        mail_module = load_isolated_module(\n            _ROOT / "mail_service.py",\n            "_grok_mail_worker_%s_%s" % (worker_id, threading.get_ident()),\n        )\n        mail_runtime = dict(runtime_namespace)\n        mail_runtime["domain_allocator"] = domain_allocator\n        mail_module.bind_runtime(mail_runtime)\n\n        worker_namespace = dict(mail_runtime)\n''',
+          )
+
+          # #4 correctness: only genuinely consecutive wait errors should trip the bounded-error guard.
+          replace_once(
+              'registration_browser.py',
+              '''    consecutive_wait_errors = 0\n    last_wait_exception = None\n''',
+              '''    consecutive_wait_errors = 0\n    last_consecutive_error_message = ""\n    last_wait_exception = None\n''',
+          )
+          replace_once(
+              'registration_browser.py',
+              '''                if name == "sso" and value:\n                    if log_callback:\n                        log_callback("[*] 已获取到 sso cookie")\n                    return value\n        except PageDisconnectedError:\n''',
+              '''                if name == "sso" and value:\n                    if log_callback:\n                        log_callback("[*] 已获取到 sso cookie")\n                    return value\n            # A completed polling iteration breaks any previous exception streak.\n            consecutive_wait_errors = 0\n            last_consecutive_error_message = ""\n        except PageDisconnectedError:\n''',
+          )
+          replace_once(
+              'registration_browser.py',
+              '''        except PageDisconnectedError:\n            consecutive_wait_errors = 0\n            refresh_active_page()\n''',
+              '''        except PageDisconnectedError:\n            consecutive_wait_errors = 0\n            last_consecutive_error_message = ""\n            refresh_active_page()\n''',
+          )
+          replace_once(
+              'registration_browser.py',
+              '''        except Exception as exc:\n            consecutive_wait_errors += 1\n            last_wait_exception = exc\n            if log_callback:\n                now = time.time()\n                message = f"{exc.__class__.__name__}: {exc}"\n                if message != last_wait_exception_message or now - last_wait_exception_at >= 10:\n''',
+              '''        except Exception as exc:\n            last_wait_exception = exc\n            message = f"{exc.__class__.__name__}: {exc}"\n            if message == last_consecutive_error_message:\n                consecutive_wait_errors += 1\n            else:\n                consecutive_wait_errors = 1\n                last_consecutive_error_message = message\n            if log_callback:\n                now = time.time()\n                if message != last_wait_exception_message or now - last_wait_exception_at >= 10:\n''',
+          )
+
+          # Strengthen regression coverage with real isolated-mail integration and runtime startup retry behavior.
+          test_path = Path('tests/test_reliability_plan_regressions.py')
+          tests = test_path.read_text(encoding='utf-8')
+          addition = r'''
+
+
+def test_isolated_mail_module_receives_shared_domain_allocator(tmp_path):
+    allocator = registration_parallel.DomainAllocator()
+    runtime = {
+        "config": {
+            "defaultDomains": "a.example,b.example,c.example",
+            "cloudmail_domains": "x.example,y.example",
+        },
+        "domain_allocator": allocator,
+    }
+    first = registration_parallel.load_isolated_module(
+        pathlib.Path("mail_service.py"), "_test_mail_allocator_one"
+    )
+    second = registration_parallel.load_isolated_module(
+        pathlib.Path("mail_service.py"), "_test_mail_allocator_two"
+    )
+    first.bind_runtime(runtime)
+    second.bind_runtime(runtime)
+    assert first.cloudflare_next_default_domain() == "a.example"
+    assert second.cloudflare_next_default_domain() == "b.example"
+    assert first.cloudmail_next_domain() == "x.example"
+    assert second.cloudmail_next_domain() == "y.example"
+
+
+def test_sso_wait_source_resets_consecutive_error_streak_after_successful_poll():
+    source = pathlib.Path("registration_browser.py").read_text(encoding="utf-8")
+    start = source.index("def wait_for_sso_cookie(")
+    block = source[start:]
+    assert 'last_consecutive_error_message = ""' in block
+    assert "# A completed polling iteration breaks any previous exception streak." in block
+    assert "if message == last_consecutive_error_message:" in block
+
+
+def test_sing_box_start_retries_after_early_exit_and_cleans_failed_config(monkeypatch, tmp_path):
+    import proxy_protocol_runtime as runtime_mod
+    from types import SimpleNamespace
+
+    manager = runtime_mod.ProtocolRuntimeManager({"proxy_protocol_start_timeout_sec": 3})
+    ports = iter([21001, 21002])
+    paths = []
+
+    class FakeProcess:
+        def __init__(self, exit_code):
+            self.exit_code = exit_code
+            self.terminated = False
+        def poll(self):
+            return self.exit_code
+        def terminate(self):
+            self.terminated = True
+        def wait(self, timeout=None):
+            return self.exit_code
+        def kill(self):
+            self.terminated = True
+            self.exit_code = -9
+
+    processes = iter([FakeProcess(1), FakeProcess(None)])
+    monkeypatch.setattr(manager, "_find_executable", lambda: "/fake/sing-box")
+    monkeypatch.setattr(manager, "_free_port", lambda: next(ports))
+    monkeypatch.setattr(manager, "_build_config", lambda descriptor, port: {"port": port})
+
+    def write_config(value):
+        path = tmp_path / f"proxy-{value['port']}.json"
+        path.write_text("{}", encoding="utf-8")
+        paths.append(path)
+        return str(path)
+
+    monkeypatch.setattr(manager, "_write_config", write_config)
+    monkeypatch.setattr(manager, "_check_config", lambda executable, path: None)
+    monkeypatch.setattr(runtime_mod.subprocess, "Popen", lambda *args, **kwargs: next(processes))
+    monkeypatch.setattr(manager, "_port_ready", lambda port: port == 21002)
+
+    descriptor = SimpleNamespace(node_id="node-1", protocol="vmess")
+    entry = manager._start_entry(descriptor)
+    try:
+        assert entry.port == 21002
+        assert len(paths) == 2
+        assert not paths[0].exists()
+        assert paths[1].exists()
+    finally:
+        manager._stop_entry(entry)
+    assert not paths[1].exists()
+'''
+          if 'test_isolated_mail_module_receives_shared_domain_allocator' in tests:
+              raise SystemExit('final audit tests already present unexpectedly')
+          test_path.write_text(tests + addition, encoding='utf-8')
           PY
-          python /tmp/repair.py
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-web.txt pytest
       - name: Run complete test suite
         run: pytest -q
-      - name: Commit validated repairs
+      - name: Commit only validated final fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add registration_flow.py registration_browser.py registration_parallel.py browser_runtime.py mail_service.py cf_mail_debug.py proxy_pool_v3.py proxy_protocol_runtime.py app_config.py grok_register_ttk.py web/index.html tests/test_reliability_plan_regressions.py
-          git commit -m "fix: complete registration reliability repair plan"
+          git add registration_parallel.py registration_browser.py tests/test_reliability_plan_regressions.py
+          git commit -m "fix: close reliability audit integration gaps"
           git push origin HEAD:agent/fix-registration-reliability-plan
