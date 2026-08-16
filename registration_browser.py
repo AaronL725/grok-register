@@ -463,7 +463,7 @@ function textOf(node) {
         node.getAttribute('name'),
         node.getAttribute('id'),
         node.getAttribute('autocomplete'),
-    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    ].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim();
 }
 function describeInput(node) {
     return [
@@ -473,7 +473,7 @@ function describeInput(node) {
         `placeholder=${node.getAttribute('placeholder') || ''}`,
         `aria=${node.getAttribute('aria-label') || ''}`,
         `testid=${node.getAttribute('data-testid') || ''}`,
-    ].join(' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+    ].join(' ').replace(/\\s+/g, ' ').trim().slice(0, 160);
 }
 function describeAction(node) {
     return textOf(node).slice(0, 120);
