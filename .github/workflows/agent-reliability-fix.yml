@@ -63,6 +63,18 @@ jobs:
           ''').strip() + '\n\n'
           script = script[:ui_start] + ui + script[ui_end:]
           script = script.replace("Path('tests/test_reliability_plan_regressions.py').write_text(r'''", "Path('tests/test_reliability_plan_regressions.py').write_text('''", 1)
+          compat = textwrap.dedent('''
+          # Preserve the RegistrationOperations extension API: real browser adapters mark exact commit boundaries,
+          # while custom/test operations retain conservative coarse boundaries.
+          replace_once('registration_flow.py', '    retry_exception: type\\n\\n\\n@dataclass\\nclass RegistrationResult:', '    retry_exception: type\\n    internal_stage_markers: bool = False\\n\\n\\n@dataclass\\nclass RegistrationResult:')
+          replace_once('registration_flow.py', '        callbacks.log("[*] 2. 创建邮箱并提交")\\n        email, dev_token = ops.fill_email_and_submit()\\n', '        callbacks.log("[*] 2. 创建邮箱并提交")\\n        if not ops.internal_stage_markers:\\n            _set_registration_stage(STAGE_EMAIL_SUBMIT)\\n        email, dev_token = ops.fill_email_and_submit()\\n')
+          replace_once('registration_flow.py', '        try:\\n            code = ops.fill_code_and_submit(email, dev_token)\\n', '        try:\\n            if not ops.internal_stage_markers:\\n                _set_registration_stage(STAGE_CODE_SUBMIT)\\n            code = ops.fill_code_and_submit(email, dev_token)\\n')
+          replace_once('registration_flow.py', '    callbacks.log("[*] 4. 填写资料")\\n    profile = ops.fill_profile_and_submit()\\n', '    callbacks.log("[*] 4. 填写资料")\\n    if not ops.internal_stage_markers:\\n        _set_registration_stage(STAGE_PROFILE_SUBMIT)\\n    profile = ops.fill_profile_and_submit()\\n')
+          replace_once('registration_flow.py', '                else:\\n                    result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 注册失败: {exc}")\\n', '                elif disposition == SAFE_NEW_LEASE:\\n                    raise\\n                else:\\n                    result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 注册失败: {exc}")\\n')
+          replace_once('grok_register_ttk.py', '        retry_exception=AccountRetryNeeded,\\n    )\\n', '        retry_exception=AccountRetryNeeded,\\n        internal_stage_markers=True,\\n    )\\n')
+          replace_once('registration_parallel.py', '            retry_exception=runtime_namespace["AccountRetryNeeded"],\\n        )\\n', '            retry_exception=runtime_namespace["AccountRetryNeeded"],\\n            internal_stage_markers=True,\\n        )\\n')
+          ''').strip() + '\n'
+          script += '\n' + compat
           Path('/tmp/repair.py').write_text(script, encoding='utf-8')
           PY
           python /tmp/repair.py
@@ -76,6 +88,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add registration_flow.py registration_browser.py registration_parallel.py browser_runtime.py mail_service.py cf_mail_debug.py proxy_pool_v3.py proxy_protocol_runtime.py app_config.py web/index.html tests/test_reliability_plan_regressions.py
+          git add registration_flow.py registration_browser.py registration_parallel.py browser_runtime.py mail_service.py cf_mail_debug.py proxy_pool_v3.py proxy_protocol_runtime.py app_config.py grok_register_ttk.py web/index.html tests/test_reliability_plan_regressions.py
           git commit -m "fix: complete registration reliability repair plan"
           git push origin HEAD:agent/fix-registration-reliability-plan
