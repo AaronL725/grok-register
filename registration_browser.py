@@ -599,6 +599,35 @@ return candidates[0].text || true;
             sleep_with_cancel(0.5, cancel_callback)
             continue
         sleep_with_cancel(0.8, cancel_callback)
+        ready_to_submit = page.run_js(
+            r"""
+function isVisible(node) {
+    if (!node) return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+function textOf(node) {
+    return [node.getAttribute('placeholder'), node.getAttribute('data-testid'), node.getAttribute('name'),
+            node.getAttribute('id'), node.getAttribute('autocomplete'), node.getAttribute('aria-label')]
+        .filter(Boolean).join(' ').toLowerCase();
+}
+const direct = Array.from(document.querySelectorAll('input[data-testid="email"], input[name="email"], input[type="email"], input[autocomplete="email"], input[placeholder*="mail" i], input[aria-label*="mail" i]'));
+for (const node of Array.from(document.querySelectorAll('input, textarea'))) {
+    const type = (node.getAttribute('type') || '').toLowerCase();
+    if (['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'search'].includes(type)) continue;
+    const meta = textOf(node);
+    if (meta.includes('email') || meta.includes('e-mail') || meta.includes('mail') || meta.includes('邮箱') || meta.includes('电子邮件')) direct.push(node);
+}
+const input = Array.from(new Set(direct)).find((node) => isVisible(node) && !node.disabled && !node.readOnly) || null;
+if (!input || !(input.value || '').trim()) return false;
+return (input.getAttribute('type') || '').toLowerCase() !== 'email' || input.checkValidity();
+            """
+        )
+        if not ready_to_submit:
+            sleep_with_cancel(0.5, cancel_callback)
+            continue
         _mark_registration_stage("email_submit")
         clicked = page.run_js(
             r"""
