@@ -49,6 +49,7 @@ import account_outputs as _account_outputs
 import browser_runtime as _browser_runtime
 import mail_service as _mail_service
 import registration_browser as _registration_browser
+import sso_risk as _sso_risk
 from app_config import (
     DEFAULT_CONFIG, ConfigError, config, load_config, save_config,
     validate_config, validate_config_structure, validate_run_requirements,
@@ -261,6 +262,10 @@ def _bind_account_outputs():
         compatibility_error=RemoteTokenCompatibilityError,
         request_error=RemoteTokenRequestError,
     )
+
+
+def _bind_sso_risk():
+    _sso_risk.configure_risk_runtime(config, http_get)
 
 
 def _bind_mail_service():
@@ -634,6 +639,11 @@ def retry_pending_file(pending_path, output_path=None, log_callback=None):
     return _retry_pending_file(pending_path, output_path=output_path, log_callback=log_callback)
 
 
+def _screen_registered_sso(sso, email, log_callback=None):
+    _bind_sso_risk()
+    return _sso_risk.ensure_sso_eligible(sso, email=email, log_callback=log_callback)
+
+
 def run_registration_common(count, log_callback, cancel_callback, accounts_output_file, observer):
     from registration_flow import RegistrationCallbacks, RegistrationOperations, run_batch
     callbacks = RegistrationCallbacks(log=log_callback, cancelled=cancel_callback)
@@ -676,6 +686,7 @@ def run_registration_common(count, log_callback, cancel_callback, accounts_outpu
         cancelled_exception=RegistrationCancelled,
         retry_exception=AccountRetryNeeded,
         internal_stage_markers=True,
+        screen_sso=lambda sso, email: _screen_registered_sso(sso, email, log_callback),
     )
     return run_batch(
         count=count,
@@ -853,6 +864,11 @@ class GrokRegisterGUI:
         self.grok2api_remote_auto_var = tk.BooleanVar(value=bool(config.get("grok2api_auto_add_remote", False)))
         self.grok2api_remote_auto_check = tk_checkbutton(config_frame, variable=self.grok2api_remote_auto_var)
         add_field(self.grok2api_remote_auto_check, 9, 1, sticky=tk.W)
+
+        add_label(9, 2, "SSO 风控:")
+        self.sso_risk_var = tk.BooleanVar(value=bool(config.get("sso_risk_gate_enabled", True)))
+        self.sso_risk_check = tk_checkbutton(config_frame, text="入库前筛查 botFlag/policy", variable=self.sso_risk_var)
+        add_field(self.sso_risk_check, 9, 3, sticky=tk.W)
 
         add_label(10, 0, "grok2api 远端 Base:")
         self.grok2api_remote_base_var = tk.StringVar(value=str(config.get("grok2api_remote_base", "")))
@@ -1133,6 +1149,7 @@ class GrokRegisterGUI:
         config["grok2api_remote_admin_password"] = self.grok2api_remote_password_var.get()
         config["cpa_export_enabled"] = bool(self.cpa_export_var.get())
         config["cpa_auth_dir"] = self.cpa_auth_dir_var.get().strip() or "./cpa_auths"
+        config["sso_risk_gate_enabled"] = bool(self.sso_risk_var.get())
         config["multi_thread_enabled"] = bool(self.multi_thread_var.get())
         raw_paths = [x.strip() for x in self.cloudflare_paths_var.get().split(",") if x.strip()]
         if len(raw_paths) >= 4:

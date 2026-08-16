@@ -4,6 +4,7 @@ import threading
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from app_config import config as app_config
+from sso_risk import RegistrationRiskDenied
 from proxy_pool import (
     ProxyAcquireCancelled,
     ProxyPoolError,
@@ -82,6 +83,7 @@ class RegistrationOperations:
     cancelled_exception: type
     retry_exception: type
     internal_stage_markers: bool = False
+    screen_sso: Optional[Callable[[str, str], Any]] = None
 
 
 @dataclass
@@ -220,6 +222,9 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
 
 def persist_account_result(result, callbacks, ops):
     _set_registration_stage(STAGE_POSTPROCESS)
+    screen = getattr(ops, "screen_sso", None)
+    if callable(screen):
+        screen(result.sso, result.email)
     try:
         ops.persist_account_line(result.email, result.password, result.sso)
         saved = True; save_error = ""; pending_saved = False
@@ -370,6 +375,9 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                     if retry_count_for_slot <= settings.max_slot_retry: callbacks.log(f"[!] 当前账号流程卡住，安全重试第 {retry_count_for_slot}/{settings.max_slot_retry} 次: {exc}")
                     else:
                         result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 当前账号已达到最大重试次数，跳过: {exc}")
+            except RegistrationRiskDenied as exc:
+                result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
+                callbacks.log(f"[-] 注册风控拒绝，已跳过入库: {exc}")
             except Exception as exc:
                 has_lease = current_proxy_lease() is not None
                 proxy_failure = isinstance(exc, ProxyPoolError) or (has_lease and is_proxy_transport_exception(exc))

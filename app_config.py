@@ -43,6 +43,8 @@ DEFAULT_CONFIG = {
     "proxy_pool_subscription_public_only": False,
     "proxy_pool_preflight_enabled": True,
     "enable_nsfw": True,
+    "sso_risk_gate_enabled": True,
+    "sso_risk_rejected_file": "./sso_risk_rejected.txt",
     "register_count": 1,
     "multi_thread_enabled": False,
     "multi_thread_workers": 4,
@@ -119,7 +121,7 @@ def validate_config_structure(raw):
         raise ConfigError("未知配置项: " + ", ".join(unknown))
     cfg = {**DEFAULT_CONFIG, **raw}
     bool_keys = (
-        "enable_nsfw", "grok2api_auto_add_local", "grok2api_auto_add_remote",
+        "enable_nsfw", "sso_risk_gate_enabled", "grok2api_auto_add_local", "grok2api_auto_add_remote",
         "grok2api_allow_legacy_full_save", "cpa_export_enabled",
         "cpa_copy_to_hotload", "cpa_headless", "cpa_force_standalone",
         "cpa_mint_cookie_inject", "multi_thread_enabled",
@@ -145,6 +147,7 @@ def validate_config_structure(raw):
     path_keys = {
         "grok2api_local_token_file", "api_reverse_tools", "cpa_auth_dir", "cpa_hotload_dir",
         "proxy_pool_file", "proxy_singbox_path", "proxy_pool_state_file",
+        "sso_risk_rejected_file",
     }
     for key in string_keys:
         cfg[key] = _require_string(cfg, key, path=key in path_keys)
