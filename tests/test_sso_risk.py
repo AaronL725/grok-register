@@ -1,9 +1,10 @@
-"""验证 SSO botFlag / policy 早停：解析、判定、隔离和入库拦截。"""
+"""验证 SSO botFlag / policy 早停：解析、判定、隔离、恢复和入库拦截。"""
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import sso_risk
 from registration_flow import (
@@ -29,17 +30,76 @@ def _html(source=2, details="risk=0.95,policy=deny,event=$registration"):
     )
 
 
+def _html_sequence(*states):
+    return "\n".join(_html(source, details) for source, details in states)
+
+
 class ParseAndPolicyTests(unittest.TestCase):
     def test_parse_escaped_next_payload(self):
         state = sso_risk.parse_grok_account_state(_html())
         self.assertTrue(state["found"])
         self.assertEqual(state["bot_flag_source"], 2)
+        self.assertEqual(state["bot_flag_sources"], [2])
         self.assertEqual(state["policy"], "deny")
         self.assertEqual(state["event"], "$registration")
         self.assertTrue(state["denied"])
         self.assertAlmostEqual(state["risk"], 0.95)
 
-    def test_block_policy(self):
+    def test_later_flagged_source_cannot_be_hidden_by_earlier_clean_state(self):
+        state = sso_risk.parse_grok_account_state(
+            _html_sequence(
+                (0, "risk=0.01,policy=allow,event=$registration"),
+                (2, "risk=0.95,policy=deny,event=$registration"),
+            )
+        )
+        self.assertEqual(state["bot_flag_sources"], [0, 2])
+        self.assertEqual(state["bot_flag_source"], 2)
+        blocked, detail = sso_risk.registration_risk_should_block(state)
+        self.assertTrue(blocked)
+        self.assertIn("policy=deny", detail)
+
+    def test_later_clean_state_cannot_clear_earlier_flagged_state(self):
+        state = sso_risk.parse_grok_account_state(
+            _html_sequence(
+                (1, "risk=0.90,policy=deny,event=$login"),
+                (0, "risk=0.01,policy=allow,event=$registration"),
+            )
+        )
+        self.assertEqual(state["bot_flag_sources"], [1, 0])
+        self.assertEqual(state["bot_flag_source"], 1)
+        self.assertTrue(sso_risk.registration_risk_should_block(state)[0])
+
+    def test_null_then_flagged_is_blocked(self):
+        state = sso_risk.parse_grok_account_state(
+            _html_sequence(
+                (None, ""),
+                (2, "risk=0.9,policy=allow,event=$registration"),
+            )
+        )
+        self.assertEqual(state["bot_flag_sources"], [None, 2])
+        self.assertTrue(sso_risk.registration_risk_should_block(state)[0])
+
+    def test_any_deny_detail_blocks_even_when_sources_are_clean(self):
+        state = sso_risk.parse_grok_account_state(
+            _html_sequence(
+                (0, "risk=0.01,policy=allow,event=$registration"),
+                (0, "risk=0.80,policy=deny,event=$login"),
+            )
+        )
+        self.assertEqual(state["bot_flag_source"], 0)
+        blocked, detail = sso_risk.registration_risk_should_block(state)
+        self.assertTrue(blocked)
+        self.assertIn("event=$login", detail)
+
+    def test_malformed_risk_float_does_not_crash(self):
+        state = sso_risk.parse_grok_account_state(
+            _html(0, "risk=not-a-number,policy=allow,event=$registration")
+        )
+        self.assertTrue(state["found"])
+        self.assertIsNone(state["risk"])
+        self.assertFalse(sso_risk.registration_risk_should_block(state)[0])
+
+    def test_block_policy_legacy_state_shape(self):
         blocked_cases = (
             ({"denied": True}, "policy=deny,event=$registration"),
             ({"bot_flag_source": 1}, "botFlagSource=1"),
@@ -82,6 +142,55 @@ class EnsureEligibleTests(unittest.TestCase):
         text = Path(sso_risk.resolve_rejected_file()).read_text(encoding="utf-8")
         self.assertIn("risk@example.test----flagged-token----", text)
         self.assertIn("policy=deny", text)
+        self.assertFalse(Path(sso_risk.resolve_rejected_pending_file()).exists())
+
+    def test_primary_quarantine_failure_falls_back_to_risk_pending(self):
+        response = SimpleNamespace(status_code=200, url="https://grok.com/", text=_html(2))
+        with patch("sso_risk._append_rejected_line", side_effect=OSError("disk full")):
+            with self.assertRaises(sso_risk.RegistrationRiskDenied):
+                sso_risk.ensure_sso_eligible(
+                    "flagged-token",
+                    email="risk@example.test",
+                    http_get=lambda *_args, **_kwargs: response,
+                )
+
+        pending = Path(sso_risk.resolve_rejected_pending_file())
+        self.assertTrue(pending.exists())
+        rows = [json.loads(line) for line in pending.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["email"], "risk@example.test")
+        self.assertEqual(rows[0]["sso"], "flagged-token")
+        self.assertIn("disk full", rows[0]["primary_error"])
+
+    def test_risk_pending_recovery_is_idempotent(self):
+        sso_risk.queue_sso_risk_rejected_pending(
+            "risk@example.test",
+            "flagged-token",
+            "risk=0.95,policy=deny,event=$registration",
+            primary_error="disk full",
+        )
+        first = sso_risk.retry_sso_risk_pending_file()
+        second = sso_risk.retry_sso_risk_pending_file()
+
+        self.assertEqual(first["processed"], 1)
+        self.assertEqual(first["recovered"], 1)
+        self.assertEqual(first["remaining"], 0)
+        self.assertEqual(second["processed"], 0)
+        lines = Path(sso_risk.resolve_rejected_file()).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("risk@example.test----flagged-token----"))
+
+    def test_primary_and_pending_failure_raise_dedicated_error(self):
+        with patch("sso_risk._append_rejected_line", side_effect=OSError("disk full")), patch(
+            "sso_risk.queue_sso_risk_rejected_pending",
+            side_effect=OSError("pending unavailable"),
+        ):
+            with self.assertRaises(sso_risk.RegistrationRiskPersistenceError):
+                sso_risk.append_sso_risk_rejected(
+                    "risk@example.test",
+                    "flagged-token",
+                    "policy=deny,event=$registration",
+                )
 
     def test_unknown_state_continues(self):
         response = SimpleNamespace(status_code=200, url="https://grok.com/", text="<html></html>")
@@ -90,6 +199,32 @@ class EnsureEligibleTests(unittest.TestCase):
             http_get=lambda *_args, **_kwargs: response,
         )
         self.assertFalse(state["found"])
+        self.assertFalse(Path(sso_risk.resolve_rejected_file()).exists())
+
+    def test_transport_failure_is_fail_open_but_reports_suspected_health(self):
+        class TransportError(RuntimeError):
+            pass
+
+        manager = Mock()
+        lease = object()
+
+        def failing_get(*_args, **_kwargs):
+            raise TransportError("proxy connection reset")
+
+        with patch("proxy_pool.is_proxy_transport_exception", return_value=True), patch(
+            "proxy_pool.current_proxy_lease", return_value=lease
+        ), patch("proxy_pool.get_manager", return_value=manager):
+            state = sso_risk.ensure_sso_eligible(
+                "transport-unknown-token",
+                http_get=failing_get,
+            )
+
+        self.assertFalse(state["found"])
+        self.assertTrue(state["transport_error"])
+        self.assertIn("proxy connection reset", state["error"])
+        manager.report_suspected_transport_failure.assert_called_once_with(
+            lease, "proxy connection reset"
+        )
         self.assertFalse(Path(sso_risk.resolve_rejected_file()).exists())
 
     def test_disabled_gate_skips_http(self):
@@ -146,6 +281,25 @@ class FlowGateTests(unittest.TestCase):
         self.assertFalse(any(item[0] == "tokens" for item in events))
         self.assertFalse(any(item[0] == "cpa" for item in events))
         self.assertTrue(any("注册风控拒绝" in line for line in logs))
+
+    def test_risk_persistence_failure_also_never_enters_normal_pool(self):
+        def screen(_sso, _email):
+            raise sso_risk.RegistrationRiskPersistenceError("quarantine unavailable")
+
+        ops, events = _ops(screen_sso=screen)
+        logs = []
+        batch = run_batch(
+            1,
+            RegistrationCallbacks(log=logs.append, cancelled=lambda: False),
+            lambda *a: None,
+            ops,
+        )
+        self.assertEqual(batch.success_count, 0)
+        self.assertEqual(batch.fail_count, 1)
+        self.assertFalse(any(item[0] == "persist" for item in events))
+        self.assertFalse(any(item[0] == "pending" for item in events))
+        self.assertFalse(any(item[0] == "tokens" for item in events))
+        self.assertFalse(any(item[0] == "cpa" for item in events))
 
     def test_persist_calls_screen_before_write(self):
         seen = []

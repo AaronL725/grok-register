@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+      - fix/pr-73-sso-risk-hardening
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-web.txt
+          python -m pip install pytest
+      - name: Compile all Python modules
+        run: python -m compileall -q .
+      - name: Run unittest discovery
+        run: python -m unittest discover -s tests -v
+      - name: Run pytest suite
+        run: python -m pytest -q
