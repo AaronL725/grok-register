@@ -196,12 +196,13 @@ def http_get(url, **kwargs):
 
 
 def http_post(url, **kwargs):
+    replay_safe = bool(kwargs.pop("replay_safe", False))
     request_kwargs = _build_request_kwargs(**kwargs)
     try:
         return requests.post(url, **request_kwargs)
     except Exception as exc:
         if is_proxy_connection_error(exc):
-            if managed_proxy_active():
+            if managed_proxy_active() or not replay_safe:
                 raise ProxyTransportError(safe_proxy_error_text(exc)) from exc
             direct = dict(request_kwargs)
             direct.pop("proxies", None)

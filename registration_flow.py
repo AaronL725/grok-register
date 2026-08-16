@@ -81,6 +81,7 @@ class RegistrationOperations:
     sleep: Callable[[float], None]
     cancelled_exception: type
     retry_exception: type
+    internal_stage_markers: bool = False
 
 
 @dataclass
@@ -164,7 +165,8 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
         _set_registration_stage(STAGE_PAGE_OPEN)
         ops.open_signup_page()
         callbacks.log("[*] 2. 创建邮箱并提交")
-        _set_registration_stage(STAGE_EMAIL_SUBMIT)
+        if not ops.internal_stage_markers:
+            _set_registration_stage(STAGE_EMAIL_SUBMIT)
         email, dev_token = ops.fill_email_and_submit()
         callbacks.log(f"[*] 邮箱: {email}")
         callbacks.log(f"[Debug] 邮箱credential(jwt): {dev_token}")
@@ -172,7 +174,8 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
             callbacks.log("[!] 邮箱凭据保存失败，注册继续，但已明确记录该异常")
         callbacks.log("[*] 3. 拉取验证码")
         try:
-            _set_registration_stage(STAGE_CODE_SUBMIT)
+            if not ops.internal_stage_markers:
+                _set_registration_stage(STAGE_CODE_SUBMIT)
             code = ops.fill_code_and_submit(email, dev_token)
             mail_ok = True
             break
@@ -189,7 +192,8 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
         raise RuntimeError("验证码阶段失败，已达到最大重试次数")
     callbacks.log(f"[*] 验证码: {code}")
     callbacks.log("[*] 4. 填写资料")
-    _set_registration_stage(STAGE_PROFILE_SUBMIT)
+    if not ops.internal_stage_markers:
+        _set_registration_stage(STAGE_PROFILE_SUBMIT)
     profile = ops.fill_profile_and_submit()
     callbacks.log(f"[*] 资料已填: {profile.get('given_name')} {profile.get('family_name')}")
     callbacks.log("[*] 5. 等待 sso cookie")
@@ -371,14 +375,16 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                 proxy_failure = isinstance(exc, ProxyPoolError) or (has_lease and is_proxy_transport_exception(exc))
                 stage = current_registration_stage(); disposition = registration_retry_disposition(stage, exc)
                 if proxy_failure and has_lease and is_proxy_transport_exception(exc): transport_error = exc
-                if proxy_failure and disposition == SAFE_NEW_LEASE:
+                if disposition == OUTCOME_UNCERTAIN:
+                    _record_uncertain(result, callbacks, stage, exc); retry_count_for_slot = 0
+                elif proxy_failure and disposition == SAFE_NEW_LEASE:
                     retry_count_for_slot += 1
                     if retry_count_for_slot <= settings.max_slot_retry:
                         callbacks.log(f"[!] 当前账号代理在安全阶段不可用，释放租约并重试 {retry_count_for_slot}/{settings.max_slot_retry}: {exc}")
                     else:
                         result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 当前账号代理重试达到上限，跳过: {exc}")
-                elif proxy_failure and disposition in (OUTCOME_UNCERTAIN, NO_RETRY):
-                    _record_uncertain(result, callbacks, stage, exc); retry_count_for_slot = 0
+                elif disposition == SAFE_NEW_LEASE:
+                    raise
                 else:
                     result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 注册失败: {exc}")
             finally:
@@ -396,7 +402,5 @@ def _run_batch_managed(settings, callbacks, observer, ops):
 def run_batch(count, callbacks, observer, ops, enable_nsfw=True, cleanup_interval=5, max_slot_retry=3, max_mail_retry=3, settings=None):
     if settings is None:
         settings = RegistrationSettings(count=int(count), enable_nsfw=bool(enable_nsfw), cleanup_interval=int(cleanup_interval), max_slot_retry=int(max_slot_retry), max_mail_retry=int(max_mail_retry))
-    mode = str(app_config.get("proxy_mode", "auto") or "auto").strip().lower()
-    if mode in ("single", "pool"):
-        return _run_batch_managed(settings, callbacks, observer, ops)
-    return _run_batch_legacy(settings, callbacks, observer, ops)
+    # All modes share the same stage-aware retry engine. begin_registration_slot() is a no-op when the proxy manager is unmanaged.
+    return _run_batch_managed(settings, callbacks, observer, ops)

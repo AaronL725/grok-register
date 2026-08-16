@@ -19,6 +19,12 @@ cf_clearance = ""
 SIGNUP_URL = "https://accounts.x.ai/sign-up?redirect=grok-com"
 
 
+def _mark_registration_stage(stage):
+    # Function-local import avoids an import-time cycle while keeping the browser module reusable.
+    from registration_flow import _set_registration_stage
+    return _set_registration_stage(stage)
+
+
 def _managed_proxy_mode():
     try:
         return str(config.get("proxy_mode", "auto") or "auto").strip().lower() in ("single", "pool")
@@ -593,6 +599,7 @@ return candidates[0].text || true;
             sleep_with_cancel(0.5, cancel_callback)
             continue
         sleep_with_cancel(0.8, cancel_callback)
+        _mark_registration_stage("email_submit")
         clicked = page.run_js(
             r"""
 function isVisible(node) {
@@ -780,6 +787,7 @@ return 'not-ready';
             sleep_with_cancel(0.5, cancel_callback)
             continue
 
+        _mark_registration_stage("code_submit")
         clicked = page.run_js(
             r"""
 function isVisible(node) {
@@ -1065,6 +1073,7 @@ return String(cfInput.value || '').trim().length;
                 sleep_with_cancel(0.5, cancel_callback)
                 continue
 
+        _mark_registration_stage("profile_submit")
         submit_state = page.run_js(
             r"""
 function isVisible(node) {
@@ -1170,6 +1179,8 @@ def wait_for_sso_cookie(timeout=120, log_callback=None, cancel_callback=None):
     final_no_submit_timeout = 25
     last_wait_exception_message = ""
     last_wait_exception_at = 0.0
+    consecutive_wait_errors = 0
+    last_wait_exception = None
 
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
@@ -1293,22 +1304,30 @@ return String(cfInput.value || '').trim().length;
                         log_callback("[*] 已获取到 sso cookie")
                     return value
         except PageDisconnectedError:
+            consecutive_wait_errors = 0
             refresh_active_page()
         except AccountRetryNeeded:
             raise
+        except ProxyTransportError:
+            raise
         except Exception as exc:
+            consecutive_wait_errors += 1
+            last_wait_exception = exc
             if log_callback:
                 now = time.time()
                 message = f"{exc.__class__.__name__}: {exc}"
                 if message != last_wait_exception_message or now - last_wait_exception_at >= 10:
-                    log_callback(f"[Debug] 等待 sso cookie 时出现异常，将继续等待: {message}")
+                    log_callback(f"[Debug] 等待 sso cookie 时出现异常 ({consecutive_wait_errors}/3): {message}")
                     last_wait_exception_message = message
                     last_wait_exception_at = now
+            if consecutive_wait_errors >= 3:
+                raise RuntimeError(f"等待 sso cookie 连续异常: {last_wait_exception.__class__.__name__}: {last_wait_exception}") from last_wait_exception
 
         sleep_with_cancel(1, cancel_callback)
 
+    cause = "" if last_wait_exception is None else f"; last_error={last_wait_exception.__class__.__name__}: {last_wait_exception}"
     raise Exception(
-        f"等待超时：未获取到 sso cookie。已看到 cookies: {sorted(last_seen_names)}"
+        f"等待超时：未获取到 sso cookie。已看到 cookies: {sorted(last_seen_names)}{cause}"
     )
 
 

@@ -148,37 +148,40 @@ class ProtocolRuntimeManager:
 
     def _start_entry(self, descriptor):
         executable = self._find_executable()
-        port = self._free_port()
-        path = self._write_config(self._build_config(descriptor, port))
-        process = None
-        try:
-            self._check_config(executable, path)
-            process = subprocess.Popen([executable, "run", "-c", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            deadline = time.time() + self.start_timeout
-            while time.time() < deadline:
-                code = process.poll()
-                if code is not None:
-                    raise ProxyRuntimeError("sing-box 在本地代理就绪前退出，code=%s" % code)
-                if self._port_ready(port):
-                    self.log("[*] 高级代理运行时已就绪: %s -> 127.0.0.1:%s" % (descriptor.protocol, port))
-                    now = time.time()
-                    return RuntimeEntry(descriptor.node_id, process, port, path, 0, last_used=now)
-                time.sleep(0.05)
-            raise ProxyRuntimeError("等待 sing-box 本地代理启动超时")
-        except Exception:
-            if process is not None:
-                try:
-                    process.terminate(); process.wait(timeout=2)
-                except Exception:
-                    try:
-                        process.kill()
-                    except Exception:
-                        pass
+        errors = []
+        for attempt in range(1, 5):
+            port = self._free_port()
+            path = self._write_config(self._build_config(descriptor, port))
+            process = None
             try:
-                os.unlink(path)
-            except Exception:
-                pass
-            raise
+                self._check_config(executable, path)
+                process = subprocess.Popen([executable, "run", "-c", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                deadline = time.time() + self.start_timeout
+                while time.time() < deadline:
+                    code = process.poll()
+                    if code is not None:
+                        raise ProxyRuntimeError("sing-box 在本地代理就绪前退出，code=%s" % code)
+                    if self._port_ready(port):
+                        self.log("[*] 高级代理运行时已就绪: %s -> 127.0.0.1:%s" % (descriptor.protocol, port))
+                        now = time.time()
+                        return RuntimeEntry(descriptor.node_id, process, port, path, 0, last_used=now)
+                    time.sleep(0.05)
+                raise ProxyRuntimeError("等待 sing-box 本地代理启动超时")
+            except Exception as exc:
+                errors.append("attempt=%s port=%s: %s" % (attempt, port, exc))
+                if process is not None:
+                    try:
+                        process.terminate(); process.wait(timeout=2)
+                    except Exception:
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+        raise ProxyRuntimeError("sing-box startup failed after 4 attempts: %s" % "; ".join(errors))
 
     def _start_bridge_entry(self, descriptor):
         bridge = LocalProxyBridge(descriptor.canonical_uri)

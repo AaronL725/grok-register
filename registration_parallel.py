@@ -10,6 +10,21 @@ from registration_flow import BatchResult, RegistrationCallbacks, RegistrationOp
 _ROOT = Path(__file__).resolve().parent
 
 
+class DomainAllocator:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._indexes = {}
+
+    def next(self, provider, domains):
+        values = list(domains or [])
+        if not values:
+            return ""
+        with self._lock:
+            index = int(self._indexes.get(provider, 0))
+            self._indexes[provider] = index + 1
+        return values[index % len(values)]
+
+
 def split_worker_counts(count, workers):
     total = max(int(count), 0)
     if total <= 0:
@@ -35,6 +50,7 @@ def _summary_copy(batch):
         "processed_count": int(batch.processed_count),
         "registered_unsaved_count": int(batch.registered_unsaved_count),
         "postprocess_warning_count": int(batch.postprocess_warning_count),
+        "uncertain_count": int(batch.uncertain_count),
         "cancelled": bool(batch.cancelled),
         "results": list(batch.results),
     }
@@ -48,6 +64,7 @@ def _aggregate(snapshots):
         total.processed_count += snapshot["processed_count"]
         total.registered_unsaved_count += snapshot["registered_unsaved_count"]
         total.postprocess_warning_count += snapshot["postprocess_warning_count"]
+        total.uncertain_count += snapshot["uncertain_count"]
         total.cancelled = total.cancelled or snapshot["cancelled"]
         total.results.extend(snapshot["results"])
     return total
@@ -67,6 +84,7 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
     abort_event = threading.Event()
     snapshots = {}
     fatal_errors = []
+    domain_allocator = DomainAllocator()
 
     def combined_cancelled():
         return abort_event.is_set() or callbacks.cancelled()
@@ -88,6 +106,7 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
         mail_module.bind_runtime(runtime_namespace)
 
         worker_namespace = dict(runtime_namespace)
+        worker_namespace["domain_allocator"] = domain_allocator
         for name in getattr(mail_module, "_OWN_NAMES", set()):
             if hasattr(mail_module, name):
                 worker_namespace[name] = getattr(mail_module, name)
@@ -167,6 +186,7 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
             ),
             cancelled_exception=runtime_namespace["RegistrationCancelled"],
             retry_exception=runtime_namespace["AccountRetryNeeded"],
+            internal_stage_markers=True,
         )
 
         def worker_observer(batch, account, output):

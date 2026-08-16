@@ -856,10 +856,13 @@ class ProxyPoolManager:
                     text = str(getattr(response, "text", "") or "")[:4096].lower()
                     headers = {str(k).lower(): str(v).lower() for k, v in dict(getattr(response, "headers", {}) or {}).items()}
                     cloudflare = "cloudflare" in headers.get("server", "") or "cf-error" in text or "__cf_chl" in text
-                    results.append({"url": url, "reachable": 100 <= status_code < 600, "status_code": status_code, "latency_ms": max(1, int((time.monotonic()-started)*1000)), "cloudflare_block": bool(cloudflare and status_code in (403, 429, 503)), "error": ""})
+                    reachable = 100 <= status_code < 600
+                    cloudflare_block = bool(cloudflare and status_code in (403, 429, 503))
+                    usable = bool(reachable and not cloudflare_block and 200 <= status_code < 400)
+                    results.append({"url": url, "reachable": reachable, "usable": usable, "status_code": status_code, "latency_ms": max(1, int((time.monotonic()-started)*1000)), "cloudflare_block": cloudflare_block, "error": ""})
                 except Exception as exc:
-                    results.append({"url": url, "reachable": False, "status_code": 0, "latency_ms": max(1, int((time.monotonic()-started)*1000)), "cloudflare_block": False, "error": safe_proxy_error_text(exc)[:300]})
-            return {"id": node_id, "ok": all(item["reachable"] for item in results), "targets": results}
+                    results.append({"url": url, "reachable": False, "usable": False, "status_code": 0, "latency_ms": max(1, int((time.monotonic()-started)*1000)), "cloudflare_block": False, "error": safe_proxy_error_text(exc)[:300]})
+            return {"id": node_id, "ok": all(item["usable"] for item in results), "targets": results}
         finally:
             if runtime_key: self._runtime.release(runtime_key)
 
