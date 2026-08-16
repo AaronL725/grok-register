@@ -81,3 +81,18 @@ def test_sing_box_start_retries_after_early_exit_and_cleans_failed_config(monkey
     finally:
         manager._stop_entry(entry)
     assert not paths[1].exists()
+
+
+def test_strict_commit_boundaries_and_sso_exception_whitelist():
+    source = pathlib.Path("registration_browser.py").read_text(encoding="utf-8")
+    code = source[source.index("def fill_code_and_submit("):source.index("def getTurnstileToken(")]
+    assert code.index("ready = page.run_js") < code.index('_mark_registration_stage("code_submit")') < code.index("filled = page.run_js")
+    assert code.count('_mark_registration_stage("code_submit")') == 1
+
+    profile = source[source.index("def fill_profile_and_submit("):source.index("def wait_for_sso_cookie(")]
+    assert profile.index('if submit_state == "ready-to-submit":') < profile.index('_mark_registration_stage("profile_submit")')
+    assert profile.count('_mark_registration_stage("profile_submit")') == 1
+
+    sso = source[source.index("def wait_for_sso_cookie("):]
+    assert "except (ContextLostError, JavaScriptError) as exc:" in sso
+    assert "except Exception:\n            raise" in sso

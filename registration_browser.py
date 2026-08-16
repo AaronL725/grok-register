@@ -7,7 +7,7 @@ import struct
 import time
 
 from DrissionPage import Chromium
-from DrissionPage.errors import PageDisconnectedError
+from DrissionPage.errors import ContextLostError, JavaScriptError, PageDisconnectedError
 from curl_cffi import requests
 from proxy_pool import ProxyTransportError, safe_proxy_error_text
 
@@ -717,6 +717,35 @@ return false;
 
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
+        ready = page.run_js(
+            """
+const code = String(arguments[0] || '').trim();
+if (!code) return 'not-ready';
+function isVisible(node) {
+    if (!node) return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+const aggregate = Array.from(document.querySelectorAll(
+  'input[data-input-otp=\"true\"], input[name=\"code\"], input[autocomplete=\"one-time-code\"], input[inputmode=\"numeric\"], input[inputmode=\"text\"]'
+)).find((node) => isVisible(node) && !node.disabled && !node.readOnly && Number(node.maxLength || 6) > 1);
+if (aggregate) return 'aggregate';
+const otpBoxes = Array.from(document.querySelectorAll('input')).filter((node) => {
+    if (!isVisible(node) || node.disabled || node.readOnly) return false;
+    const maxLength = Number(node.maxLength || 0);
+    const ac = String(node.autocomplete || '').toLowerCase();
+    return maxLength === 1 || ac === 'one-time-code';
+});
+return otpBoxes.length >= code.length ? 'boxes' : 'not-ready';
+            """,
+            clean_code,
+        )
+        if ready == "not-ready":
+            sleep_with_cancel(0.5, cancel_callback)
+            continue
+        _mark_registration_stage("code_submit")
         filled = page.run_js(
             """
 const code = String(arguments[0] || '').trim();
@@ -787,7 +816,6 @@ return 'not-ready';
             sleep_with_cancel(0.5, cancel_callback)
             continue
 
-        _mark_registration_stage("code_submit")
         clicked = page.run_js(
             r"""
 function isVisible(node) {
@@ -1073,7 +1101,6 @@ return String(cfInput.value || '').trim().length;
                 sleep_with_cancel(0.5, cancel_callback)
                 continue
 
-        _mark_registration_stage("profile_submit")
         submit_state = page.run_js(
             r"""
 function isVisible(node) {
@@ -1113,9 +1140,7 @@ if (!submitBtn) {
     const visibleTexts = buttons.map(buttonText).filter(Boolean).slice(0, 8).join(' | ');
     return 'no-submit-button:' + visibleTexts;
 }
-submitBtn.focus();
-submitBtn.click();
-return 'submitted';
+return 'ready-to-submit';
             """
         )
 
@@ -1155,10 +1180,37 @@ return String(cfInput.value || '').trim().length;
             sleep_with_cancel(0.8, cancel_callback)
             continue
 
-        if submit_state == "submitted":
-            if log_callback:
-                log_callback(f"[*] 已填写注册资料并提交: {given_name} {family_name}")
-            return {"given_name": given_name, "family_name": family_name, "password": password}
+        if submit_state == "ready-to-submit":
+            _mark_registration_stage("profile_submit")
+            submit_state = page.run_js(
+                r"""
+function isVisible(node) {
+    if (!node) return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+function buttonText(node) {
+    return [node.innerText, node.textContent, node.getAttribute('value'), node.getAttribute('aria-label'), node.getAttribute('title')]
+      .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+const submitBtn = Array.from(document.querySelectorAll('button[type="submit"], button, [role="button"], input[type="submit"]'))
+    .filter((node) => isVisible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true')
+    .find((node) => {
+        const t = buttonText(node).replace(/\s+/g, '').toLowerCase();
+        return t.includes('完成注册') || t.includes('创建账户') || t.includes('signup') || t.includes('createaccount');
+    });
+if (!submitBtn) return 'submit-disappeared';
+submitBtn.focus();
+submitBtn.click();
+return 'submitted';
+                """
+            )
+            if submit_state == "submitted":
+                if log_callback:
+                    log_callback(f"[*] 已填写注册资料并提交: {given_name} {family_name}")
+                return {"given_name": given_name, "family_name": family_name, "password": password}
         wait_cf_since = None
         if isinstance(submit_state, str) and submit_state.startswith("no-submit-button") and log_callback:
             visible_buttons = submit_state.split(":", 1)[1] if ":" in submit_state else ""
@@ -1315,7 +1367,7 @@ return String(cfInput.value || '').trim().length;
             raise
         except ProxyTransportError:
             raise
-        except Exception as exc:
+        except (ContextLostError, JavaScriptError) as exc:
             last_wait_exception = exc
             message = f"{exc.__class__.__name__}: {exc}"
             if message == last_consecutive_error_message:
@@ -1326,11 +1378,13 @@ return String(cfInput.value || '').trim().length;
             if log_callback:
                 now = time.time()
                 if message != last_wait_exception_message or now - last_wait_exception_at >= 10:
-                    log_callback(f"[Debug] 等待 sso cookie 时出现异常 ({consecutive_wait_errors}/3): {message}")
+                    log_callback(f"[Debug] 等待 sso cookie 时出现瞬时异常 ({consecutive_wait_errors}/3): {message}")
                     last_wait_exception_message = message
                     last_wait_exception_at = now
             if consecutive_wait_errors >= 3:
-                raise RuntimeError(f"等待 sso cookie 连续异常: {last_wait_exception.__class__.__name__}: {last_wait_exception}") from last_wait_exception
+                raise RuntimeError(f"等待 sso cookie 连续瞬时异常: {last_wait_exception.__class__.__name__}: {last_wait_exception}") from last_wait_exception
+        except Exception:
+            raise
 
         sleep_with_cancel(1, cancel_callback)
 
