@@ -290,9 +290,9 @@ for _name in ['get_configured_proxy', 'get_proxies', '_parse_proxy_url', '_safe_
         globals()[_name] = _make_compat_proxy(_browser_runtime, _name, _bind_browser_runtime)
 for _name in ['resolve_grok2api_local_token_file', '_normalize_sso_token', 'add_token_to_grok2api_local_pool', 'get_grok2api_remote_api_bases', 'add_token_to_grok2api_remote_pool', 'add_token_to_grok2api_pools']:
     globals()[_name] = _make_compat_proxy(_account_outputs, _name, _bind_account_outputs)
-_MAIL_ORIGINALS = dict((name, getattr(_mail_service, name)) for name in ['_pick_list_payload', 'cloudflare_apply_auth_params', 'cloudflare_build_headers', 'cloudflare_create_account', 'cloudflare_create_temp_address', 'cloudflare_get_domains', 'cloudflare_get_message_detail', 'cloudflare_get_messages', 'cloudflare_get_oai_code', 'cloudflare_get_token', 'cloudflare_is_admin_create_path', 'cloudflare_next_default_domain', 'cloudmail_get_email_and_token', 'cloudmail_get_messages', 'cloudmail_get_oai_code', 'cloudmail_next_domain', 'create_account', 'duckmail_get_oai_code', 'extract_verification_code', 'generate_username', 'get_cloudflare_api_base', 'get_cloudflare_api_key', 'get_cloudflare_auth_mode', 'get_cloudflare_path', 'get_cloudmail_api_base', 'get_cloudmail_path', 'get_cloudmail_public_token', 'get_domains', 'get_duckmail_api_key', 'get_email_and_token', 'get_email_provider', 'get_message_detail', 'get_messages', 'get_oai_code', 'get_token', 'get_user_agent', 'get_yyds_api_key', 'get_yyds_jwt', 'pick_domain', 'yyds_create_account', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_message_detail', 'yyds_get_messages', 'yyds_get_oai_code', 'yyds_get_token', 'yyds_pick_domain'])
+_MAIL_ORIGINALS = dict((name, getattr(_mail_service, name)) for name in ['_pick_list_payload', 'cloudflare_apply_auth_params', 'cloudflare_build_headers', 'cloudflare_create_account', 'cloudflare_create_temp_address', 'cloudflare_get_domains', 'cloudflare_get_message_detail', 'cloudflare_get_messages', 'cloudflare_get_oai_code', 'cloudflare_get_token', 'cloudflare_is_admin_create_path', 'cloudflare_next_default_domain', 'cloudmail_get_email_and_token', 'cloudmail_get_messages', 'cloudmail_get_oai_code', 'cloudmail_next_domain', 'create_account', 'duckmail_get_oai_code', 'extract_verification_code', 'generate_username', 'get_cloudflare_api_base', 'get_cloudflare_api_key', 'get_cloudflare_auth_mode', 'get_cloudflare_path', 'get_cloudmail_api_base', 'get_cloudmail_path', 'get_cloudmail_public_token', 'get_domains', 'get_duckmail_api_key', 'get_email_and_token', 'get_email_provider', 'get_message_detail', 'get_messages', 'get_oai_code', 'get_token', 'get_user_agent', 'get_yyds_api_key', 'get_yyds_jwt', 'pick_domain', 'yyds_create_account', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_message_detail', 'yyds_get_messages', 'yyds_get_oai_code', 'yyds_get_token', 'yyds_pick_domain', 'boomlify_get_email_and_token', 'boomlify_get_messages', 'boomlify_get_message_detail', 'boomlify_get_oai_code', 'boomlify_delete_email', 'boomlify_next_default_domain', 'boomlify_build_headers', 'get_boomlify_api_base', 'get_boomlify_api_key', 'get_boomlify_default_time', 'get_boomlify_default_domain'])
 _MAIL_COMPAT_PROXIES = dict()
-for _name in ['_pick_list_payload', 'cloudflare_apply_auth_params', 'cloudflare_build_headers', 'cloudflare_create_account', 'cloudflare_create_temp_address', 'cloudflare_get_domains', 'cloudflare_get_message_detail', 'cloudflare_get_messages', 'cloudflare_get_oai_code', 'cloudflare_get_token', 'cloudflare_is_admin_create_path', 'cloudflare_next_default_domain', 'cloudmail_get_email_and_token', 'cloudmail_get_messages', 'cloudmail_get_oai_code', 'cloudmail_next_domain', 'create_account', 'duckmail_get_oai_code', 'extract_verification_code', 'generate_username', 'get_cloudflare_api_base', 'get_cloudflare_api_key', 'get_cloudflare_auth_mode', 'get_cloudflare_path', 'get_cloudmail_api_base', 'get_cloudmail_path', 'get_cloudmail_public_token', 'get_domains', 'get_duckmail_api_key', 'get_email_and_token', 'get_email_provider', 'get_message_detail', 'get_messages', 'get_oai_code', 'get_token', 'get_user_agent', 'get_yyds_api_key', 'get_yyds_jwt', 'pick_domain', 'yyds_create_account', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_message_detail', 'yyds_get_messages', 'yyds_get_oai_code', 'yyds_get_token', 'yyds_pick_domain']:
+for _name in ['_pick_list_payload', 'cloudflare_apply_auth_params', 'cloudflare_build_headers', 'cloudflare_create_account', 'cloudflare_create_temp_address', 'cloudflare_get_domains', 'cloudflare_get_message_detail', 'cloudflare_get_messages', 'cloudflare_get_oai_code', 'cloudflare_get_token', 'cloudflare_is_admin_create_path', 'cloudflare_next_default_domain', 'cloudmail_get_email_and_token', 'cloudmail_get_messages', 'cloudmail_get_oai_code', 'cloudmail_next_domain', 'create_account', 'duckmail_get_oai_code', 'extract_verification_code', 'generate_username', 'get_cloudflare_api_base', 'get_cloudflare_api_key', 'get_cloudflare_auth_mode', 'get_cloudflare_path', 'get_cloudmail_api_base', 'get_cloudmail_path', 'get_cloudmail_public_token', 'get_domains', 'get_duckmail_api_key', 'get_email_and_token', 'get_email_provider', 'get_message_detail', 'get_messages', 'get_oai_code', 'get_token', 'get_user_agent', 'get_yyds_api_key', 'get_yyds_jwt', 'pick_domain', 'yyds_create_account', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_message_detail', 'yyds_get_messages', 'yyds_get_oai_code', 'yyds_get_token', 'yyds_pick_domain', 'boomlify_get_email_and_token', 'boomlify_get_messages', 'boomlify_get_message_detail', 'boomlify_get_oai_code', 'boomlify_delete_email', 'boomlify_next_default_domain', 'boomlify_build_headers', 'get_boomlify_api_base', 'get_boomlify_api_key', 'get_boomlify_default_time', 'get_boomlify_default_domain']:
     _proxy = _make_compat_proxy(_mail_service, _name, _bind_mail_service)
     _MAIL_COMPAT_PROXIES[_name] = _proxy
     globals()[_name] = _proxy
@@ -307,7 +307,7 @@ def __getattr__(name):
         return _registration_browser.SIGNUP_URL
     if name in {"browser", "page", "browser_proxy_bridge", "browser_started_with_proxy", "cf_clearance"}:
         return getattr(_registration_browser, name)
-    if name in {"_cf_domain_index", "_cloudmail_domain_index"}:
+    if name in {"_cf_domain_index", "_cloudmail_domain_index", "_boomlify_domain_index"}:
         return getattr(_mail_service, name)
     raise AttributeError(name)
 
@@ -329,7 +329,7 @@ class _CompatibilityModule(types.ModuleType):
                 _app_config.config.clear()
                 _app_config.config.update(value)
             value = _app_config.config
-        elif name in {"_cf_domain_index", "_cloudmail_domain_index"}:
+        elif name in {"_cf_domain_index", "_cloudmail_domain_index", "_boomlify_domain_index"}:
             setattr(_mail_service, name, int(value))
             self.__dict__.pop(name, None)
             return
@@ -761,7 +761,7 @@ class GrokRegisterGUI:
 
         add_label(0, 0, "邮箱服务商:")
         self.email_provider_var = tk.StringVar(value=config.get("email_provider", "duckmail"))
-        self.email_provider_combo = tk_option_menu(config_frame, self.email_provider_var, ["duckmail", "yyds", "cloudflare", "cloudmail"], width=12)
+        self.email_provider_combo = tk_option_menu(config_frame, self.email_provider_var, ["duckmail", "yyds", "cloudflare", "cloudmail", "boomlify"], width=12)
         add_field(self.email_provider_combo, 0, 1, sticky=tk.W)
 
         add_label(0, 2, "注册数量:")
@@ -843,64 +843,86 @@ class GrokRegisterGUI:
         self.cloudmail_public_token_entry = tk_entry(config_frame, textvariable=self.cloudmail_public_token_var, width=72)
         add_field(self.cloudmail_public_token_entry, 6, 1, columnspan=3)
 
-        add_label(7, 0, "grok2api 本地入池:")
+        add_label(7, 0, "Boomlify API Key:")
+        self.boomlify_api_key_var = tk.StringVar(value=config.get("boomlify_api_key", ""))
+        self.boomlify_api_key_entry = tk_entry(config_frame, textvariable=self.boomlify_api_key_var, width=72, show="*")
+        add_field(self.boomlify_api_key_entry, 7, 1, columnspan=3)
+
+        add_label(8, 0, "Boomlify API Base:")
+        self.boomlify_api_base_var = tk.StringVar(value=config.get("boomlify_api_base", "https://v1.boomlify.com"))
+        self.boomlify_api_base_entry = tk_entry(config_frame, textvariable=self.boomlify_api_base_var, width=34)
+        add_field(self.boomlify_api_base_entry, 8, 1)
+
+        add_label(8, 2, "Boomlify 邮箱有效期:")
+        self.boomlify_default_time_var = tk.StringVar(value=str(config.get("boomlify_default_time", "1day")))
+        self.boomlify_default_time_combo = tk_option_menu(
+            config_frame, self.boomlify_default_time_var, ["10min", "1hour", "1day", "permanent"], width=12
+        )
+        add_field(self.boomlify_default_time_combo, 8, 3, sticky=tk.W)
+
+        add_label(9, 0, "Boomlify 自定义域名 (可选):")
+        self.boomlify_default_domain_var = tk.StringVar(value=config.get("boomlify_default_domain", ""))
+        self.boomlify_default_domain_entry = tk_entry(config_frame, textvariable=self.boomlify_default_domain_var, width=72)
+        add_field(self.boomlify_default_domain_entry, 9, 1, columnspan=3)
+
+        add_label(10, 0, "grok2api 本地入池:")
         self.grok2api_local_auto_var = tk.BooleanVar(value=bool(config.get("grok2api_auto_add_local", True)))
         self.grok2api_local_auto_check = tk_checkbutton(config_frame, variable=self.grok2api_local_auto_var)
-        add_field(self.grok2api_local_auto_check, 7, 1, sticky=tk.W)
+        add_field(self.grok2api_local_auto_check, 10, 1, sticky=tk.W)
 
-        add_label(7, 2, "grok2api 池名:")
+        add_label(10, 2, "grok2api 池名:")
         self.grok2api_pool_name_var = tk.StringVar(value=str(config.get("grok2api_pool_name", "ssoBasic")))
         self.grok2api_pool_name_combo = tk_option_menu(
             config_frame, self.grok2api_pool_name_var, ["ssoBasic", "ssoSuper"], width=12
         )
-        add_field(self.grok2api_pool_name_combo, 7, 3, sticky=tk.W)
+        add_field(self.grok2api_pool_name_combo, 10, 3, sticky=tk.W)
 
-        add_label(8, 0, "本地 token.json:")
+        add_label(11, 0, "本地 token.json:")
         self.grok2api_local_file_var = tk.StringVar(value=str(config.get("grok2api_local_token_file", "")))
         self.grok2api_local_file_entry = tk_entry(config_frame, textvariable=self.grok2api_local_file_var, width=72)
-        add_field(self.grok2api_local_file_entry, 8, 1, columnspan=3)
+        add_field(self.grok2api_local_file_entry, 11, 1, columnspan=3)
 
-        add_label(9, 0, "grok2api 远端入池:")
+        add_label(12, 0, "grok2api 远端入池:")
         self.grok2api_remote_auto_var = tk.BooleanVar(value=bool(config.get("grok2api_auto_add_remote", False)))
         self.grok2api_remote_auto_check = tk_checkbutton(config_frame, variable=self.grok2api_remote_auto_var)
-        add_field(self.grok2api_remote_auto_check, 9, 1, sticky=tk.W)
+        add_field(self.grok2api_remote_auto_check, 12, 1, sticky=tk.W)
 
-        add_label(9, 2, "SSO 风控:")
+        add_label(12, 2, "SSO 风控:")
         self.sso_risk_var = tk.BooleanVar(value=bool(config.get("sso_risk_gate_enabled", True)))
         self.sso_risk_check = tk_checkbutton(config_frame, text="入库前筛查 botFlag/policy", variable=self.sso_risk_var)
-        add_field(self.sso_risk_check, 9, 3, sticky=tk.W)
+        add_field(self.sso_risk_check, 12, 3, sticky=tk.W)
 
-        add_label(10, 0, "grok2api 远端 Base:")
+        add_label(13, 0, "grok2api 远端 Base:")
         self.grok2api_remote_base_var = tk.StringVar(value=str(config.get("grok2api_remote_base", "")))
         self.grok2api_remote_base_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_base_var, width=72)
-        add_field(self.grok2api_remote_base_entry, 10, 1, columnspan=3)
+        add_field(self.grok2api_remote_base_entry, 13, 1, columnspan=3)
 
-        add_label(11, 0, "grok2api 远端 app_key:")
+        add_label(14, 0, "grok2api 远端 app_key:")
         self.grok2api_remote_key_var = tk.StringVar(value=str(config.get("grok2api_remote_app_key", "")))
         self.grok2api_remote_key_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_key_var, width=72)
-        add_field(self.grok2api_remote_key_entry, 11, 1, columnspan=3)
+        add_field(self.grok2api_remote_key_entry, 14, 1, columnspan=3)
 
-        add_label(12, 0, "新版管理员账号:")
+        add_label(15, 0, "新版管理员账号:")
         self.grok2api_remote_username_var = tk.StringVar(value=str(config.get("grok2api_remote_admin_username", "")))
         self.grok2api_remote_username_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_username_var, width=34)
-        add_field(self.grok2api_remote_username_entry, 12, 1)
+        add_field(self.grok2api_remote_username_entry, 15, 1)
 
-        add_label(12, 2, "新版管理员密码:")
+        add_label(15, 2, "新版管理员密码:")
         self.grok2api_remote_password_var = tk.StringVar(value=str(config.get("grok2api_remote_admin_password", "")))
         self.grok2api_remote_password_entry = tk_entry(config_frame, textvariable=self.grok2api_remote_password_var, width=34, show="*")
-        add_field(self.grok2api_remote_password_entry, 12, 3)
+        add_field(self.grok2api_remote_password_entry, 15, 3)
 
-        add_label(13, 0, "OIDC / CPA:")
+        add_label(16, 0, "OIDC / CPA:")
         self.cpa_export_var = tk.BooleanVar(value=bool(config.get("cpa_export_enabled", False)))
         self.cpa_export_check = tk_checkbutton(config_frame, text="注册成功后导出 CPA xAI OIDC", variable=self.cpa_export_var)
-        add_field(self.cpa_export_check, 13, 1, sticky=tk.W)
+        add_field(self.cpa_export_check, 16, 1, sticky=tk.W)
 
-        add_label(13, 2, "CPA 输出目录:")
+        add_label(16, 2, "CPA 输出目录:")
         self.cpa_auth_dir_var = tk.StringVar(value=str(config.get("cpa_auth_dir", "./cpa_auths")))
         self.cpa_auth_dir_entry = tk_entry(config_frame, textvariable=self.cpa_auth_dir_var, width=34)
-        add_field(self.cpa_auth_dir_entry, 13, 3)
+        add_field(self.cpa_auth_dir_entry, 16, 3)
 
-        add_label(14, 0, "并发注册:")
+        add_label(17, 0, "并发注册:")
         self.multi_thread_var = tk.BooleanVar(value=bool(config.get("multi_thread_enabled", False)))
         self.multi_thread_check = tk_checkbutton(
             config_frame,
@@ -908,8 +930,8 @@ class GrokRegisterGUI:
             variable=self.multi_thread_var,
             command=self._sync_multithread_controls,
         )
-        add_field(self.multi_thread_check, 14, 1, sticky=tk.W)
-        add_label(14, 2, "线程数:")
+        add_field(self.multi_thread_check, 17, 1, sticky=tk.W)
+        add_label(17, 2, "线程数:")
         self.multi_thread_workers_var = tk.StringVar(value=str(config.get("multi_thread_workers", 4)))
         self.multi_thread_workers_spinbox = tk.Spinbox(
             config_frame,
@@ -925,52 +947,52 @@ class GrokRegisterGUI:
             disabledforeground=UI_MUTED_FG,
             relief=tk.SOLID,
         )
-        add_field(self.multi_thread_workers_spinbox, 14, 3, sticky=tk.W)
+        add_field(self.multi_thread_workers_spinbox, 17, 3, sticky=tk.W)
         self._sync_multithread_controls()
 
-        add_label(15, 0, "代理模式:")
+        add_label(18, 0, "代理模式:")
         self.proxy_mode_var = tk.StringVar(value=str(config.get("proxy_mode", "auto")))
         self.proxy_mode_combo = tk_option_menu(config_frame, self.proxy_mode_var, ["auto", "direct", "single", "pool"], width=12)
-        add_field(self.proxy_mode_combo, 15, 1, sticky=tk.W)
-        add_label(15, 2, "代理池回退:")
+        add_field(self.proxy_mode_combo, 18, 1, sticky=tk.W)
+        add_label(18, 2, "代理池回退:")
         self.proxy_fallback_var = tk.StringVar(value=str(config.get("proxy_fallback", "none")))
         self.proxy_fallback_combo = tk_option_menu(config_frame, self.proxy_fallback_var, ["none", "direct", "single"], width=12)
-        add_field(self.proxy_fallback_combo, 15, 3, sticky=tk.W)
+        add_field(self.proxy_fallback_combo, 18, 3, sticky=tk.W)
 
-        add_label(16, 0, "代理池文件:")
+        add_label(19, 0, "代理池文件:")
         self.proxy_pool_file_var = tk.StringVar(value=str(config.get("proxy_pool_file", "")))
         self.proxy_pool_file_entry = tk_entry(config_frame, textvariable=self.proxy_pool_file_var, width=34)
-        add_field(self.proxy_pool_file_entry, 16, 1)
-        add_label(16, 2, "节点类型:")
+        add_field(self.proxy_pool_file_entry, 19, 1)
+        add_label(19, 2, "节点类型:")
         self.proxy_endpoint_mode_var = tk.StringVar(value=str(config.get("proxy_pool_endpoint_mode", "auto")))
         self.proxy_endpoint_mode_combo = tk_option_menu(config_frame, self.proxy_endpoint_mode_var, ["auto", "fixed", "rotating"], width=12)
-        add_field(self.proxy_endpoint_mode_combo, 16, 3, sticky=tk.W)
+        add_field(self.proxy_endpoint_mode_combo, 19, 3, sticky=tk.W)
 
-        add_label(17, 0, "代理订阅 URL:")
+        add_label(20, 0, "代理订阅 URL:")
         self.proxy_subscription_var = tk.StringVar(value=str(config.get("proxy_pool_subscription_url", "")))
         self.proxy_subscription_entry = tk_entry(config_frame, textvariable=self.proxy_subscription_var, width=72)
-        add_field(self.proxy_subscription_entry, 17, 1, columnspan=3)
+        add_field(self.proxy_subscription_entry, 20, 1, columnspan=3)
 
-        add_label(18, 0, "单节点并发:")
+        add_label(21, 0, "单节点并发:")
         self.proxy_capacity_var = tk.StringVar(value=str(config.get("proxy_pool_max_concurrent_per_node", 1)))
         self.proxy_capacity_spinbox = tk.Spinbox(config_frame, from_=1, to=64, width=8, textvariable=self.proxy_capacity_var, bg=UI_ENTRY_BG, fg=UI_FG, insertbackground=UI_FG, buttonbackground=UI_BUTTON_BG, relief=tk.SOLID)
-        add_field(self.proxy_capacity_spinbox, 18, 1, sticky=tk.W)
+        add_field(self.proxy_capacity_spinbox, 21, 1, sticky=tk.W)
         self.proxy_test_btn = tk_button(config_frame, text="测试代理池", command=self.test_proxy_pool)
-        add_field(self.proxy_test_btn, 18, 3, sticky=tk.W)
+        add_field(self.proxy_test_btn, 21, 3, sticky=tk.W)
 
-        add_label(19, 0, "高级协议后端:")
+        add_label(22, 0, "高级协议后端:")
         self.proxy_protocol_backend_var = tk.StringVar(value=str(config.get("proxy_protocol_backend", "auto")))
         self.proxy_protocol_backend_combo = tk_option_menu(config_frame, self.proxy_protocol_backend_var, ["auto", "sing-box", "native-only"], width=12)
-        add_field(self.proxy_protocol_backend_combo, 19, 1, sticky=tk.W)
-        add_label(19, 2, "sing-box 路径:")
+        add_field(self.proxy_protocol_backend_combo, 22, 1, sticky=tk.W)
+        add_label(22, 2, "sing-box 路径:")
         self.proxy_singbox_path_var = tk.StringVar(value=str(config.get("proxy_singbox_path", "")))
         self.proxy_singbox_path_entry = tk_entry(config_frame, textvariable=self.proxy_singbox_path_var, width=34)
-        add_field(self.proxy_singbox_path_entry, 19, 3)
+        add_field(self.proxy_singbox_path_entry, 22, 3)
 
-        add_label(20, 0, "协议启动超时(秒):")
+        add_label(23, 0, "协议启动超时(秒):")
         self.proxy_protocol_start_timeout_var = tk.StringVar(value=str(config.get("proxy_protocol_start_timeout_sec", 10)))
         self.proxy_protocol_start_timeout_spinbox = tk.Spinbox(config_frame, from_=3, to=60, width=8, textvariable=self.proxy_protocol_start_timeout_var, bg=UI_ENTRY_BG, fg=UI_FG, insertbackground=UI_FG, buttonbackground=UI_BUTTON_BG, relief=tk.SOLID)
-        add_field(self.proxy_protocol_start_timeout_spinbox, 20, 1, sticky=tk.W)
+        add_field(self.proxy_protocol_start_timeout_spinbox, 23, 1, sticky=tk.W)
 
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
@@ -1139,6 +1161,10 @@ class GrokRegisterGUI:
         config["cloudmail_api_base"] = self.cloudmail_api_base_var.get().strip()
         config["cloudmail_public_token"] = self.cloudmail_public_token_var.get().strip()
         config["cloudmail_domains"] = self.cloudmail_domains_var.get().strip()
+        config["boomlify_api_base"] = self.boomlify_api_base_var.get().strip() or "https://v1.boomlify.com"
+        config["boomlify_api_key"] = self.boomlify_api_key_var.get().strip()
+        config["boomlify_default_time"] = self.boomlify_default_time_var.get().strip() or "1day"
+        config["boomlify_default_domain"] = self.boomlify_default_domain_var.get().strip()
         config["grok2api_auto_add_local"] = bool(self.grok2api_local_auto_var.get())
         config["grok2api_local_token_file"] = self.grok2api_local_file_var.get().strip()
         config["grok2api_pool_name"] = self.grok2api_pool_name_var.get().strip() or "ssoBasic"

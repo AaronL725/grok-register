@@ -11,18 +11,22 @@ DUCKMAIL_API_BASE = "https://api.duckmail.sbs"
 
 YYDS_API_BASE = "https://maliapi.215.im/v1"
 
+BOOMLIFY_DEFAULT_API_BASE = "https://v1.boomlify.com"
+BOOMLIFY_ALLOWED_TIMES = ("10min", "1hour", "1day", "permanent")
+
 
 config = {}
 _cf_domain_index = 0
 _cloudmail_domain_index = 0
-_OWN_NAMES = {'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain'}
+_boomlify_domain_index = 0
+_OWN_NAMES = {'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain', 'boomlify_get_email_and_token', 'boomlify_get_messages', 'boomlify_get_message_detail', 'boomlify_get_oai_code', 'boomlify_delete_email', 'get_boomlify_api_key', 'get_boomlify_api_base', 'get_boomlify_default_time', 'get_boomlify_default_domain', 'boomlify_next_default_domain', 'boomlify_build_headers'}
 
 
 def bind_runtime(namespace):
     global config
     config = namespace.get("config", config)
     for name, value in namespace.items():
-        if name.startswith("__") or name in _OWN_NAMES or name in {"config", "_cf_domain_index", "_cloudmail_domain_index"}:
+        if name.startswith("__") or name in _OWN_NAMES or name in {"config", "_cf_domain_index", "_cloudmail_domain_index", "_boomlify_domain_index"}:
             continue
         globals()[name] = value
 
@@ -436,6 +440,243 @@ def cloudmail_next_domain():
     _cloudmail_domain_index += 1
     return domain
 
+def boomlify_build_headers():
+    """Build Boomlify request headers using X-API-Key auth."""
+    key = get_boomlify_api_key()
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["X-API-Key"] = key
+    return headers
+
+def boomlify_next_default_domain():
+    """Rotate user-configured Boomlify domain list (comma-separated)."""
+    global _boomlify_domain_index
+    domains = [x.strip() for x in str(get_boomlify_default_domain() or "").split(",") if x.strip()]
+    if not domains:
+        return ""
+    allocator = globals().get("domain_allocator")
+    if allocator is not None:
+        return allocator.next("boomlify", domains)
+    domain = domains[_boomlify_domain_index % len(domains)]
+    _boomlify_domain_index += 1
+    return domain
+
+def boomlify_create_email():
+    """Create a new Boomlify temp email. Returns (address, email_id)."""
+    api_base = get_boomlify_api_base()
+    if not api_base:
+        raise Exception("Boomlify API Base 未配置")
+    time_param = get_boomlify_default_time()
+    if time_param not in BOOMLIFY_ALLOWED_TIMES:
+        time_param = "1day"
+    domain = boomlify_next_default_domain()
+    params = {"time": time_param}
+    if domain:
+        params["domain"] = domain
+    resp = http_post(
+        f"{api_base}/api/v1/emails/create",
+        params=params,
+        headers=boomlify_build_headers(),
+    )
+    if resp.status_code >= 400:
+        raise Exception(
+            f"Boomlify 创建邮箱失败: HTTP {resp.status_code} | {resp.text[:300]}"
+        )
+    try:
+        data = resp.json()
+    except Exception:
+        raise Exception(f"Boomlify 创建邮箱返回非 JSON: {resp.text[:300]}")
+    # Boomlify 实际响应结构: {"success": true, "email": {"id": ..., "address": ..., ...}, "meta": {...}}
+    # 也兼容老结构 (id/email 顶层)
+    email_obj = data.get("email") if isinstance(data.get("email"), dict) else data
+    email_id = (
+        email_obj.get("id")
+        or data.get("id")
+        or data.get("email_id")
+        or data.get("emailId")
+        or data.get("uuid")
+    )
+    address = (
+        email_obj.get("address")
+        or email_obj.get("email")
+        or data.get("email")
+        or data.get("address")
+        or data.get("email_address")
+    )
+    if not email_id or not address:
+        raise Exception(f"Boomlify 响应缺少 id/email 字段: {data}")
+    return address, email_id
+
+def boomlify_get_email_and_token():
+    """Factory: create Boomlify email + return (address, email_id-as-token)."""
+    if not get_boomlify_api_key():
+        raise Exception("Boomlify API Key 未配置 (boomlify_api_key)")
+    address, email_id = boomlify_create_email()
+    return address, email_id
+
+def boomlify_get_messages(email_id, limit=20):
+    """List messages for a given Boomlify email id."""
+    api_base = get_boomlify_api_base()
+    if not api_base:
+        raise Exception("Boomlify API Base 未配置")
+    path = f"{api_base}/api/v1/emails/{email_id}/messages"
+    resp = http_get(
+        path,
+        params={"limit": min(int(limit) or 20, 100), "offset": 0},
+        headers=boomlify_build_headers(),
+    )
+    if resp.status_code == 404:
+        return []
+    if resp.status_code >= 400:
+        raise Exception(
+            f"Boomlify 拉取邮件列表失败: HTTP {resp.status_code} | {resp.text[:300]}"
+        )
+    try:
+        data = resp.json()
+    except Exception:
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("messages", "data", "results", "emails"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        if isinstance(data.get("data"), dict):
+            nested = data["data"]
+            for key in ("messages", "results", "emails"):
+                value = nested.get(key)
+                if isinstance(value, list):
+                    return value
+    return []
+
+def boomlify_get_message_detail(email_id, message_id):
+    """Boomlify returns full message payload inline in the list endpoint;
+    for safety we also expose this stub which fetches the list and picks the
+    matching message so the existing extract_verification_code pipeline works
+    uniformly across providers."""
+    if not message_id:
+        return {}
+    for msg in boomlify_get_messages(email_id, limit=100):
+        if str(msg.get("id") or msg.get("message_id") or msg.get("uuid") or "") == str(message_id):
+            return msg
+    return {}
+
+def boomlify_get_oai_code(
+    dev_token,
+    email,
+    timeout=180,
+    poll_interval=3,
+    log_callback=None,
+    cancel_callback=None,
+    resend_callback=None,
+):
+    """Poll Boomlify inbox until a verification code is extracted."""
+    # dev_token is the Boomlify email UUID, NOT the address. The address
+    # contains an @ which would break path-based /api/v1/emails/{id}/messages.
+    email_id = dev_token
+    if not email_id:
+        raise Exception("Boomlify 缺少 email_id (dev_token) 参数")
+    if not email:
+        raise Exception("Boomlify 缺少 email 参数")
+    deadline = time.time() + timeout
+    seen_attempts = {}
+    next_resend_at = time.time() + 35
+    while time.time() < deadline:
+        raise_if_cancelled(cancel_callback)
+        if resend_callback and time.time() >= next_resend_at:
+            try:
+                resend_callback()
+                if log_callback:
+                    log_callback("[*] 已触发重新发送验证码")
+            except Exception as exc:
+                if log_callback:
+                    log_callback(f"[Debug] 触发重发验证码失败: {exc}")
+            next_resend_at = time.time() + 35
+        try:
+            messages = boomlify_get_messages(email_id, limit=50)
+        except Exception as exc:
+            if log_callback:
+                log_callback(f"[Debug] Boomlify 拉取邮件列表失败: {exc}")
+            sleep_with_cancel(poll_interval, cancel_callback)
+            continue
+        if log_callback:
+            log_callback(f"[Debug] Boomlify 本轮邮件数量: {len(messages)}")
+        for msg in messages:
+            msg_id = (
+                msg.get("id")
+                or msg.get("message_id")
+                or msg.get("uuid")
+                or msg.get("emailId")
+            )
+            if not msg_id:
+                continue
+            attempt = int(seen_attempts.get(msg_id, 0))
+            if attempt >= 5:
+                continue
+            seen_attempts[msg_id] = attempt + 1
+            to_addrs = []
+            for key in ("to", "recipient", "recipients", "to_address"):
+                value = msg.get(key)
+                if isinstance(value, str):
+                    to_addrs.append(value.lower())
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str):
+                            to_addrs.append(item.lower())
+                        elif isinstance(item, dict):
+                            addr = item.get("address") or item.get("email")
+                            if addr:
+                                to_addrs.append(str(addr).lower())
+            if to_addrs and email.lower() not in to_addrs:
+                if log_callback:
+                    log_callback(f"[Debug] 跳过疑似非目标邮件 id={msg_id} to={to_addrs}")
+                continue
+            subject = str(msg.get("subject", "") or "")
+            combined = normalize_mail_body(msg)
+            if log_callback:
+                log_callback(f"[Debug] Boomlify 收到邮件: {subject}")
+            code = extract_verification_code(combined, subject)
+            if code:
+                if log_callback:
+                    log_callback(f"[*] Boomlify 从邮件中提取到验证码: {code}")
+                return code
+            if log_callback:
+                log_callback(
+                    f"[Debug] Boomlify 邮件已解析但未提取到验证码 id={msg_id} attempt={seen_attempts[msg_id]}"
+                )
+        sleep_with_cancel(poll_interval, cancel_callback)
+    raise Exception(f"Boomlify 在 {timeout}s 内未收到验证码邮件")
+
+def boomlify_delete_email(email_id):
+    """Best-effort cleanup of a Boomlify email. Errors are swallowed because
+    the email will expire on its own based on boomlify_default_time."""
+    if not email_id:
+        return
+    try:
+        # Use the module's curl_cffi requests directly to avoid relying on a
+        # http_delete helper that may not be bound at runtime.
+        requests.delete(
+            f"{get_boomlify_api_base()}/api/v1/emails/{email_id}",
+            headers=boomlify_build_headers(),
+            timeout=15,
+        )
+    except Exception:
+        pass
+
+def get_boomlify_api_base():
+    return str(config.get("boomlify_api_base", BOOMLIFY_DEFAULT_API_BASE) or BOOMLIFY_DEFAULT_API_BASE).strip().rstrip("/")
+
+def get_boomlify_api_key():
+    return str(config.get("boomlify_api_key", "") or "").strip()
+
+def get_boomlify_default_time():
+    raw = str(config.get("boomlify_default_time", "1day") or "1day").strip().lower()
+    return raw if raw in BOOMLIFY_ALLOWED_TIMES else "1day"
+
+def get_boomlify_default_domain():
+    return str(config.get("boomlify_default_domain", "") or "").strip()
+
 def create_account(address, password, api_key=None, expires_in=0):
     headers = {"Content-Type": "application/json"}
     key = api_key or get_duckmail_api_key()
@@ -564,6 +805,8 @@ def get_duckmail_api_key():
 
 def get_email_and_token(api_key=None):
     provider = get_email_provider()
+    if provider == "boomlify":
+        return boomlify_get_email_and_token()
     if provider == "yyds":
         return yyds_get_email_and_token(api_key=api_key, jwt=get_yyds_jwt())
     if provider == "cloudmail":
@@ -650,6 +893,16 @@ def get_oai_code(
     resend_callback=None,
 ):
     provider = get_email_provider()
+    if provider == "boomlify":
+        return boomlify_get_oai_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
+        )
     if provider == "yyds":
         return yyds_get_oai_code(
             dev_token,

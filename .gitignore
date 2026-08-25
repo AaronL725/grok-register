@@ -29,3 +29,5 @@ screenshots/
 
 *.pending.jsonl
 *.pending.jsonl.lock
+*.lock
+

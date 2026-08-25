@@ -19,6 +19,10 @@ DEFAULT_CONFIG = {
     "cloudmail_public_token": "",
     "cloudmail_domains": "",
     "cloudmail_path_messages": "/api/public/emailList",
+    "boomlify_api_base": "https://v1.boomlify.com",
+    "boomlify_api_key": "",
+    "boomlify_default_time": "1day",
+    "boomlify_default_domain": "",
     "proxy_mode": "auto",
     "proxy": "",
     "proxy_fallback": "none",
@@ -152,7 +156,7 @@ def validate_config_structure(raw):
     for key in string_keys:
         cfg[key] = _require_string(cfg, key, path=key in path_keys)
     enums = {
-        "email_provider": {"duckmail", "yyds", "cloudflare", "cloudmail"},
+        "email_provider": {"duckmail", "yyds", "cloudflare", "cloudmail", "boomlify"},
         "cloudflare_auth_mode": {"query-key", "bearer", "x-api-key", "x-admin-auth", "none"},
         "grok2api_pool_name": {"ssoBasic", "ssoSuper"},
         "proxy_mode": {"auto", "direct", "single", "pool"},
@@ -179,7 +183,7 @@ def validate_config_structure(raw):
         cfg[key] = value
 
     url_keys = {
-        "cloudflare_api_base", "cloudmail_api_base",
+        "cloudflare_api_base", "cloudmail_api_base", "boomlify_api_base",
         "grok2api_remote_base", "cpa_base_url",
         "proxy_pool_subscription_url",
     }
@@ -212,6 +216,13 @@ def validate_run_requirements(cfg):
             raise ConfigError("Cloud Mail 模式缺少必需配置: " + ", ".join(missing))
     if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
         raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
+    if provider == "boomlify":
+        if not cfg["boomlify_api_key"]:
+            raise ConfigError("Boomlify 模式需要配置 boomlify_api_key")
+        if cfg["boomlify_default_time"] not in {"10min", "1hour", "1day", "permanent"}:
+            raise ConfigError(
+                "配置项 boomlify_default_time 必须是 10min/1hour/1day/permanent 之一"
+            )
 
     if cfg["proxy_mode"] == "single" and not cfg["proxy"]:
         raise ConfigError("single 代理模式必须配置 proxy")
