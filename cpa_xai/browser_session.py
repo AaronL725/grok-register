@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 LogFn = Callable[[str], None]
@@ -29,13 +28,10 @@ def create_standalone_page(proxy: Optional[str] = None, headless: bool = False, 
         raise BrowserConfirmError("DrissionPage not installed") from exc
 
     options = None
-    package_root = Path(__file__).resolve().parents[1]
     try:
         from browser_runtime import create_browser_options
 
-        options = create_browser_options(
-            extension_path=package_root / "turnstilePatch"
-        )
+        options = create_browser_options()
         logger("using shared browser_runtime.create_browser_options")
     except Exception as exc:  # noqa: BLE001
         logger("shared browser options unavailable: %s" % exc)
@@ -55,14 +51,6 @@ def create_standalone_page(proxy: Optional[str] = None, headless: bool = False, 
             "--window-size=1280,900",
         ):
             options.set_argument(flag)
-        extension = str(package_root / "turnstilePatch")
-        if os.path.isdir(extension):
-            try:
-                options.add_extension(extension)
-                logger("added extension %s" % extension)
-            except Exception as exc:  # noqa: BLE001
-                logger("extension add failed: %s" % exc)
-
     if headless:
         try:
             options.headless(True)
