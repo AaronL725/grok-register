@@ -43,6 +43,7 @@ def jwt_payload(token):
 
 
 def parse_identity(id_token=None, access_token=None):
+    """Return identity only; token lifetime is resolved separately."""
     for candidate in (id_token, access_token):
         if not candidate:
             continue
@@ -53,10 +54,18 @@ def parse_identity(id_token=None, access_token=None):
         return (
             str(payload.get("email") or "").strip(),
             str(payload.get("sub") or payload.get("principal_id") or "").strip(),
-            int(payload.get("exp") or 0),
-            int(payload.get("iat") or 0),
         )
-    return "", "", 0, 0
+    return "", ""
+
+
+def _jwt_times(token):
+    if not token:
+        return 0, 0
+    try:
+        payload = jwt_payload(token)
+    except Exception:
+        return 0, 0
+    return int(payload.get("exp") or 0), int(payload.get("iat") or 0)
 
 
 def build_cpa_xai_auth(
@@ -75,28 +84,39 @@ def build_cpa_xai_auth(
         raise ValueError("access_token is required")
     if not refresh:
         raise ValueError("refresh_token is required")
-    parsed_email, subject, exp, iat = parse_identity(id_token=id_token, access_token=access)
+    parsed_email, subject = parse_identity(id_token=id_token, access_token=access)
     final_email = str(email or parsed_email or "").strip()
+    access_exp, access_iat = _jwt_times(access)
+    now_ts = int(time.time())
+    provided_expires_in = expires_in is not None
     if expires_in is None:
-        if exp and iat and exp >= iat:
-            expires_in = exp - iat
-        elif exp:
-            expires_in = max(exp - int(time.time()), 0)
+        if access_exp and access_iat and access_exp >= access_iat:
+            expires_in = access_exp - access_iat
+        elif access_exp:
+            expires_in = max(access_exp - now_ts, 0)
         else:
             expires_in = 21600
-    expired = ""
-    if exp:
-        expired = datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    elif expires_in:
-        expired = datetime.fromtimestamp(time.time() + int(expires_in or 0), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    expires_in = max(0, int(expires_in or 0))
+    if provided_expires_in:
+        expired_ts = now_ts + expires_in
+    elif access_exp:
+        expired_ts = access_exp
+    else:
+        expired_ts = now_ts + expires_in
+    expired = (
+        datetime.fromtimestamp(expired_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if expired_ts
+        else ""
+    )
+    refreshed_at = datetime.fromtimestamp(now_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload = {
         "type": "xai",
         "access_token": access,
         "refresh_token": refresh,
         "token_type": "Bearer",
-        "expires_in": int(expires_in or 0),
+        "expires_in": expires_in,
         "expired": expired,
-        "last_refresh": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "last_refresh": refreshed_at,
         "email": final_email,
         "sub": subject,
         "base_url": str(base_url or DEFAULT_BASE_URL).rstrip("/") or DEFAULT_BASE_URL,
