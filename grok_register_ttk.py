@@ -668,7 +668,11 @@ def run_registration_common(count, log_callback, cancel_callback, accounts_outpu
         restart_browser=lambda: restart_browser(log_callback=log_callback),
         browser_missing=lambda: _registration_browser.browser is None,
         open_signup_page=lambda: open_signup_page(log_callback=log_callback, cancel_callback=cancel_callback),
-        fill_email_and_submit=lambda: fill_email_and_submit(log_callback=log_callback, cancel_callback=cancel_callback),
+        fill_email_and_submit=lambda: fill_email_and_submit(
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            on_mail_created=lambda email, token: _save_mail_credential(email, token, log_callback),
+        ),
         save_mail_credential=lambda email, token: _save_mail_credential(email, token, log_callback),
         fill_code_and_submit=lambda email, token: fill_code_and_submit(email, token, log_callback=log_callback, cancel_callback=cancel_callback),
         fill_profile_and_submit=lambda: fill_profile_and_submit(log_callback=log_callback, cancel_callback=cancel_callback),
