@@ -228,7 +228,8 @@ class AuditedReliabilityRepairTests(unittest.TestCase):
 
         with patch.object(mail_service, "get_messages", return_value=[message]), \
              patch.object(mail_service, "get_message_detail", side_effect=detail), \
-             patch.object(mail_service, "sleep_with_cancel", side_effect=sleep), \
+             patch.object(mail_service, "raise_if_cancelled", return_value=None, create=True), \
+             patch.object(mail_service, "sleep_with_cancel", side_effect=sleep, create=True), \
              patch.object(mail_service.time, "time", side_effect=now):
             code = mail_service.duckmail_get_oai_code(
                 "token",
