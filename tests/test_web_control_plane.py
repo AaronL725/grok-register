@@ -38,6 +38,7 @@ class WebControlPlaneTests(unittest.TestCase):
             })
             server._controller = None
             server._job_thread = None
+            server._maintenance_state = None
         with server._log_lock:
             server._logs.clear()
             server._log_seq = 0
@@ -106,6 +107,24 @@ class WebControlPlaneTests(unittest.TestCase):
         response = self.client.put("/api/config", json={"register_count": 2})
         self.assertEqual(response.status_code, 409)
 
+    def test_incomplete_yyds_config_can_be_saved_before_run(self):
+        cfg = self._base_config()
+        with patch.object(self.server.engine, "load_config", side_effect=self._fake_load(cfg)), patch.object(
+            self.server.engine, "save_config", return_value=None
+        ):
+            response = self.client.put(
+                "/api/config",
+                json={"email_provider": "yyds", "yyds_api_key": "", "yyds_jwt": ""},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["config"]["email_provider"], "yyds")
+
+    def test_config_update_is_rejected_during_maintenance(self):
+        with self.server._job_lock:
+            self.server._maintenance_state = "proxy_test"
+        response = self.client.put("/api/config", json={"register_count": 2})
+        self.assertEqual(response.status_code, 409)
+
     def test_proxy_pool_status_exposes_credentials(self):
         cfg = self._base_config()
         cfg.update({"proxy_mode": "single", "proxy": "http://secret:password@127.0.0.1:7890"})
@@ -123,6 +142,44 @@ class WebControlPlaneTests(unittest.TestCase):
             self.server._job_state["running"] = True
         self.assertEqual(self.client.post("/api/proxy-pool/reload").status_code, 409)
         self.assertEqual(self.client.post("/api/proxy-pool/test").status_code, 409)
+
+    def test_proxy_test_blocks_registration_start_for_full_probe_window(self):
+        cfg = self._base_config()
+        cfg.update({"proxy_mode": "single", "proxy": "http://127.0.0.1:7890"})
+        entered = threading.Event()
+        release = threading.Event()
+        responses = []
+
+        class BlockingManager:
+            def reload_sources(self, force=False):
+                return {"mode": "single", "managed": True, "nodes": []}
+
+            def probe_all(self, force=False):
+                entered.set()
+                release.wait(2)
+                return [{"id": "node", "status": "healthy"}]
+
+            def snapshot(self):
+                return {"mode": "single", "managed": True, "nodes": []}
+
+        with patch.object(self.server.engine, "load_config", side_effect=self._fake_load(cfg)), patch(
+            "proxy_pool.get_manager", return_value=BlockingManager()
+        ):
+            thread = threading.Thread(
+                target=lambda: responses.append(self.client.post("/api/proxy-pool/test")),
+                daemon=True,
+            )
+            thread.start()
+            self.assertTrue(entered.wait(1))
+            start_response = self.client.post("/api/start")
+            self.assertEqual(start_response.status_code, 409)
+            self.assertIn("proxy_test", start_response.json()["detail"])
+            release.set()
+            thread.join(2)
+
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0].status_code, 200)
+        self.assertIsNone(self.server._maintenance_state)
 
     def test_proxy_pool_reload_and_probe_use_shared_manager(self):
         cfg = self._base_config()
