@@ -708,6 +708,7 @@ class GrokRegisterGUI:
         self.root.minsize(960, 700)
         self.operation_lock = threading.Lock()
         self.is_running = False
+        self.registration_starting = False
         self.proxy_test_running = False
         self.batch_count = 0
         self.success_count = 0
@@ -1123,8 +1124,8 @@ class GrokRegisterGUI:
 
     def test_proxy_pool(self):
         with self.operation_lock:
-            if self.is_running:
-                reason = "[!] 注册任务运行期间不能手动测试代理池"
+            if self.is_running or self.registration_starting:
+                reason = "[!] 注册任务启动或运行期间不能手动测试代理池"
             elif self.proxy_test_running:
                 reason = "[!] 代理池测试已在运行"
             else:
@@ -1179,12 +1180,13 @@ class GrokRegisterGUI:
 
     def start_registration(self):
         with self.operation_lock:
-            if self.is_running:
-                reason = "[!] 当前已有任务在运行"
+            if self.is_running or self.registration_starting:
+                reason = "[!] 当前已有任务正在启动或运行"
             elif self.proxy_test_running:
                 reason = "[!] 代理池测试进行中，暂不能启动注册"
             else:
                 reason = ""
+                self.registration_starting = True
         if reason:
             self.log(reason)
             return
@@ -1237,8 +1239,13 @@ class GrokRegisterGUI:
             config.update(validated)
             save_config()
         except (ValueError, ConfigError) as exc:
+            with self.operation_lock:
+                self.registration_starting = False
             self.log(f"[!] 配置无效或保存失败: {exc}")
             return
+        with self.operation_lock:
+            self.registration_starting = False
+            self.is_running = True
         self.stop_requested = False
         self._reset_batch_counters()
         self.results = []
@@ -1247,7 +1254,7 @@ class GrokRegisterGUI:
             os.path.dirname(__file__), f"accounts_{now}.txt"
         )
         self.update_stats()
-        self._set_running_ui(True)
+        self.ui_queue.put(("running", True))
         self.log(f"[*] 配置已保存，开始执行。目标数量: {count}")
         if config.get("multi_thread_enabled") and int(config.get("multi_thread_workers", 4)) > 1 and count > 1:
             actual_workers = min(count, int(config.get("multi_thread_workers", 4)))
