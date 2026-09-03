@@ -900,16 +900,27 @@ return 'clicked';
                     if log_callback:
                         log_callback("[*] 验证码提交已确认，资料页已出现")
                     return code
-                rejection = page.run_js(
-                    r"""
+                try:
+                    rejection = page.run_js(
+                        r"""
 const text = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').toLowerCase();
 const markers = [
   'invalid code', 'incorrect code', 'wrong code', 'code expired',
   '验证码错误', '验证码无效', '验证码已过期', '验证码不正确'
 ];
 return markers.find((item) => text.includes(item)) || '';
-                    """
-                )
+                        """
+                    )
+                except (ContextLostError, JavaScriptError) as exc:
+                    # A navigation can invalidate the old execution context
+                    # just before the profile form becomes observable.
+                    if log_callback:
+                        log_callback(f"[Debug] 验证码提交后页面正在切换，继续等待: {exc}")
+                    try:
+                        refresh_active_page()
+                    except Exception:
+                        pass
+                    rejection = ""
                 if rejection:
                     raise RuntimeError(f"验证码被页面明确拒绝: {rejection}")
                 sleep_with_cancel(0.5, cancel_callback)
