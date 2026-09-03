@@ -258,10 +258,13 @@ def cloudflare_get_oai_code(
                 try:
                     detail = cloudflare_get_message_detail(api_base, dev_token, msg_id)
                     detail_body = normalize_mail_body(detail)
+                    detail_subject = str(detail.get("subject", "") or "")
                     if detail_body:
                         combined += "\n" + detail_body
+                    if detail_subject:
+                        combined += "\n" + detail_subject
                     if not subject:
-                        subject = str(detail.get("subject", "") or "")
+                        subject = detail_subject
                 except Exception as exc:
                     if log_callback:
                         log_callback(
