@@ -429,13 +429,21 @@ return !!(givenInput && familyInput && passwordInput);
     except Exception:
         return False
 
-def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None):
+def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None, on_mail_created=None):
     raise_if_cancelled(cancel_callback)
     email, dev_token = get_email_and_token()
     if not email or not dev_token:
         raise Exception("获取邮箱失败")
     if log_callback:
         log_callback(f"[*] 已创建邮箱: {email}")
+    if on_mail_created is not None:
+        try:
+            persisted = on_mail_created(email, dev_token)
+            if persisted is False and log_callback:
+                log_callback("[!] 邮箱凭据提前保存失败；注册继续，提交成功后还会再次尝试保存")
+        except Exception as exc:
+            if log_callback:
+                log_callback(f"[!] 邮箱凭据提前保存异常；注册继续，提交成功后还会再次尝试保存: {exc}")
     deadline = time.time() + timeout
     last_diag_time = 0
     last_reclick_time = 0
@@ -718,7 +726,7 @@ return 'enter';
         )
     raise Exception("未找到邮箱输入框或注册按钮")
 
-def fill_code_and_submit(email, dev_token, timeout=180, log_callback=None, cancel_callback=None):
+def fill_code_and_submit(email, dev_token, timeout=180, transition_timeout=15, log_callback=None, cancel_callback=None):
     def _resend_code():
         page.run_js(
             r"""
@@ -732,6 +740,7 @@ return false;
             """
         )
 
+    _mark_registration_stage("code_wait")
     code = get_oai_code(
         dev_token,
         email,
@@ -880,13 +889,50 @@ return 'clicked';
 
         if clicked == "clicked" or clicked == "no-button":
             if log_callback:
-                log_callback(f"[*] 已填写验证码并提交: {code}")
-            sleep_with_cancel(1.5, cancel_callback)
-            return code
+                if clicked == "clicked":
+                    log_callback(f"[*] 已填写验证码并触发提交，等待资料页确认: {code}")
+                else:
+                    log_callback(f"[*] 已填写验证码，页面未显示提交按钮，等待自动提交确认: {code}")
+            transition_deadline = min(deadline, time.time() + max(1.0, float(transition_timeout)))
+            while time.time() < transition_deadline:
+                raise_if_cancelled(cancel_callback)
+                if has_profile_form(log_callback=log_callback):
+                    if log_callback:
+                        log_callback("[*] 验证码提交已确认，资料页已出现")
+                    return code
+                try:
+                    rejection = page.run_js(
+                        r"""
+const text = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').toLowerCase();
+const markers = [
+  'invalid code', 'incorrect code', 'wrong code', 'code expired',
+  '验证码错误', '验证码无效', '验证码已过期', '验证码不正确'
+];
+return markers.find((item) => text.includes(item)) || '';
+                        """
+                    )
+                except (ContextLostError, JavaScriptError) as exc:
+                    # A navigation can invalidate the old execution context
+                    # just before the profile form becomes observable.
+                    if log_callback:
+                        log_callback(f"[Debug] 验证码提交后页面正在切换，继续等待: {exc}")
+                    try:
+                        refresh_active_page()
+                    except Exception:
+                        pass
+                    rejection = ""
+                if rejection:
+                    raise RuntimeError(f"验证码被页面明确拒绝: {rejection}")
+                sleep_with_cancel(0.5, cancel_callback)
+            from registration_flow import VerificationSubmissionUnconfirmed
+            raise VerificationSubmissionUnconfirmed(
+                f"验证码已填写，但在 {transition_timeout}s 内未确认进入资料页"
+            )
 
         sleep_with_cancel(0.5, cancel_callback)
 
-    raise Exception("验证码已获取，但自动填写/提交失败")
+    from registration_flow import VerificationSubmissionUnconfirmed
+    raise VerificationSubmissionUnconfirmed("验证码已获取，但自动填写/提交结果无法确认")
 
 def getTurnstileToken(log_callback=None, cancel_callback=None):
     global page

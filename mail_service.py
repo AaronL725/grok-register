@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests
+from registration_flow import VerificationCodeUnavailable
 
 DUCKMAIL_API_BASE = "https://api.duckmail.sbs"
 
@@ -15,6 +16,26 @@ YYDS_API_BASE = "https://maliapi.215.im/v1"
 config = {}
 _cf_domain_index = 0
 _cloudmail_domain_index = 0
+
+
+def _detail_retry_attempt(state, message_id, now=None):
+    """Return a 1-based detail-fetch attempt when due, otherwise 0.
+
+    A message is never permanently discarded merely because it has already
+    been inspected several times. Detail retries back off while the enclosing
+    mailbox timeout remains authoritative.
+    """
+    current = time.time() if now is None else float(now)
+    key = str(message_id)
+    record = state.setdefault(key, {"attempts": 0, "next_retry_at": 0.0})
+    if current < float(record.get("next_retry_at") or 0.0):
+        return 0
+    attempt = int(record.get("attempts") or 0) + 1
+    record["attempts"] = attempt
+    delay = min(15.0, 2.0 * (2 ** max(0, attempt - 1)))
+    record["next_retry_at"] = current + delay
+    return attempt
+
 _OWN_NAMES = {'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain'}
 
 
@@ -188,8 +209,7 @@ def cloudflare_get_oai_code(
     if not api_base:
         raise Exception("Cloudflare API Base 未配置")
     deadline = time.time() + timeout
-    # 同一封邮件正文可能延迟可读，允许多次重试解析，避免偶发漏码
-    seen_attempts = {}
+    detail_retries = {}
     next_resend_at = time.time() + 35
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
@@ -216,13 +236,8 @@ def cloudflare_get_oai_code(
             msg_id = msg.get("id") or msg.get("msgid")
             if not msg_id:
                 continue
-            attempt = int(seen_attempts.get(msg_id, 0))
-            if attempt >= 5:
-                continue
-            seen_attempts[msg_id] = attempt + 1
             recipients = [t.get("address", "").lower() for t in (msg.get("to") or [])]
             msg_addr = str(msg.get("address", "")).lower()
-            # 优先匹配目标邮箱；若结构不一致也允许继续解析，避免接口字段漂移导致漏码
             address_matched = True
             if recipients:
                 address_matched = email.lower() in recipients
@@ -232,20 +247,31 @@ def cloudflare_get_oai_code(
                 if log_callback:
                     log_callback(f"[Debug] 跳过疑似非目标邮件 id={msg_id} address={msg_addr} to={recipients}")
                 continue
-            # 先直接从列表项取内容，避免 detail 接口差异导致漏码
+
+            # Always inspect the latest list payload. Some providers fill the
+            # same message object in-place after the initial notification.
             subject = str(msg.get("subject", "") or "")
             combined = normalize_mail_body(msg)
-            # 再尝试 detail 接口补全内容
-            try:
-                detail = cloudflare_get_message_detail(api_base, dev_token, msg_id)
-                detail_body = normalize_mail_body(detail)
-                if detail_body:
-                    combined += "\n" + detail_body
-                if not subject:
-                    subject = str(detail.get("subject", "") or "")
-            except Exception as exc:
-                if log_callback:
-                    log_callback(f"[Debug] Cloudflare detail接口失败，改用列表内容解析: {exc}")
+
+            detail_attempt = _detail_retry_attempt(detail_retries, msg_id)
+            if detail_attempt:
+                try:
+                    detail = cloudflare_get_message_detail(api_base, dev_token, msg_id)
+                    detail_body = normalize_mail_body(detail)
+                    detail_subject = str(detail.get("subject", "") or "")
+                    if detail_body:
+                        combined += "\n" + detail_body
+                    if detail_subject:
+                        combined += "\n" + detail_subject
+                    if not subject:
+                        subject = detail_subject
+                except Exception as exc:
+                    if log_callback:
+                        log_callback(
+                            f"[Debug] Cloudflare detail接口失败，保留列表内容继续等待: "
+                            f"id={msg_id} attempt={detail_attempt}: {exc}"
+                        )
+
             if log_callback:
                 log_callback(f"[Debug] Cloudflare 收到邮件: {subject}")
             code = extract_verification_code(combined, subject)
@@ -253,10 +279,11 @@ def cloudflare_get_oai_code(
                 if log_callback:
                     log_callback(f"[*] Cloudflare 从邮件中提取到验证码: {code}")
                 return code
-            elif log_callback:
-                log_callback(f"[Debug] 邮件已解析但未提取到验证码 id={msg_id} attempt={seen_attempts[msg_id]}")
+            if log_callback:
+                attempts = int(detail_retries.get(str(msg_id), {}).get("attempts") or 0)
+                log_callback(f"[Debug] 邮件已解析但未提取到验证码 id={msg_id} detail_attempts={attempts}")
         sleep_with_cancel(poll_interval, cancel_callback)
-    raise Exception(f"Cloudflare 在 {timeout}s 内未收到验证码邮件")
+    raise VerificationCodeUnavailable(f"Cloudflare 在 {timeout}s 内未收到验证码邮件")
 
 def cloudflare_get_token(api_base, address, password, api_key=None):
     headers = cloudflare_build_headers(content_type=True)
@@ -361,7 +388,6 @@ def cloudmail_get_oai_code(
     cancel_callback=None,
     resend_callback=None,
 ):
-    # dev_token 是为了保持现有邮箱 Provider 调用契约；Cloud Mail 使用配置中的公共 Token。
     _ = dev_token
     deadline = time.time() + timeout
     seen_attempts = {}
@@ -390,13 +416,8 @@ def cloudmail_get_oai_code(
             msg_id = msg.get("emailId") or msg.get("email_id") or msg.get("id")
             if not msg_id:
                 continue
-            attempt = int(seen_attempts.get(msg_id, 0))
-            if attempt >= 5:
-                continue
-            seen_attempts[msg_id] = attempt + 1
-            target_address = str(
-                msg.get("toEmail") or msg.get("to_email") or ""
-            ).strip().lower()
+            seen_attempts[msg_id] = int(seen_attempts.get(msg_id, 0)) + 1
+            target_address = str(msg.get("toEmail") or msg.get("to_email") or "").strip().lower()
             if target_address and target_address != email.lower():
                 continue
             code_value = str(msg.get("code", "") or "").strip()
@@ -417,7 +438,7 @@ def cloudmail_get_oai_code(
                     f"id={msg_id} attempt={seen_attempts[msg_id]}"
                 )
         sleep_with_cancel(poll_interval, cancel_callback)
-    raise Exception(f"Cloud Mail 在 {timeout}s 内未收到验证码邮件")
+    raise VerificationCodeUnavailable(f"Cloud Mail 在 {timeout}s 内未收到验证码邮件")
 
 def cloudmail_next_domain():
     """按配置轮换选择 Cloud Mail 无人收件域名。"""
@@ -455,7 +476,7 @@ def duckmail_get_oai_code(
     cancel_callback=None,
 ):
     deadline = time.time() + timeout
-    seen_attempts = {}
+    detail_retries = {}
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
         try:
@@ -472,18 +493,26 @@ def duckmail_get_oai_code(
             recipients = [t.get("address", "").lower() for t in (msg.get("to") or [])]
             if email.lower() not in recipients:
                 continue
-            attempt = int(seen_attempts.get(msg_id, 0))
-            if attempt >= 5:
+
+            subject = str(msg.get("subject", "") or "")
+            combined = normalize_mail_body(msg)
+            code = extract_verification_code(combined, subject)
+            if code:
+                if log_callback:
+                    log_callback(f"[*] 从邮件列表中提取到验证码: {code}")
+                return code
+
+            detail_attempt = _detail_retry_attempt(detail_retries, msg_id)
+            if not detail_attempt:
                 continue
-            seen_attempts[msg_id] = attempt + 1
             try:
                 detail = get_message_detail(dev_token, msg_id)
             except Exception as exc:
                 if log_callback:
-                    log_callback(f"[Debug] 获取邮件详情失败: {exc}")
+                    log_callback(f"[Debug] 获取邮件详情失败 id={msg_id} attempt={detail_attempt}: {exc}")
                 continue
             combined = normalize_mail_body(detail)
-            subject = detail.get("subject", "")
+            subject = str(detail.get("subject", "") or "")
             if log_callback:
                 log_callback(f"[Debug] 收到邮件: {subject}")
             code = extract_verification_code(combined, subject)
@@ -492,7 +521,7 @@ def duckmail_get_oai_code(
                     log_callback(f"[*] 从邮件中提取到验证码: {code}")
                 return code
         sleep_with_cancel(poll_interval, cancel_callback)
-    raise Exception(f"在 {timeout}s 内未收到验证码邮件")
+    raise VerificationCodeUnavailable(f"在 {timeout}s 内未收到验证码邮件")
 
 def extract_verification_code(text, subject=""):
     if subject:
@@ -822,7 +851,7 @@ def yyds_get_oai_code(
     cancel_callback=None,
 ):
     deadline = time.time() + timeout
-    seen_attempts = {}
+    detail_retries = {}
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
         try:
@@ -839,18 +868,26 @@ def yyds_get_oai_code(
             to_addrs = [t.get("address", "").lower() for t in (msg.get("to") or [])]
             if address.lower() not in to_addrs:
                 continue
-            attempt = int(seen_attempts.get(msg_id, 0))
-            if attempt >= 5:
+
+            subject = str(msg.get("subject", "") or "")
+            combined = normalize_mail_body(msg)
+            code = extract_verification_code(combined, subject)
+            if code:
+                if log_callback:
+                    log_callback(f"[*] YYDS 从邮件列表中提取到验证码: {code}")
+                return code
+
+            detail_attempt = _detail_retry_attempt(detail_retries, msg_id)
+            if not detail_attempt:
                 continue
-            seen_attempts[msg_id] = attempt + 1
             try:
                 detail = yyds_get_message_detail(msg_id, token=token, jwt=jwt)
             except Exception as exc:
                 if log_callback:
-                    log_callback(f"[Debug] YYDS 获取邮件详情失败: {exc}")
+                    log_callback(f"[Debug] YYDS 获取邮件详情失败 id={msg_id} attempt={detail_attempt}: {exc}")
                 continue
             combined = normalize_mail_body(detail)
-            subject = detail.get("subject", "")
+            subject = str(detail.get("subject", "") or "")
             if log_callback:
                 log_callback(f"[Debug] YYDS 收到邮件: {subject}")
             code = extract_verification_code(combined, subject)
@@ -859,7 +896,7 @@ def yyds_get_oai_code(
                     log_callback(f"[*] YYDS 从邮件中提取到验证码: {code}")
                 return code
         sleep_with_cancel(poll_interval, cancel_callback)
-    raise Exception(f"YYDS 在 {timeout}s 内未收到验证码邮件")
+    raise VerificationCodeUnavailable(f"YYDS 在 {timeout}s 内未收到验证码邮件")
 
 def yyds_get_token(address, api_key=None, jwt=None):
     key = api_key or get_yyds_api_key()

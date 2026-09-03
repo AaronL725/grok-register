@@ -88,20 +88,36 @@ class MinimalBoundaryRegressionTests(unittest.TestCase):
 
     def test_duckmail_retries_same_message_after_detail_failure(self):
         message = {"id": "m1", "to": [{"address": "user@example.com"}]}
+        clock = {"now": 0.0}
+
+        def now():
+            return clock["now"]
+
+        def sleep(seconds, _cancel=None):
+            clock["now"] += max(float(seconds), 2.0)
+
         with patch.object(mail_service, "get_messages", return_value=[message]), \
              patch.object(mail_service, "get_message_detail", side_effect=[RuntimeError("temporary"), {"subject": "ABC-123 xAI"}]), \
-             patch.object(mail_service, "sleep_with_cancel", return_value=None), \
-             patch.object(mail_service.time, "time", side_effect=[0, 0, 0]):
-            code = mail_service.duckmail_get_oai_code("token", "user@example.com", timeout=1, poll_interval=0)
+             patch.object(mail_service, "sleep_with_cancel", side_effect=sleep), \
+             patch.object(mail_service.time, "time", side_effect=now):
+            code = mail_service.duckmail_get_oai_code("token", "user@example.com", timeout=10, poll_interval=2)
         self.assertEqual(code, "ABC-123")
 
     def test_yyds_retries_same_message_after_detail_failure(self):
         message = {"id": "m1", "to": [{"address": "user@example.com"}]}
+        clock = {"now": 0.0}
+
+        def now():
+            return clock["now"]
+
+        def sleep(seconds, _cancel=None):
+            clock["now"] += max(float(seconds), 2.0)
+
         with patch.object(mail_service, "yyds_get_messages", return_value=[message]), \
              patch.object(mail_service, "yyds_get_message_detail", side_effect=[RuntimeError("temporary"), {"subject": "ABC-123 xAI"}]), \
-             patch.object(mail_service, "sleep_with_cancel", return_value=None), \
-             patch.object(mail_service.time, "time", side_effect=[0, 0, 0]):
-            code = mail_service.yyds_get_oai_code("token", "user@example.com", timeout=1, poll_interval=0)
+             patch.object(mail_service, "sleep_with_cancel", side_effect=sleep), \
+             patch.object(mail_service.time, "time", side_effect=now):
+            code = mail_service.yyds_get_oai_code("token", "user@example.com", timeout=10, poll_interval=2)
         self.assertEqual(code, "ABC-123")
 
     def test_pending_recovery_acquires_pending_and_target_locks_in_fixed_order(self):

@@ -20,6 +20,21 @@ _config = {}
 _extension_path = ""
 
 
+def _legacy_extension_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "turnstilePatch")
+
+
+def _resolve_extension_path(explicit=None):
+    if explicit is not None:
+        candidate = str(explicit or "").strip()
+        return candidate if candidate and os.path.isdir(candidate) else ""
+    configured = str(_extension_path or "").strip()
+    if configured and os.path.isdir(configured):
+        return configured
+    legacy = _legacy_extension_path()
+    return legacy if os.path.isdir(legacy) else ""
+
+
 def configure_runtime(config_ref, extension_path=""):
     global _config, _extension_path
     _config = config_ref
@@ -164,8 +179,8 @@ def create_browser_options(browser_proxy="", extension_path=None):
     options.auto_port()
     options.set_timeouts(base=1)
     apply_browser_proxy_option(options, browser_proxy)
-    effective_extension = _extension_path if extension_path is None else str(extension_path or "")
-    if effective_extension and os.path.exists(effective_extension):
+    effective_extension = _resolve_extension_path(extension_path)
+    if effective_extension:
         options.add_extension(effective_extension)
     return options
 

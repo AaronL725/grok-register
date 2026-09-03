@@ -160,7 +160,9 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
                 log_callback=worker_log, cancel_callback=combined_cancelled
             ),
             fill_email_and_submit=lambda: browser_module.fill_email_and_submit(
-                log_callback=worker_log, cancel_callback=combined_cancelled
+                log_callback=worker_log,
+                cancel_callback=combined_cancelled,
+                on_mail_created=save_mail,
             ),
             save_mail_credential=save_mail,
             fill_code_and_submit=lambda email, token: browser_module.fill_code_and_submit(

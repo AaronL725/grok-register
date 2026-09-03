@@ -52,12 +52,19 @@ class PostModularizationRegressionTests(unittest.TestCase):
         gui = app.GrokRegisterGUI.__new__(app.GrokRegisterGUI)
         gui.success_count = 1
         gui.fail_count = 2
-        gui.registered_unsaved_count = 3
-        gui.postprocess_warning_count = 4
+        gui.uncertain_count = 3
+        gui.registered_unsaved_count = 4
+        gui.postprocess_warning_count = 5
         gui._reset_batch_counters()
         self.assertEqual(
-            (gui.success_count, gui.fail_count, gui.registered_unsaved_count, gui.postprocess_warning_count),
-            (0, 0, 0, 0),
+            (
+                gui.success_count,
+                gui.fail_count,
+                gui.uncertain_count,
+                gui.registered_unsaved_count,
+                gui.postprocess_warning_count,
+            ),
+            (0, 0, 0, 0, 0),
         )
 
     def test_cpa_hotload_requirement_only_applies_when_export_enabled(self):
@@ -96,6 +103,7 @@ class PostModularizationRegressionTests(unittest.TestCase):
         source = Path(browser_session.__file__).read_text(encoding="utf-8")
         self.assertNotIn("from grok_register_ttk", source)
         self.assertIn("from browser_runtime import create_browser_options", source)
+        self.assertNotIn("turnstilePatch", source)
 
     def test_browser_options_accept_explicit_extension_path(self):
         self.assertIn("extension_path", browser_runtime.create_browser_options.__code__.co_varnames)

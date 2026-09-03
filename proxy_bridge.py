@@ -385,11 +385,17 @@ def proxy_for_chromium(proxy):
     parsed = parse_proxy_url(raw)
     if not parsed or not parsed.hostname:
         return ""
+    scheme = (parsed.scheme or "http").lower()
+    if scheme == "socks4a":
+        raise ValueError("SOCKS4A requires prepare_chromium_proxy() to preserve remote DNS semantics")
+    if scheme == "socks5h":
+        # Chromium SOCKSv5 already resolves target hostnames through the proxy;
+        # its accepted configuration scheme is socks5:// rather than socks5h://.
+        scheme = "socks5"
     host = parsed.hostname
     if ":" in host and not host.startswith("["):
         host = "[%s]" % host
-    port = safe_proxy_port(parsed) or (443 if (parsed.scheme or "http").lower() == "https" else 1080 if (parsed.scheme or "").lower().startswith("socks") else 80)
-    scheme = parsed.scheme or "http"
+    port = safe_proxy_port(parsed) or (443 if scheme == "https" else 1080 if scheme.startswith("socks") else 80)
     return "%s://%s:%s" % (scheme, host, port)
 
 
@@ -401,10 +407,14 @@ def prepare_chromium_proxy(proxy, log=None):
     parsed = parse_proxy_url(raw)
     if not parsed or not parsed.hostname:
         raise ValueError("proxy URL is invalid")
-    if proxy_has_auth(raw):
+    scheme = (parsed.scheme or "http").lower()
+    if proxy_has_auth(raw) or scheme == "socks4a":
         bridge = LocalProxyBridge(raw)
         local_proxy = bridge.start()
-        logger("started authenticated proxy bridge: %s" % local_proxy)
+        if proxy_has_auth(raw):
+            logger("started authenticated proxy bridge: %s" % local_proxy)
+        else:
+            logger("started SOCKS4A compatibility proxy bridge: %s" % local_proxy)
         return local_proxy, bridge
     return proxy_for_chromium(raw), None
 

@@ -144,10 +144,6 @@ def warn_runtime_compatibility():
 ensure_stable_python_runtime()
 warn_runtime_compatibility()
 
-EXTENSION_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "turnstilePatch")
-)
-
 
 
 
@@ -253,7 +249,7 @@ def _make_compat_proxy(module, name, binder=None):
 
 
 def _bind_browser_runtime():
-    _browser_runtime.configure_runtime(config, EXTENSION_PATH)
+    _browser_runtime.configure_runtime(config)
 
 
 def _bind_account_outputs():
@@ -668,7 +664,11 @@ def run_registration_common(count, log_callback, cancel_callback, accounts_outpu
         restart_browser=lambda: restart_browser(log_callback=log_callback),
         browser_missing=lambda: _registration_browser.browser is None,
         open_signup_page=lambda: open_signup_page(log_callback=log_callback, cancel_callback=cancel_callback),
-        fill_email_and_submit=lambda: fill_email_and_submit(log_callback=log_callback, cancel_callback=cancel_callback),
+        fill_email_and_submit=lambda: fill_email_and_submit(
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            on_mail_created=lambda email, token: _save_mail_credential(email, token, log_callback),
+        ),
         save_mail_credential=lambda email, token: _save_mail_credential(email, token, log_callback),
         fill_code_and_submit=lambda email, token: fill_code_and_submit(email, token, log_callback=log_callback, cancel_callback=cancel_callback),
         fill_profile_and_submit=lambda: fill_profile_and_submit(log_callback=log_callback, cancel_callback=cancel_callback),
@@ -706,10 +706,14 @@ class GrokRegisterGUI:
         self.root.title("Grok 注册机")
         self.root.geometry("1120x900")
         self.root.minsize(960, 700)
+        self.operation_lock = threading.Lock()
         self.is_running = False
+        self.registration_starting = False
+        self.proxy_test_running = False
         self.batch_count = 0
         self.success_count = 0
         self.fail_count = 0
+        self.uncertain_count = 0
         self.registered_unsaved_count = 0
         self.postprocess_warning_count = 0
         self.results = []
@@ -972,6 +976,16 @@ class GrokRegisterGUI:
         self.proxy_protocol_start_timeout_spinbox = tk.Spinbox(config_frame, from_=3, to=60, width=8, textvariable=self.proxy_protocol_start_timeout_var, bg=UI_ENTRY_BG, fg=UI_FG, insertbackground=UI_FG, buttonbackground=UI_BUTTON_BG, relief=tk.SOLID)
         add_field(self.proxy_protocol_start_timeout_spinbox, 20, 1, sticky=tk.W)
 
+        add_label(21, 0, "YYDS API Key:")
+        self.yyds_api_key_var = tk.StringVar(value=str(config.get("yyds_api_key", "")))
+        self.yyds_api_key_entry = tk_entry(config_frame, textvariable=self.yyds_api_key_var, width=34, show="*")
+        add_field(self.yyds_api_key_entry, 21, 1)
+
+        add_label(21, 2, "YYDS JWT:")
+        self.yyds_jwt_var = tk.StringVar(value=str(config.get("yyds_jwt", "")))
+        self.yyds_jwt_entry = tk_entry(config_frame, textvariable=self.yyds_jwt_var, width=34, show="*")
+        add_field(self.yyds_jwt_entry, 21, 3)
+
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
         self.start_btn = tk_button(btn_frame, text="开始注册", command=self.start_registration)
@@ -987,7 +1001,7 @@ class GrokRegisterGUI:
         tk_label(status_frame, text="状态: ").pack(side=tk.LEFT)
         self.status_label = tk.Label(status_frame, textvariable=self.status_var, bg=UI_BG, fg="green")
         self.status_label.pack(side=tk.LEFT)
-        self.stats_var = tk.StringVar(value="成功: 0 | 失败: 0 | 待恢复: 0 | 后处理警告: 0")
+        self.stats_var = tk.StringVar(value="成功: 0 | 失败: 0 | 结果不确定: 0 | 待恢复: 0 | 后处理警告: 0")
         tk.Label(status_frame, textvariable=self.stats_var, bg=UI_BG, fg=UI_FG).pack(side=tk.RIGHT)
         log_frame = tk.LabelFrame(
             main_frame,
@@ -1032,13 +1046,28 @@ class GrokRegisterGUI:
                 elif kind == "clear_log":
                     self.log_text.delete(1.0, tk.END)
                 elif kind == "stats":
-                    self.stats_var.set(f"成功: {event[1]} | 失败: {event[2]} | 待恢复: {event[3]} | 后处理警告: {event[4]}")
+                    self.stats_var.set(
+                        f"成功: {event[1]} | 失败: {event[2]} | 结果不确定: {event[3]} | "
+                        f"待恢复: {event[4]} | 后处理警告: {event[5]}"
+                    )
                 elif kind == "running":
                     running = bool(event[1])
-                    self.start_btn.config(state=tk.DISABLED if running else tk.NORMAL)
+                    with self.operation_lock:
+                        testing = bool(self.proxy_test_running)
+                    self.start_btn.config(state=tk.DISABLED if (running or testing) else tk.NORMAL)
+                    self.proxy_test_btn.config(state=tk.DISABLED if (running or testing) else tk.NORMAL)
                     self.stop_btn.config(state=tk.NORMAL if running else tk.DISABLED)
-                    self.status_var.set("运行中..." if running else "就绪")
-                    self.status_label.config(foreground="blue" if running else "green")
+                    self.status_var.set("运行中..." if running else ("测试代理池..." if testing else "就绪"))
+                    self.status_label.config(foreground="blue" if (running or testing) else "green")
+                elif kind == "proxy_test":
+                    testing = bool(event[1])
+                    with self.operation_lock:
+                        running = bool(self.is_running)
+                    self.start_btn.config(state=tk.DISABLED if (running or testing) else tk.NORMAL)
+                    self.proxy_test_btn.config(state=tk.DISABLED if (running or testing) else tk.NORMAL)
+                    if not running:
+                        self.status_var.set("测试代理池..." if testing else "就绪")
+                        self.status_label.config(foreground="blue" if testing else "green")
                 elif kind == "error":
                     messagebox.showerror(event[1], event[2])
         except queue.Empty:
@@ -1061,11 +1090,20 @@ class GrokRegisterGUI:
         self.ui_queue.put(("clear_log",))
 
     def update_stats(self):
-        self.ui_queue.put(("stats", self.success_count, self.fail_count, self.registered_unsaved_count, self.postprocess_warning_count))
+        self.ui_queue.put((
+            "stats",
+            self.success_count,
+            self.fail_count,
+            self.uncertain_count,
+            self.registered_unsaved_count,
+            self.postprocess_warning_count,
+        ))
 
     def _set_running_ui(self, running):
-        self.is_running = bool(running)
-        self.ui_queue.put(("running", self.is_running))
+        with self.operation_lock:
+            self.is_running = bool(running)
+            current = self.is_running
+        self.ui_queue.put(("running", current))
 
 
     def should_stop(self):
@@ -1074,6 +1112,7 @@ class GrokRegisterGUI:
     def _reset_batch_counters(self):
         self.success_count = 0
         self.fail_count = 0
+        self.uncertain_count = 0
         self.registered_unsaved_count = 0
         self.postprocess_warning_count = 0
 
@@ -1084,9 +1123,19 @@ class GrokRegisterGUI:
         self.multi_thread_workers_spinbox.config(state=state)
 
     def test_proxy_pool(self):
-        if self.is_running:
-            self.log("[!] 注册任务运行期间不能手动测试代理池")
+        with self.operation_lock:
+            if self.is_running or self.registration_starting:
+                reason = "[!] 注册任务启动或运行期间不能手动测试代理池"
+            elif self.proxy_test_running:
+                reason = "[!] 代理池测试已在运行"
+            else:
+                reason = ""
+                self.proxy_test_running = True
+        if reason:
+            self.log(reason)
             return
+        self.ui_queue.put(("proxy_test", True))
+
         def worker():
             try:
                 candidate = dict(config)
@@ -1115,11 +1164,31 @@ class GrokRegisterGUI:
                 self.log("[*] 代理池测试完成: %s/%s 个节点健康" % (healthy, len(results)))
             except Exception as exc:
                 self.log("[!] 代理池测试失败: %s" % exc)
-        threading.Thread(target=worker, name="proxy-pool-gui-test", daemon=True).start()
+            finally:
+                with self.operation_lock:
+                    self.proxy_test_running = False
+                self.ui_queue.put(("proxy_test", False))
+
+        thread = threading.Thread(target=worker, name="proxy-pool-gui-test", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with self.operation_lock:
+                self.proxy_test_running = False
+            self.ui_queue.put(("proxy_test", False))
+            raise
 
     def start_registration(self):
-        if self.is_running:
-            self.log("[!] 当前已有任务在运行")
+        with self.operation_lock:
+            if self.is_running or self.registration_starting:
+                reason = "[!] 当前已有任务正在启动或运行"
+            elif self.proxy_test_running:
+                reason = "[!] 代理池测试进行中，暂不能启动注册"
+            else:
+                reason = ""
+                self.registration_starting = True
+        if reason:
+            self.log(reason)
             return
 
         config["email_provider"] = self.email_provider_var.get().strip() or "duckmail"
@@ -1133,6 +1202,8 @@ class GrokRegisterGUI:
         config["proxy_protocol_backend"] = self.proxy_protocol_backend_var.get().strip() or "auto"
         config["proxy_singbox_path"] = self.proxy_singbox_path_var.get().strip()
         config["duckmail_api_key"] = self.api_key_var.get().strip()
+        config["yyds_api_key"] = self.yyds_api_key_var.get().strip()
+        config["yyds_jwt"] = self.yyds_jwt_var.get().strip()
         config["cloudflare_api_base"] = self.cloudflare_api_base_var.get().strip()
         config["cloudflare_api_key"] = self.cloudflare_api_key_var.get().strip()
         config["cloudflare_auth_mode"] = self.cloudflare_auth_mode_var.get().strip() or "none"
@@ -1168,8 +1239,13 @@ class GrokRegisterGUI:
             config.update(validated)
             save_config()
         except (ValueError, ConfigError) as exc:
+            with self.operation_lock:
+                self.registration_starting = False
             self.log(f"[!] 配置无效或保存失败: {exc}")
             return
+        with self.operation_lock:
+            self.registration_starting = False
+            self.is_running = True
         self.stop_requested = False
         self._reset_batch_counters()
         self.results = []
@@ -1178,7 +1254,7 @@ class GrokRegisterGUI:
             os.path.dirname(__file__), f"accounts_{now}.txt"
         )
         self.update_stats()
-        self._set_running_ui(True)
+        self.ui_queue.put(("running", True))
         self.log(f"[*] 配置已保存，开始执行。目标数量: {count}")
         if config.get("multi_thread_enabled") and int(config.get("multi_thread_workers", 4)) > 1 and count > 1:
             actual_workers = min(count, int(config.get("multi_thread_workers", 4)))
@@ -1200,6 +1276,7 @@ class GrokRegisterGUI:
         def observer(batch, account, output):
             self.success_count = batch.success_count
             self.fail_count = batch.fail_count
+            self.uncertain_count = batch.uncertain_count
             self.registered_unsaved_count = batch.registered_unsaved_count
             self.postprocess_warning_count = batch.postprocess_warning_count
             if account is not None:
@@ -1215,6 +1292,7 @@ class GrokRegisterGUI:
             )
             self.success_count = batch.success_count
             self.fail_count = batch.fail_count
+            self.uncertain_count = batch.uncertain_count
             self.registered_unsaved_count = batch.registered_unsaved_count
             self.postprocess_warning_count = batch.postprocess_warning_count
             self.update_stats()

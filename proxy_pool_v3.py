@@ -273,6 +273,7 @@ class ProxyPoolManager:
         self.state_path = state_file if os.path.isabs(state_file) else os.path.join(_ROOT, state_file)
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
+        self._refresh_lock = threading.Lock()
         self._nodes = {}
         self._probe_events = {}
         self._last_refresh = 0.0
@@ -473,9 +474,8 @@ class ProxyPoolManager:
             raise ProxyPoolError("代理池没有可用节点: %s" % detail)
         return unique
 
-    def reload_sources(self, force=False):
-        if not self.managed:
-            return self.snapshot()
+    def _reload_sources_locked(self, force=False):
+        """Refresh sources while the dedicated refresh lock is held."""
         now = time.time()
         with self._lock:
             if not force and self.refresh_interval > 0 and now - self._last_refresh < self.refresh_interval:
@@ -508,15 +508,33 @@ class ProxyPoolManager:
         self._save_state_file()
         return self.snapshot()
 
+    def reload_sources(self, force=False):
+        if not self.managed:
+            return self.snapshot()
+        with self._refresh_lock:
+            return self._reload_sources_locked(force=force)
+
     def refresh_if_due(self):
         if not self.managed:
             return
         now = time.time()
         with self._lock:
             due = self.refresh_interval > 0 and now - self._last_refresh >= self.refresh_interval
-        if due:
-            try: self.reload_sources(force=True)
-            except Exception as exc: self.log("[!] 代理池刷新失败，继续使用当前节点: %s" % safe_proxy_error_text(exc))
+        if not due or not self._refresh_lock.acquire(blocking=False):
+            return
+        try:
+            # Double-check after acquiring the refresh gate: another worker may
+            # have completed the refresh while this worker was scheduling.
+            now = time.time()
+            with self._lock:
+                due = self.refresh_interval > 0 and now - self._last_refresh >= self.refresh_interval
+            if not due:
+                return
+            self._reload_sources_locked(force=True)
+        except Exception as exc:
+            self.log("[!] 代理池刷新失败，继续使用当前节点: %s" % safe_proxy_error_text(exc))
+        finally:
+            self._refresh_lock.release()
 
     def _schedule_periodic_probe_if_due(self):
         if not self.managed or self.probe_interval <= 0:

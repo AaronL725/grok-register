@@ -25,6 +25,7 @@ app = FastAPI(title="grok-register WebUI", version="1.2")
 _job_lock = threading.Lock()
 _job_thread: Optional[threading.Thread] = None
 _controller: Any = None
+_maintenance_state: Optional[str] = None
 _job_state = {
     "running": False,
     "target": 0,
@@ -55,12 +56,34 @@ def _append_log(message: str) -> None:
 
 def _state_snapshot() -> dict[str, Any]:
     with _job_lock:
-        return dict(_job_state)
+        snapshot = dict(_job_state)
+        snapshot["maintenance"] = _maintenance_state
+        return snapshot
+
+
+def _begin_maintenance(kind: str) -> None:
+    global _maintenance_state
+    with _job_lock:
+        if _job_state["running"]:
+            raise HTTPException(status_code=409, detail="注册任务运行期间不能执行维护操作")
+        if _maintenance_state is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="已有维护操作正在执行: %s" % _maintenance_state,
+            )
+        _maintenance_state = str(kind)
+
+
+def _end_maintenance(kind: str) -> None:
+    global _maintenance_state
+    with _job_lock:
+        if _maintenance_state == str(kind):
+            _maintenance_state = None
 
 
 def _load_config_if_idle() -> dict[str, Any]:
     with _job_lock:
-        if not _job_state["running"]:
+        if not _job_state["running"] and _maintenance_state is None:
             engine.load_config()
         return dict(engine.config)
 
@@ -150,11 +173,13 @@ async def put_config(request: Request):
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="任务运行期间不能修改配置")
+        if _maintenance_state is not None:
+            raise HTTPException(status_code=409, detail="维护操作期间不能修改配置")
         engine.load_config()
         candidate = dict(engine.config)
         candidate.update(updates)
         try:
-            validated = engine.validate_run_requirements(candidate)
+            validated = engine.validate_config_structure(candidate)
         except engine.ConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         engine.config.clear()
@@ -174,9 +199,9 @@ def proxy_pool_status():
 @app.post("/api/proxy-pool/reload")
 def proxy_pool_reload():
     from proxy_pool import get_manager
-    with _job_lock:
-        if _job_state["running"]:
-            raise HTTPException(status_code=409, detail="任务运行期间不能重新加载代理池")
+    kind = "proxy_reload"
+    _begin_maintenance(kind)
+    try:
         engine.load_config()
         try:
             cfg = engine.validate_config_structure(dict(engine.config))
@@ -184,6 +209,8 @@ def proxy_pool_reload():
             snapshot = manager.reload_sources(force=True)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        _end_maintenance(kind)
     _append_log("[*] 代理池已重新加载")
     return {"ok": True, **snapshot}
 
@@ -191,17 +218,19 @@ def proxy_pool_reload():
 @app.post("/api/proxy-pool/test")
 def proxy_pool_test():
     from proxy_pool import get_manager
-    with _job_lock:
-        if _job_state["running"]:
-            raise HTTPException(status_code=409, detail="任务运行期间不能手动测试代理池")
+    kind = "proxy_test"
+    _begin_maintenance(kind)
+    try:
         engine.load_config()
         try:
             cfg = engine.validate_config_structure(dict(engine.config))
             manager = get_manager(config=cfg, log=_append_log)
             manager.reload_sources(force=True)
+            results = manager.probe_all(force=True)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    results = manager.probe_all(force=True)
+    finally:
+        _end_maintenance(kind)
     _append_log("[*] 代理池测试完成: %s 个节点" % len(results))
     return {"ok": True, "results": results, **manager.snapshot()}
 
@@ -209,9 +238,9 @@ def proxy_pool_test():
 @app.post("/api/proxy-pool/preflight")
 def proxy_pool_preflight(node_id: str = Query(..., min_length=1)):
     from proxy_pool import get_manager
-    with _job_lock:
-        if _job_state["running"]:
-            raise HTTPException(status_code=409, detail="任务运行期间不能执行注册路径预检")
+    kind = "proxy_preflight"
+    _begin_maintenance(kind)
+    try:
         engine.load_config()
         try:
             cfg = engine.validate_config_structure(dict(engine.config))
@@ -223,6 +252,8 @@ def proxy_pool_preflight(node_id: str = Query(..., min_length=1)):
             raise
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        _end_maintenance(kind)
     _append_log("[*] 代理节点注册路径预检完成: %s" % node_id)
     return {"ok": True, "result": result, **manager.snapshot()}
 
@@ -247,6 +278,8 @@ def start():
     with _job_lock:
         if _job_state["running"]:
             raise HTTPException(status_code=409, detail="已有注册任务正在运行")
+        if _maintenance_state is not None:
+            raise HTTPException(status_code=409, detail="维护操作进行中，暂不能启动注册: %s" % _maintenance_state)
 
         engine.load_config()
         try:
