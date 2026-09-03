@@ -26,9 +26,15 @@ def append_account_line(path, email, password, sso):
 
 def save_mail_credential(base_dir, email, credential):
     path = os.path.join(base_dir, "mail_credentials.txt")
+    record = f"{email}\t{credential}"
     with FileLock(path + ".lock", timeout=30):
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                for raw_line in handle:
+                    if raw_line.rstrip("\r\n") == record:
+                        return True
         with open(path, "a", encoding="utf-8") as handle:
-            handle.write(f"{email}\t{credential}\n")
+            handle.write(record + "\n")
             handle.flush()
             os.fsync(handle.fileno())
     return True
