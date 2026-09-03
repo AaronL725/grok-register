@@ -5,7 +5,7 @@
 ## 核心原则
 
 - **一个账号 attempt 一个稳定租约**：浏览器、邮箱请求、注册阶段 HTTP、NSFW，以及未显式覆盖的 CPA/OIDC 共用同一个出口。
-- **安全重试优先于盲目重放**：只有尚未进行有状态提交的阶段才允许释放 Lease 后重新开始；邮箱、验证码、资料等提交之后发生传输错误会标记为结果不确定，不自动换代理重放整个注册流程。
+- **安全重试优先于盲目重放**：只有尚未进行有状态提交的阶段才允许释放 Lease 后重新开始；等待验证码但尚未开始验证码提交时，允许在同一个 Lease 内更换邮箱恢复。邮箱提交、验证码填写/提交、资料提交等有状态边界之后发生异常会标记为结果不确定，不自动换代理重放整个注册流程。
 - **所有 managed 网络组件消费统一 HTTP-compatible endpoint**：HTTP/SOCKS/高级协议最终都可被 Chromium、curl_cffi、urllib、CPA 和 probe 统一消费。
 - **Probe 与 Runtime Health 分离**：主动探测回答“现在能否连通”，业务健康回答“真实注册历史表现如何”。
 - **Fixed 与 Rotating 分离**：固定节点使用 Health/Failure/Cooldown；旋转入口统计出口成功/失败和成功率，不因为一次坏出口冷却整个 gateway。
@@ -102,6 +102,7 @@ lease_acquire
 browser_start
 page_open
 email_submit
+code_wait
 code_submit
 profile_submit
 sso_wait
@@ -116,16 +117,20 @@ lease_acquire / browser_start / page_open
 → SAFE_NEW_LEASE
 → 可以释放旧 Lease 后重新开始
 
+code_wait
+→ SAME_LEASE_RECOVERY
+→ 只允许保持当前 Lease，更换邮箱并重启浏览器后继续尝试
+
 email_submit / code_submit / profile_submit / sso_wait
 → OUTCOME_UNCERTAIN
-→ 不自动换代理重放整个注册流程
+→ 不自动换邮箱或换代理重放整个注册流程
 
 account_confirmed / postprocess
 → NO_RETRY
 → 已确认账号不重新注册
 ```
 
-这样可以避免“提交已可能被服务端接收，但本地读取响应时断线”后再次换 IP 重放，从而降低重复账号和重复提交风险。邮箱验证码重试仍在同一个账号 Lease 内完成。
+这样可以避免“提交已可能被服务端接收，但本地读取响应时断线”后再次换 IP 重放，从而降低重复账号和重复提交风险。只有在 `code_wait` 阶段确认没有取得可用验证码时，才会在同一个账号 Lease 内更换邮箱恢复；一旦进入 `code_submit`，后续提交结果无法确认时会计入结果不确定，不再通过邮箱重试绕过安全边界。
 
 WebUI 状态额外记录 `uncertain` 数量。
 
