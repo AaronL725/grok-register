@@ -23,6 +23,7 @@ STAGE_LEASE_ACQUIRE = "lease_acquire"
 STAGE_BROWSER_START = "browser_start"
 STAGE_PAGE_OPEN = "page_open"
 STAGE_EMAIL_SUBMIT = "email_submit"
+STAGE_CODE_WAIT = "code_wait"
 STAGE_CODE_SUBMIT = "code_submit"
 STAGE_PROFILE_SUBMIT = "profile_submit"
 STAGE_SSO_WAIT = "sso_wait"
@@ -49,6 +50,8 @@ def registration_retry_disposition(stage, error=None):
     stage = str(stage or STAGE_LEASE_ACQUIRE)
     if stage in (STAGE_LEASE_ACQUIRE, STAGE_BROWSER_START, STAGE_PAGE_OPEN):
         return SAFE_NEW_LEASE
+    if stage == STAGE_CODE_WAIT:
+        return SAME_LEASE_RECOVERY
     if stage in (STAGE_EMAIL_SUBMIT, STAGE_CODE_SUBMIT, STAGE_PROFILE_SUBMIT, STAGE_SSO_WAIT):
         return OUTCOME_UNCERTAIN
     if stage in (STAGE_ACCOUNT_CONFIRMED, STAGE_POSTPROCESS):
@@ -57,6 +60,16 @@ def registration_retry_disposition(stage, error=None):
 
 
 @dataclass
+class VerificationCodeUnavailable(RuntimeError):
+    """Mailbox polling timed out before any verification-code submission began."""
+    pass
+
+
+class VerificationSubmissionUnconfirmed(RuntimeError):
+    """A verification code was entered, but the browser could not confirm the next stage."""
+    pass
+
+
 class RegistrationCallbacks:
     log: Callable[[str], None]
     cancelled: Callable[[], bool]
@@ -177,15 +190,17 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
         callbacks.log("[*] 3. 拉取验证码")
         try:
             if not ops.internal_stage_markers:
-                _set_registration_stage(STAGE_CODE_SUBMIT)
+                _set_registration_stage(STAGE_CODE_WAIT)
             code = ops.fill_code_and_submit(email, dev_token)
             mail_ok = True
             break
-        except Exception as exc:
-            message = str(exc)
-            if ("未收到验证码" in message or "验证码" in message) and mail_try < max_mail_retry and not is_proxy_transport_exception(exc):
-                callbacks.log(f"[!] 本邮箱未取到验证码，自动更换新邮箱重试: {message}")
-                _set_registration_stage(STAGE_BROWSER_START)
+        except VerificationCodeUnavailable as exc:
+            if mail_try < max_mail_retry:
+                callbacks.log(f"[!] 本邮箱在等待阶段未取到验证码，保持当前代理租约并更换邮箱重试: {exc}")
+                # Keep the code_wait disposition while recovering. If browser
+                # restart itself fails, the outer retry engine must not treat
+                # this as a safe point for acquiring a different proxy lease.
+                _set_registration_stage(STAGE_CODE_WAIT)
                 ops.restart_browser()
                 ops.sleep(1)
                 continue
