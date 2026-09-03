@@ -59,7 +59,6 @@ def registration_retry_disposition(stage, error=None):
     return OUTCOME_UNCERTAIN
 
 
-@dataclass
 class VerificationCodeUnavailable(RuntimeError):
     """Mailbox polling timed out before any verification-code submission began."""
     pass
@@ -70,6 +69,7 @@ class VerificationSubmissionUnconfirmed(RuntimeError):
     pass
 
 
+@dataclass
 class RegistrationCallbacks:
     log: Callable[[str], None]
     cancelled: Callable[[], bool]
