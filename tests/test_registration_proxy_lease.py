@@ -2,7 +2,12 @@ import unittest
 from unittest.mock import patch
 
 import registration_flow
-from registration_flow import RegistrationCallbacks, RegistrationOperations, run_batch
+from registration_flow import (
+    RegistrationCallbacks,
+    RegistrationOperations,
+    VerificationCodeUnavailable,
+    run_batch,
+)
 
 
 class Cancelled(Exception):
@@ -18,7 +23,7 @@ class RegistrationProxyLeaseTests(unittest.TestCase):
         def fill_code(_email, _token):
             state["code_calls"] += 1
             if state["code_calls"] == 1:
-                raise RuntimeError("未收到验证码")
+                raise VerificationCodeUnavailable("未收到验证码")
             return "123456"
 
         return RegistrationOperations(
