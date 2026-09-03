@@ -510,7 +510,7 @@ python grok_register_ttk.py retry-pending <pending文件> [输出文件]
 ├── account_outputs.py         # 账号、pending 与 token 输出
 ├── sso_risk.py                # SSO botFlag / policy 早停
 ├── cpa_export.py              # CPA/OIDC 导出入口
-├── cpa_xai/                   # CPA 浏览器、OAuth、代理桥与凭证写入
+├── cpa_xai/                   # CPA 浏览器、OAuth、代理辅助与凭证写入
 ├── web/
 │   ├── server.py              # FastAPI WebUI 控制层
 │   ├── index.html             # WebUI 页面
