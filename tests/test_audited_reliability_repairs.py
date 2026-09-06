@@ -1,5 +1,6 @@
 """Regression coverage for the audited reliability repair set."""
 
+import json
 import queue
 import tempfile
 import threading
@@ -116,7 +117,7 @@ class AuditedReliabilityRepairTests(unittest.TestCase):
             def run_js(self, script, *args):
                 if "const email = arguments[0]" in script:
                     events.append("fill-email")
-                    return {"state": "filled", "url": self.url}
+                    return json.dumps({"state": "filled", "url": self.url})
                 if "return (input.getAttribute('type')" in script:
                     return True
                 if "const submitButton = buttons.find" in script:
