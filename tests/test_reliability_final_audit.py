@@ -86,7 +86,7 @@ def test_sing_box_start_retries_after_early_exit_and_cleans_failed_config(monkey
 def test_strict_commit_boundaries_and_sso_exception_whitelist():
     source = pathlib.Path("registration_browser.py").read_text(encoding="utf-8")
     email = source[source.index("def fill_email_and_submit("):source.index("def fill_code_and_submit(")]
-    email_ready = email.index("ready_to_submit = page.run_js")
+    email_ready = email.index("ready_to_submit = _run_pre_submit_js")
     email_stage = email.index('_mark_registration_stage("email_submit")', email_ready)
     email_commit = email.index("clicked = page.run_js", email_stage)
     assert email_ready < email_stage < email_commit
