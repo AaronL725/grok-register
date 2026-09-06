@@ -1,5 +1,6 @@
 """管理主注册浏览器生命周期并实现注册页面自动化操作。"""
 import gc
+import json
 import random
 import re
 import secrets
@@ -30,6 +31,24 @@ def _managed_proxy_mode():
         return str(config.get("proxy_mode", "auto") or "auto").strip().lower() in ("single", "pool")
     except Exception:
         return False
+
+
+def _is_pre_submit_js_transient(exc):
+    if isinstance(exc, (TimeoutError, ContextLostError, PageDisconnectedError)):
+        return True
+    if isinstance(exc, RuntimeError):
+        message = str(exc or "").lower()
+        return "js结果解析错误" in message or "js result parsing error" in message
+    return False
+
+
+def _run_pre_submit_js(script, *args):
+    try:
+        return page.run_js(script, *args)
+    except Exception as exc:
+        if _is_pre_submit_js_transient(exc):
+            raise AccountRetryNeeded(f"提交前浏览器 JS 暂时失败: {exc}") from exc
+        raise
 _OWN_NAMES = {'is_cloudflare_block_response', 'response_preview', 'start_browser', 'enable_nsfw_for_token', 'stop_browser_proxy_bridge', 'set_tos_accepted', 'fill_email_and_submit', 'getTurnstileToken', 'set_birth_date', 'generate_random_birthdate', 'fill_profile_and_submit', 'click_email_signup_button', 'wait_for_sso_cookie', 'fill_code_and_submit', 'build_profile', 'cleanup_runtime_memory', 'open_signup_page', 'stop_browser', 'encode_grpc_nsfw_settings', 'restart_browser', 'has_profile_form', 'update_nsfw_settings', 'refresh_active_page'}
 
 
@@ -307,7 +326,7 @@ def click_email_signup_button(timeout=10, log_callback=None, cancel_callback=Non
         if log_callback:
             log_callback("[Debug] 尝试查找“使用邮箱注册”按钮...")
 
-        clicked = page.run_js(r"""
+        clicked = _run_pre_submit_js(r"""
 function isVisible(node) {
     if (!node) return false;
     const style = window.getComputedStyle(node);
@@ -450,7 +469,7 @@ def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None, o
     last_snapshot = None
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
-        filled = page.run_js(
+        filled_raw = _run_pre_submit_js(
             """
 const email = arguments[0];
 function isVisible(node) {
@@ -510,13 +529,13 @@ const visibleActions = Array.from(document.querySelectorAll('button, a, [role="b
     .slice(0, 10);
 const input = emailCandidates().find((node) => isVisible(node) && !node.disabled && !node.readOnly) || null;
 if (!input) {
-    return {
+    return JSON.stringify({
         state: 'not-ready',
         url: location.href,
         title: document.title,
         inputs: visibleInputs,
         buttons: visibleActions,
-    };
+    });
 }
 input.focus(); input.click();
 const valueProto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -530,30 +549,30 @@ input.dispatchEvent(new Event('change', { bubbles: true }));
 const inputType = (input.getAttribute('type') || '').toLowerCase();
 const isValid = inputType !== 'email' || input.checkValidity();
 if ((input.value || '').trim() !== email || !isValid) {
-    return {
+    return JSON.stringify({
         state: 'fill-failed',
         value: input.value || '',
         valid: isValid,
         input: describeInput(input),
         url: location.href,
-    };
+    });
 }
 input.blur();
-return {
+return JSON.stringify({
     state: 'filled',
     input: describeInput(input),
     url: location.href,
-};
+});
             """,
             email,
         )
-        state = filled.get("state") if isinstance(filled, dict) else filled
-        if isinstance(filled, dict):
-            last_snapshot = filled
+        filled = json.loads(filled_raw)
+        state = filled.get("state")
+        last_snapshot = filled
         if state == "not-ready":
             now = time.time()
             if now - last_reclick_time >= 3:
-                reclicked = page.run_js(r"""
+                reclicked = _run_pre_submit_js(r"""
 function isVisible(node) {
     if (!node) return false;
     const style = window.getComputedStyle(node);
@@ -595,9 +614,9 @@ return candidates[0].text || true;
                     log_callback(f"[Debug] 邮箱输入框未出现，已再次触发邮箱注册入口{detail}")
             if log_callback and now - last_diag_time >= 5:
                 last_diag_time = now
-                inputs = " | ".join((filled or {}).get("inputs", [])[:6]) if isinstance(filled, dict) else ""
-                buttons = " | ".join((filled or {}).get("buttons", [])[:8]) if isinstance(filled, dict) else ""
-                url = (filled or {}).get("url", page.url if page else "") if isinstance(filled, dict) else (page.url if page else "")
+                inputs = " | ".join((filled or {}).get("inputs", [])[:6])
+                buttons = " | ".join((filled or {}).get("buttons", [])[:8])
+                url = (filled or {}).get("url", page.url if page else "")
                 log_callback(f"[Debug] 等待邮箱输入框: url={url}; inputs={inputs or 'none'}; buttons={buttons or 'none'}")
             sleep_with_cancel(0.5, cancel_callback)
             continue
@@ -607,7 +626,7 @@ return candidates[0].text || true;
             sleep_with_cancel(0.5, cancel_callback)
             continue
         sleep_with_cancel(0.8, cancel_callback)
-        ready_to_submit = page.run_js(
+        ready_to_submit = _run_pre_submit_js(
             r"""
 function isVisible(node) {
     if (!node) return false;
@@ -939,7 +958,7 @@ def _read_turnstile_state():
     if page is None:
         return {"present": False, "token": "", "token_length": 0}
 
-    state = page.run_js(
+    state_raw = page.run_js(
         """
 try {
   const input = document.querySelector('input[name="cf-turnstile-response"]');
@@ -949,14 +968,16 @@ try {
   }
   const present = !!input
     || !!document.querySelector('iframe[src*="turnstile"], div.cf-turnstile, [data-sitekey], script[src*="turnstile"]');
-  return { present, token, token_length: token.length };
+  return JSON.stringify({ present, token });
 } catch (e) {
-  return { present: false, token: '', token_length: 0 };
+  return JSON.stringify({ present: false, token: '' });
 }
         """
     )
-    if not isinstance(state, dict):
-        return {"present": False, "token": "", "token_length": 0}
+    try:
+        state = json.loads(state_raw)
+    except (TypeError, ValueError):
+        state = {}
     token = str(state.get("token") or "").strip()
     return {
         "present": bool(state.get("present")),
