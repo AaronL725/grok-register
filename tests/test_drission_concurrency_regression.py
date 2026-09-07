@@ -62,7 +62,7 @@ class DrissionConcurrencyRegressionTests(unittest.TestCase):
         self.assertIn("filled = json.loads(filled_raw)", email)
         self.assertGreaterEqual(email.count("return JSON.stringify({"), 3)
         self.assertNotIn("return {\n        state:", email)
-        self.assertIn("return JSON.stringify({ present, token });", turnstile)
+        self.assertIn("return JSON.stringify({", turnstile)
         self.assertIn("state = json.loads(state_raw)", turnstile)
 
     def test_submit_action_stays_outside_safe_retry_helper(self):
@@ -77,15 +77,21 @@ class DrissionConcurrencyRegressionTests(unittest.TestCase):
     def test_turnstile_json_string_decodes_without_remote_object(self):
         class FakePage:
             def run_js(self, *_args):
-                return json.dumps({"present": True, "token": "abc"})
+                return json.dumps({
+                    "state": "SOLVED",
+                    "token": "abc",
+                    "widget_present": True,
+                    "iframe_present": False,
+                    "visible": True,
+                })
 
         with patch.object(registration_browser, "page", FakePage()):
             state = registration_browser._read_turnstile_state()
 
-        self.assertEqual(
-            state,
-            {"present": True, "token": "abc", "token_length": 3},
-        )
+        self.assertEqual(state["state"], registration_browser.TURNSTILE_SOLVED)
+        self.assertTrue(state["present"])
+        self.assertEqual(state["token"], "abc")
+        self.assertEqual(state["token_length"], 3)
 
     def test_eight_workers_recover_independent_pre_submit_retries(self):
         class FakeMail:
