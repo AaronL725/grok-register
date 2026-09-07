@@ -969,6 +969,7 @@ def _read_turnstile_state():
             "token_length": 0,
             "widget_present": False,
             "iframe_present": False,
+            "script_present": False,
             "visible": False,
         }
 
