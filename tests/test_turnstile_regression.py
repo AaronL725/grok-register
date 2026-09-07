@@ -3,7 +3,7 @@
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import registration_browser
 
@@ -222,7 +222,7 @@ class TurnstileRegressionTests(unittest.TestCase):
             def cookies(self, **_kwargs):
                 return [{"name": "sso", "value": "sso-token"}]
 
-        waiter = unittest.mock.Mock(return_value="ready")
+        waiter = Mock(return_value="ready")
         with patch.object(registration_browser, "page", FakePage()), patch.object(
             registration_browser, "refresh_active_page", return_value=None
         ), patch.object(
