@@ -1016,14 +1016,15 @@ try {
   let state = 'ABSENT';
   if (token) state = 'SOLVED';
   else if (failed) state = 'FAILED';
-  else if (widgetPresent) state = 'WAITING';
-  else if (scriptPresent) state = 'LOADING';
+  else if (input || iframe) state = 'WAITING';
+  else if (widget) state = 'LOADING';
 
   return JSON.stringify({
     state,
     token,
     widget_present: widgetPresent,
     iframe_present: !!iframe,
+    script_present: scriptPresent,
     visible,
   });
 } catch (e) {
@@ -1032,6 +1033,7 @@ try {
     token: '',
     widget_present: false,
     iframe_present: false,
+    script_present: false,
     visible: false,
   });
 }
@@ -1062,6 +1064,7 @@ try {
         "token_length": len(token),
         "widget_present": bool(state.get("widget_present")),
         "iframe_present": bool(state.get("iframe_present")),
+        "script_present": bool(state.get("script_present")),
         "visible": bool(state.get("visible")),
     }
 
