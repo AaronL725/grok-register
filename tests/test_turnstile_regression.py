@@ -24,6 +24,7 @@ def _state(status, token=""):
             registration_browser.TURNSTILE_FAILED,
         },
         "iframe_present": status == registration_browser.TURNSTILE_WAITING,
+        "script_present": status != registration_browser.TURNSTILE_ABSENT,
         "visible": status == registration_browser.TURNSTILE_WAITING,
     }
 
@@ -201,6 +202,7 @@ class TurnstileRegressionTests(unittest.TestCase):
                         "token": "",
                         "widget_present": True,
                         "iframe_present": True,
+                        "script_present": True,
                         "visible": True,
                     }
                 )
@@ -216,8 +218,11 @@ class TurnstileRegressionTests(unittest.TestCase):
 
     def test_final_sso_page_uses_same_turnstile_waiter(self):
         class FakePage:
+            def __init__(self):
+                self.states = iter(["final-page", "not-final-page"])
+
             def run_js(self, *_args):
-                return "final-page-wait-cf:0"
+                return next(self.states, "not-final-page")
 
             def cookies(self, **_kwargs):
                 return [{"name": "sso", "value": "sso-token"}]
@@ -228,12 +233,25 @@ class TurnstileRegressionTests(unittest.TestCase):
         ), patch.object(
             registration_browser, "raise_if_cancelled", return_value=None, create=True
         ), patch.object(
+            registration_browser,
+            "_read_turnstile_state",
+            return_value=_state(registration_browser.TURNSTILE_WAITING),
+        ), patch.object(
             registration_browser, "getTurnstileToken", waiter
         ):
             token = registration_browser.wait_for_sso_cookie(timeout=2)
 
         self.assertEqual(token, "sso-token")
         waiter.assert_called_once()
+
+    def test_script_only_is_not_treated_as_an_active_challenge(self):
+        source = Path(registration_browser.__file__).read_text(encoding="utf-8")
+        reader = source[
+            source.index("def _read_turnstile_state("):
+            source.index("def _wait_for_turnstile(")
+        ]
+        self.assertIn("else if (widget) state = 'LOADING';", reader)
+        self.assertNotIn("else if (scriptPresent) state = 'LOADING';", reader)
 
     def test_registration_path_contains_no_legacy_turnstile_interference(self):
         source = Path(registration_browser.__file__).read_text(encoding="utf-8")
@@ -248,6 +266,16 @@ class TurnstileRegressionTests(unittest.TestCase):
         self.assertNotIn("二次复用 Turnstile", source)
         self.assertNotIn("token.length >= 80", source)
         self.assertNotIn("nativeSetter.call(cfInput", source)
+
+        self.assertIn("_read_turnstile_state()", profile)
+        self.assertIn("getTurnstileToken(", profile)
+        self.assertIn("_read_turnstile_state()", sso)
+        self.assertIn("getTurnstileToken(", sso)
+
+        self.assertNotIn("cf-turnstile-response", profile)
+        self.assertNotIn("cf-turnstile-response", sso)
+        self.assertNotIn("wait-cloudflare", profile)
+        self.assertNotIn("final-page-wait-cf", sso)
         self.assertNotIn('script[src*="turnstile"]', profile)
         self.assertNotIn('script[src*="turnstile"]', sso)
 
