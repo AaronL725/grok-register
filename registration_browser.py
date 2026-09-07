@@ -986,7 +986,11 @@ try {
   const input = document.querySelector('input[name="cf-turnstile-response"]');
   let token = String((input && input.value) || '').trim();
   if (!token && window.turnstile && typeof window.turnstile.getResponse === 'function') {
-    token = String(window.turnstile.getResponse() || '').trim();
+    try {
+      token = String(window.turnstile.getResponse() || '').trim();
+    } catch (e) {
+      token = '';
+    }
   }
 
   const iframe = document.querySelector('iframe[src*="turnstile"]');
