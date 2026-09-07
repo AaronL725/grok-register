@@ -1105,7 +1105,7 @@ def _wait_for_turnstile(log_callback=None, cancel_callback=None, timeout=60):
             if status == TURNSTILE_LOADING:
                 log_callback("[*] Cloudflare 人机验证组件正在加载...")
             elif status == TURNSTILE_WAITING:
-                if state_changed:
+                if state_changed and state.get("visible"):
                     log_callback("[*] Cloudflare 人机验证等待完成，请在当前浏览器窗口完成验证")
                 else:
                     log_callback(
