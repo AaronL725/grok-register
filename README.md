@@ -49,6 +49,29 @@ Grok Register 是一个面向自动化流程研究、测试环境验证和个人
 - [Acknowledgments](#acknowledgments)
 - [Star History](#star-history)
 
+## 赞助商
+
+<div align="center">
+
+<a href="https://www.ipwo.net/?ref=githubgrokregister">
+  <img alt="IPWO住宅代理" src="./assets/ipwo-banner.png" />
+</a>
+
+</div>
+
+需要稳定的住宅 IP？试试 IPWO住宅代理。
+
+覆盖 195+ 国家和地区  
+真实住宅 IP 资源  
+灵活的 IP 轮换  
+支持 HTTP / HTTPS / SOCKS5
+
+适用于自动化注册、账号管理、数据采集及跨境业务场景，可与浏览器自动化工具和代理池灵活搭配。免费试用，折扣码：0205
+
+https://www.ipwo.net/?ref=githubgrokregister
+
+广告合作请联系我：2309501984
+
 ## 项目功能
 
 Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、CLI 和 WebUI 都接到同一套注册核心上。
