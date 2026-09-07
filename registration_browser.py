@@ -999,7 +999,11 @@ try {
   const widgetPresent = !!input || !!iframe || !!widget;
   const visible = isVisible(iframe) || isVisible(widget);
 
-  const bodyText = String(document.body ? document.body.innerText : '').toLowerCase();
+  const nearbyText = [widget, iframe && iframe.parentElement, input && input.parentElement]
+    .filter(Boolean)
+    .map((node) => String(node.innerText || node.textContent || node.getAttribute?.('title') || ''))
+    .join(' ')
+    .toLowerCase();
   const failed = widgetPresent && [
     'verification failed',
     'challenge failed',
@@ -1007,7 +1011,7 @@ try {
     '验证失败',
     '验证已过期',
     '校验失败',
-  ].some((marker) => bodyText.includes(marker));
+  ].some((marker) => nearbyText.includes(marker));
 
   let state = 'ABSENT';
   if (token) state = 'SOLVED';
@@ -1207,16 +1211,6 @@ const submitBtn = buttons.find((node) => {
     return t.includes('完成注册') || t.includes('创建账户') || t.includes('signup') || t.includes('createaccount');
 });
 
-// 必须等待 Cloudflare 校验通过后再提交
-const cfInput = document.querySelector('input[name="cf-turnstile-response"]');
-const cfPresent = !!cfInput
-  || !!document.querySelector('iframe[src*="turnstile"], div.cf-turnstile, [data-sitekey]');
-if (cfPresent) {
-    const token = String((cfInput && cfInput.value) || '').trim();
-    const solvedByToken = Boolean(token);
-    if (!solvedByToken) return 'wait-cloudflare:' + token.length;
-}
-
 if (submitBtn) {
     return 'ready-to-submit';
 }
@@ -1226,21 +1220,6 @@ return 'filled-no-submit';
                 family_name,
                 password,
             )
-
-            if isinstance(filled, str) and filled.startswith("wait-cloudflare"):
-                form_filled_once = True
-                token_len = filled.split(":", 1)[1] if ":" in filled else "0"
-                if log_callback:
-                    log_callback(
-                        f"[*] 资料已填写，等待 Cloudflare 人机验证通过... 当前token长度={token_len}"
-                    )
-                remaining = max(deadline - time.time(), 0.0)
-                getTurnstileToken(
-                    log_callback=log_callback,
-                    cancel_callback=cancel_callback,
-                    timeout=remaining,
-                )
-                continue
 
             if filled in ("ready-to-submit", "filled-no-submit"):
                 form_filled_once = True
@@ -1252,6 +1231,20 @@ return 'filled-no-submit';
                 sleep_with_cancel(0.5, cancel_callback)
                 continue
 
+        turnstile_state = _read_turnstile_state()
+        if turnstile_state["state"] in {
+            TURNSTILE_LOADING,
+            TURNSTILE_WAITING,
+            TURNSTILE_FAILED,
+        }:
+            remaining = max(deadline - time.time(), 0.0)
+            getTurnstileToken(
+                log_callback=log_callback,
+                cancel_callback=cancel_callback,
+                timeout=remaining,
+            )
+            continue
+
         submit_state = page.run_js(
             r"""
 function isVisible(node) {
@@ -1260,15 +1253,6 @@ function isVisible(node) {
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
     const rect = node.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
-}
-
-const cfInput = document.querySelector('input[name="cf-turnstile-response"]');
-const cfPresent = !!cfInput
-  || !!document.querySelector('iframe[src*="turnstile"], div.cf-turnstile, [data-sitekey]');
-if (cfPresent) {
-    const token = String((cfInput && cfInput.value) || '').trim();
-    const solvedByToken = Boolean(token);
-    if (!solvedByToken) return 'wait-cloudflare:' + token.length;
 }
 
 function buttonText(node) {
@@ -1294,20 +1278,6 @@ if (!submitBtn) {
 return 'ready-to-submit';
             """
         )
-
-        if isinstance(submit_state, str) and submit_state.startswith("wait-cloudflare"):
-            token_len = submit_state.split(":", 1)[1] if ":" in submit_state else "0"
-            if log_callback:
-                log_callback(
-                    f"[*] 等待 Cloudflare 人机验证通过后再提交... 当前token长度={token_len}"
-                )
-            remaining = max(deadline - time.time(), 0.0)
-            getTurnstileToken(
-                log_callback=log_callback,
-                cancel_callback=cancel_callback,
-                timeout=remaining,
-            )
-            continue
 
         if submit_state == "ready-to-submit":
             _mark_registration_stage("profile_submit")
@@ -1375,6 +1345,38 @@ def wait_for_sso_cookie(timeout=120, log_callback=None, cancel_callback=None):
             if now - last_submit_retry >= 2.5:
                 retried = page.run_js(
                     r"""
+const titleHit = !!Array.from(document.querySelectorAll('h1,h2,div,span')).find((el) => {
+    const t = (el.textContent || '').replace(/\s+/g, '');
+    const lower = t.toLowerCase();
+    return t.includes('完成注册') || lower.includes('completeyoursignup') || lower.includes('completesignup');
+});
+return titleHit ? 'final-page' : 'not-final-page';
+                    """
+                )
+
+                if retried == "final-page":
+                    turnstile_state = _read_turnstile_state()
+                    if turnstile_state["state"] in {
+                        TURNSTILE_LOADING,
+                        TURNSTILE_WAITING,
+                        TURNSTILE_FAILED,
+                    }:
+                        if log_callback:
+                            log_callback(
+                                f"[Debug] 最终页 Cloudflare 状态: {turnstile_state['state']}, "
+                                f"token长度={turnstile_state['token_length']}"
+                            )
+                        remaining = max(deadline - time.time(), 0.0)
+                        getTurnstileToken(
+                            log_callback=log_callback,
+                            cancel_callback=cancel_callback,
+                            timeout=remaining,
+                        )
+                        last_submit_retry = now
+                        continue
+
+                    retried = page.run_js(
+                        r"""
 function isVisible(node) {
     if (!node) return false;
     const style = window.getComputedStyle(node);
@@ -1382,22 +1384,6 @@ function isVisible(node) {
     const rect = node.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
 }
-const titleHit = !!Array.from(document.querySelectorAll('h1,h2,div,span')).find((el) => {
-    const t = (el.textContent || '').replace(/\s+/g, '');
-    const lower = t.toLowerCase();
-    return t.includes('完成注册') || lower.includes('completeyoursignup') || lower.includes('completesignup');
-});
-if (!titleHit) return 'not-final-page';
-
-const cfInput = document.querySelector('input[name="cf-turnstile-response"]');
-const cfPresent = !!cfInput
-  || !!document.querySelector('iframe[src*="turnstile"], div.cf-turnstile, [data-sitekey]');
-if (cfPresent) {
-    const token = String((cfInput && cfInput.value) || '').trim();
-    const solved = Boolean(token);
-    if (!solved) return 'final-page-wait-cf:' + token.length;
-}
-
 function buttonText(node) {
     return [
         node.innerText,
@@ -1421,8 +1407,8 @@ if (!submitBtn) {
 submitBtn.focus();
 submitBtn.click();
 return 'final-page-clicked-submit';
-                    """
-                )
+                        """
+                    )
                 last_submit_retry = now
                 if log_callback and (retried == "final-page-clicked-submit" or (isinstance(retried, str) and retried.startswith("final-page-no-submit"))):
                     log_callback(f"[Debug] 最终页状态: {retried}")
@@ -1437,19 +1423,6 @@ return 'final-page-clicked-submit';
                 else:
                     final_no_submit_state = ""
                     final_no_submit_since = None
-                if isinstance(retried, str) and retried.startswith("final-page-wait-cf"):
-                    token_len = retried.split(":", 1)[1] if ":" in retried else "0"
-                    if log_callback:
-                        log_callback(
-                            f"[Debug] 最终页等待 Cloudflare 人机验证, token长度={token_len}"
-                        )
-                    remaining = max(deadline - time.time(), 0.0)
-                    getTurnstileToken(
-                        log_callback=log_callback,
-                        cancel_callback=cancel_callback,
-                        timeout=remaining,
-                    )
-
 
             cookies = page.cookies(all_domains=True, all_info=True) or []
             for item in cookies:
