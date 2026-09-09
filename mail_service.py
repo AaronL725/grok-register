@@ -18,6 +18,10 @@ _cf_domain_index = 0
 _cloudmail_domain_index = 0
 
 
+class CloudMailAuthError(RuntimeError):
+    """Cloud Mail public token is rejected by the configured instance."""
+
+
 def _detail_retry_attempt(state, message_id, now=None):
     """Return a 1-based detail-fetch attempt when due, otherwise 0.
 
@@ -36,7 +40,7 @@ def _detail_retry_attempt(state, message_id, now=None):
     record["next_retry_at"] = current + delay
     return attempt
 
-_OWN_NAMES = {'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain'}
+_OWN_NAMES = {'cloudmail_build_headers', 'cloudmail_preflight', 'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain'}
 
 
 def bind_runtime(namespace):
@@ -324,6 +328,62 @@ def cloudflare_next_default_domain():
     _cf_domain_index += 1
     return domain
 
+def cloudmail_build_headers():
+    """Build the official Cloud Mail public API headers.
+
+    maillab/cloud-mail expects the raw public token in Authorization, without
+    a Bearer prefix.
+    """
+    public_token = get_cloudmail_public_token()
+    if not public_token:
+        raise Exception("Cloud Mail Public Token 未配置")
+    return {
+        "Authorization": public_token,
+        "Content-Type": "application/json",
+    }
+
+
+def _cloudmail_auth_error_message():
+    return (
+        "Cloud Mail Public Token 验证失败。请确认 token 与 cloudmail_api_base 属于同一个 "
+        "Cloud Mail 实例；如果刚刚重新生成 token，请等待 Workers KV 同步后再试，"
+        "不要连续重新生成 token。"
+    )
+
+
+def _cloudmail_is_auth_failure(response, data=None):
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    if status_code == 401:
+        return True
+    if not isinstance(data, dict):
+        return False
+    result_code = data.get("code")
+    if result_code in (401, "401"):
+        return True
+    message = str(data.get("message") or "").strip().lower()
+    return message in {"token验证失败", "token validation failed"}
+
+
+def cloudmail_preflight(log_callback=None):
+    """Verify the configured public token before starting a browser session.
+
+    Only deterministic authentication failures stop startup. Transient network
+    or upstream availability errors are left to the normal mailbox polling
+    path so a preflight outage does not create a new hard dependency.
+    """
+    try:
+        cloudmail_get_messages("__grok_register_preflight__@invalid.local")
+    except CloudMailAuthError:
+        raise
+    except Exception as exc:
+        if log_callback:
+            log_callback(f"[!] Cloud Mail 鉴权预检暂时无法完成，将在实际邮件轮询时继续检查: {exc}")
+        return False
+    if log_callback:
+        log_callback("[*] Cloud Mail Public Token 预检通过")
+    return True
+
+
 def cloudmail_get_email_and_token():
     """生成无需预创建账号的 Cloud Mail 收件地址。"""
     if not get_cloudmail_api_base():
@@ -339,11 +399,11 @@ def cloudmail_get_email_and_token():
 
 def cloudmail_get_messages(address):
     api_base = get_cloudmail_api_base()
-    public_token = get_cloudmail_public_token()
     if not api_base:
         raise Exception("Cloud Mail API Base 未配置")
-    if not public_token:
+    if not get_cloudmail_public_token():
         raise Exception("Cloud Mail Public Token 未配置")
+
     payload = {
         "toEmail": address,
         "type": 0,
@@ -354,21 +414,28 @@ def cloudmail_get_messages(address):
     }
     resp = http_post(
         f"{api_base}{get_cloudmail_path()}",
-        headers={
-            "Authorization": public_token,
-            "Content-Type": "application/json",
-        },
+        headers=cloudmail_build_headers(),
         json=payload,
         timeout=20,
         replay_safe=True,
     )
-    resp.raise_for_status()
+
+    data = None
     try:
         data = resp.json()
     except Exception:
+        if _cloudmail_is_auth_failure(resp):
+            raise CloudMailAuthError(_cloudmail_auth_error_message())
+        resp.raise_for_status()
         raise Exception(f"Cloud Mail 邮件接口返回非JSON: {resp.text[:300]}")
+
+    if _cloudmail_is_auth_failure(resp, data):
+        raise CloudMailAuthError(_cloudmail_auth_error_message())
+
+    resp.raise_for_status()
     if not isinstance(data, dict):
         raise Exception(f"Cloud Mail 邮件接口返回格式错误: {data}")
+
     result_code = data.get("code")
     if result_code not in (None, 200, "200"):
         raise Exception(
@@ -405,6 +472,8 @@ def cloudmail_get_oai_code(
             next_resend_at = time.time() + 35
         try:
             messages = cloudmail_get_messages(email)
+        except CloudMailAuthError:
+            raise
         except Exception as exc:
             if log_callback:
                 log_callback(f"[Debug] Cloud Mail 拉取邮件列表失败: {exc}")
