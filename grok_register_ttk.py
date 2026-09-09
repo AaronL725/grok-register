@@ -642,6 +642,11 @@ def _screen_registered_sso(sso, email, log_callback=None):
 
 def run_registration_common(count, log_callback, cancel_callback, accounts_output_file, observer):
     from registration_flow import RegistrationCallbacks, RegistrationOperations, run_batch
+
+    if str(config.get("email_provider", "") or "").strip().lower() == "cloudmail":
+        _bind_mail_service()
+        _mail_service.cloudmail_preflight(log_callback=log_callback)
+
     callbacks = RegistrationCallbacks(log=log_callback, cancelled=cancel_callback)
     parallel_enabled = bool(config.get("multi_thread_enabled", False))
     parallel_workers = int(config.get("multi_thread_workers", 4) or 4)
