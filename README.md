@@ -331,6 +331,10 @@ Admin 创建示例：
 }
 ```
 
+Cloud Mail 的 Public Token 直接放在 `Authorization` 请求头中，不需要添加 `Bearer` 前缀。上游当前只保存一个全局 Public Token，因此重新生成 token 后旧 token 会失效。
+
+如果刚生成的新 token 暂时返回 `401 token验证失败`，请先确认 token 与 `cloudmail_api_base` 属于同一个 Cloud Mail 实例，并等待 Cloudflare Workers KV 同步后再试；不要连续重复生成 token。
+
 ## 代理与代理池
 
 默认：
