@@ -333,7 +333,9 @@ Admin 创建示例：
 
 Cloud Mail 的 Public Token 直接放在 `Authorization` 请求头中，不需要添加 `Bearer` 前缀。上游当前只保存一个全局 Public Token，因此重新生成 token 后旧 token 会失效。
 
-如果刚生成的新 token 暂时返回 `401 token验证失败`，请先确认 token 与 `cloudmail_api_base` 属于同一个 Cloud Mail 实例，并等待 Cloudflare Workers KV 同步后再试；不要连续重复生成 token。
+程序会在当前注册 slot / Proxy Lease 建立后、浏览器启动前使用同一个网络出口检查 Cloud Mail 鉴权。若遇到 `401 token验证失败`，会在同一出口内等待约 70 秒让 Workers KV 收敛，不会切换代理、自动生成新 token 或尝试其它鉴权格式。
+
+如果等待窗口结束后仍持续返回 401，请检查 `cloudmail_api_base`、Public Token，以及 Cloud Mail Worker 实际绑定的 KV namespace 是否属于同一部署实例；不要连续重复生成 token。错误日志只记录 token 长度和 SHA-256 短指纹，不会输出完整 Public Token。
 
 ## 代理与代理池
 
