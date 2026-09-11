@@ -1,11 +1,13 @@
 """Regression coverage for Cloud Mail public-token authentication (issues #84/#86)."""
 
+from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
 import grok_register_ttk as app
 import mail_service
 import registration_flow
+import registration_parallel
 from registration_flow import RegistrationCallbacks, RegistrationOperations
 
 
@@ -191,15 +193,14 @@ class CloudMailAuthTests(unittest.TestCase):
         wait.assert_called_once()
         self.assertEqual(wait.call_args.kwargs["timeout"], 70)
 
-    def test_preflight_happens_after_lease_and_before_browser(self):
+    def test_injected_preflight_happens_after_lease_and_before_browser(self):
         app.config["email_provider"] = "cloudmail"
         events = []
 
         def begin_slot(**_kwargs):
             events.append("lease")
 
-        def preflight(**kwargs):
-            self.assertFalse(kwargs["defer_until_slot"])
+        def injected_preflight():
             events.append("preflight")
             return True
 
@@ -226,13 +227,15 @@ class CloudMailAuthTests(unittest.TestCase):
             sleep=lambda _seconds: None,
             cancelled_exception=Cancelled,
             retry_exception=RetryNeeded,
+            preflight_mail=injected_preflight,
         )
         callbacks = RegistrationCallbacks(log=lambda _message: None, cancelled=lambda: False)
+        global_preflight = Mock(side_effect=AssertionError("global mail preflight must not run"))
 
         with patch.object(registration_flow, "begin_registration_slot", side_effect=begin_slot), patch.object(
             registration_flow, "end_registration_slot", return_value=None
         ), patch.object(registration_flow, "current_proxy_lease", return_value=None), patch.object(
-            mail_service, "cloudmail_preflight", side_effect=preflight
+            mail_service, "cloudmail_preflight", global_preflight
         ):
             result = registration_flow.run_batch(
                 1,
@@ -243,8 +246,15 @@ class CloudMailAuthTests(unittest.TestCase):
             )
 
         self.assertEqual(result.success_count, 1)
+        global_preflight.assert_not_called()
         self.assertLess(events.index("lease"), events.index("preflight"))
         self.assertLess(events.index("preflight"), events.index("browser"))
+
+    def test_parallel_workers_bind_preflight_to_isolated_mail_module(self):
+        source = Path(registration_parallel.__file__).read_text(encoding="utf-8")
+        self.assertIn("mail_module.cloudmail_preflight(", source)
+        self.assertIn("preflight_mail=preflight_mail", source)
+        self.assertNotIn("preflight_mail=mail_service.cloudmail_preflight", source)
 
     def test_token_warning_does_not_rewrite_auth_scheme(self):
         mail_service.config["cloudmail_public_token"] = "Bearer public-token-123"
