@@ -89,6 +89,8 @@ class OptionalMultithreadTests(unittest.TestCase):
             _OWN_NAMES = set()
             def bind_runtime(self, _namespace):
                 return None
+            def get_email_provider(self):
+                return "duckmail"
 
         class FakeBrowser:
             def __init__(self, worker_number):
