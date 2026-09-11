@@ -100,6 +100,9 @@ class DrissionConcurrencyRegressionTests(unittest.TestCase):
             def bind_runtime(self, _namespace):
                 return None
 
+            def get_email_provider(self):
+                return "duckmail"
+
         class FakeBrowser:
             def __init__(self, worker_id):
                 self.worker_id = worker_id
