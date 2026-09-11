@@ -122,6 +122,15 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
 
         worker_callbacks = RegistrationCallbacks(log=worker_log, cancelled=combined_cancelled)
 
+        def preflight_mail():
+            if str(mail_module.get_email_provider() or "").strip().lower() != "cloudmail":
+                return True
+            return mail_module.cloudmail_preflight(
+                log_callback=worker_log,
+                cancel_callback=combined_cancelled,
+                defer_until_slot=False,
+            )
+
         def save_mail(email, token):
             with io_lock:
                 return runtime_namespace["_save_mail_credential"](email, token, worker_log)
@@ -193,6 +202,7 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
             screen_sso=lambda sso, email: runtime_namespace["_screen_registered_sso"](
                 sso, email, worker_log
             ),
+            preflight_mail=preflight_mail,
         )
 
         def worker_observer(batch, account, output):
