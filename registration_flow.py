@@ -97,6 +97,7 @@ class RegistrationOperations:
     retry_exception: type
     internal_stage_markers: bool = False
     screen_sso: Optional[Callable[[str, str], Any]] = None
+    preflight_mail: Optional[Callable[[], Any]] = None
 
 
 @dataclass
@@ -348,6 +349,22 @@ def _run_batch_legacy(settings, callbacks, observer, ops):
     return result
 
 
+def _preflight_mail_after_lease(callbacks, ops):
+    preflight = getattr(ops, "preflight_mail", None)
+    if callable(preflight):
+        return preflight()
+    if str(app_config.get("email_provider", "") or "").strip().lower() != "cloudmail":
+        return True
+    # Backward-compatible fallback for callers that have not injected the
+    # mail operation yet. Parallel workers always inject their isolated module.
+    import mail_service
+    return mail_service.cloudmail_preflight(
+        log_callback=callbacks.log,
+        cancel_callback=callbacks.cancelled,
+        defer_until_slot=False,
+    )
+
+
 def _run_batch_managed(settings, callbacks, observer, ops):
     result = BatchResult(); retry_count_for_slot = 0; last_cleanup_success_count = 0; first_browser_start = True
     try:
@@ -358,6 +375,7 @@ def _run_batch_managed(settings, callbacks, observer, ops):
             _set_registration_stage(STAGE_LEASE_ACQUIRE)
             try:
                 begin_registration_slot(slot_index=slot_index, attempt_index=attempt_index, worker_key=threading.current_thread().name, log=callbacks.log, cancel_callback=callbacks.cancelled)
+                _preflight_mail_after_lease(callbacks, ops)
                 _set_registration_stage(STAGE_BROWSER_START)
                 if first_browser_start or ops.browser_missing():
                     ops.start_browser(); callbacks.log("[*] 浏览器已启动"); first_browser_start = False

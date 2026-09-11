@@ -1,8 +1,10 @@
 """接入临时邮箱服务并负责邮箱创建、邮件轮询和验证码提取。"""
+import hashlib
 import re
 import secrets
 import string
 import time
+import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests
@@ -11,6 +13,7 @@ from registration_flow import VerificationCodeUnavailable
 DUCKMAIL_API_BASE = "https://api.duckmail.sbs"
 
 YYDS_API_BASE = "https://maliapi.215.im/v1"
+CLOUDMAIL_AUTH_CONVERGENCE_SECONDS = 70.0
 
 
 config = {}
@@ -40,7 +43,7 @@ def _detail_retry_attempt(state, message_id, now=None):
     record["next_retry_at"] = current + delay
     return attempt
 
-_OWN_NAMES = {'cloudmail_build_headers', 'cloudmail_preflight', 'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain'}
+_OWN_NAMES = {'cloudmail_build_headers', 'cloudmail_preflight', 'cloudmail_wait_for_auth', 'cloudmail_get_email_and_token', 'get_messages', 'cloudflare_get_messages', 'get_yyds_api_key', 'yyds_generate_username', 'yyds_get_domains', 'yyds_get_email_and_token', 'yyds_get_oai_code', 'get_email_provider', 'cloudflare_get_domains', 'extract_verification_code', 'get_cloudflare_api_base', 'cloudflare_apply_auth_params', 'duckmail_get_oai_code', 'create_account', 'get_yyds_jwt', 'get_message_detail', 'yyds_create_account', 'get_duckmail_api_key', 'get_cloudflare_path', 'cloudflare_create_account', 'cloudflare_get_token', 'cloudflare_get_oai_code', 'get_cloudmail_public_token', 'generate_username', 'yyds_get_message_detail', 'cloudflare_next_default_domain', 'yyds_get_messages', 'yyds_get_token', 'get_domains', 'get_token', 'cloudflare_create_temp_address', 'get_cloudflare_api_key', 'get_cloudmail_path', 'get_cloudmail_api_base', 'cloudmail_get_oai_code', 'cloudflare_build_headers', 'cloudflare_is_admin_create_path', 'cloudmail_next_domain', 'cloudflare_get_message_detail', 'cloudmail_get_messages', 'get_user_agent', 'yyds_pick_domain', '_pick_list_payload', 'get_email_and_token', 'get_oai_code', 'get_cloudflare_auth_mode', 'pick_domain'}
 
 
 def bind_runtime(namespace):
@@ -343,11 +346,63 @@ def cloudmail_build_headers():
     }
 
 
-def _cloudmail_auth_error_message():
+def _cloudmail_token_warnings():
+    raw = str(config.get("cloudmail_public_token", "") or "")
+    token = raw.strip()
+    warnings = []
+    if raw != token:
+        warnings.append("Public Token 含有首尾空白，程序会去除这些空白")
+    if token.lower().startswith("bearer "):
+        warnings.append("Public Token 不应包含 Bearer 前缀")
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        warnings.append("Public Token 不应包含包裹引号")
+    if token.startswith("{") or token.startswith("["):
+        warnings.append("Public Token 看起来像 JSON，而不是 token 本身")
+    return warnings
+
+
+def _cloudmail_network_label():
+    try:
+        from browser_runtime import get_configured_proxy
+        proxy = str(get_configured_proxy() or "").strip()
+    except Exception:
+        proxy = ""
+    if not proxy:
+        return "direct"
+    raw = proxy if "://" in proxy else "http://" + proxy
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        host = parsed.hostname or "unknown"
+        port = parsed.port
+        scheme = parsed.scheme or "proxy"
+        return f"{scheme}://{host}:{port}" if port else f"{scheme}://{host}"
+    except Exception:
+        return "proxy"
+
+
+def _cloudmail_auth_context():
+    token = get_cloudmail_public_token()
+    api_base = get_cloudmail_api_base()
+    try:
+        host = urllib.parse.urlsplit(api_base).netloc or api_base
+    except Exception:
+        host = api_base
+    fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()[:8] if token else "none"
     return (
-        "Cloud Mail Public Token 验证失败。请确认 token 与 cloudmail_api_base 属于同一个 "
-        "Cloud Mail 实例；如果刚刚重新生成 token，请等待 Workers KV 同步后再试，"
-        "不要连续重新生成 token。"
+        f"host={host or 'unknown'} path={get_cloudmail_path()} "
+        f"token_len={len(token)} token_fp={fingerprint} network={_cloudmail_network_label()}"
+    )
+
+
+def _cloudmail_auth_error_message(persistent=False, elapsed=None):
+    if not persistent:
+        return "Cloud Mail Public Token 验证失败"
+    seconds = max(int(float(elapsed or 0)), 0)
+    return (
+        f"Cloud Mail Public Token 持续验证失败（约 {seconds}s）。当前请求中的 token 与该 Cloud Mail "
+        "实例保存的 Public Token 不一致；这已超过 Workers KV 收敛等待窗口。请检查 "
+        "cloudmail_api_base、Public Token，以及 Cloud Mail Worker 的 KV namespace 绑定。"
+        f" 诊断: {_cloudmail_auth_context()}"
     )
 
 
@@ -364,15 +419,89 @@ def _cloudmail_is_auth_failure(response, data=None):
     return message in {"token验证失败", "token validation failed"}
 
 
-def cloudmail_preflight(log_callback=None):
-    """Verify the configured public token before starting a browser session.
+def cloudmail_wait_for_auth(
+    address,
+    timeout=CLOUDMAIL_AUTH_CONVERGENCE_SECONDS,
+    log_callback=None,
+    cancel_callback=None,
+    initial_failure=False,
+):
+    """Wait briefly for Cloud Mail's singleton Workers KV token to converge.
 
-    Only deterministic authentication failures stop startup. Transient network
-    or upstream availability errors are left to the normal mailbox polling
-    path so a preflight outage does not create a new hard dependency.
+    Only 401/public-token failures are retried. The request keeps the current
+    network/proxy context; no proxy switching, token regeneration or auth
+    scheme fallback is attempted.
     """
+    timeout = max(float(timeout or 0), 0.0)
+    started = time.time()
+    deadline = started + timeout
+    offsets = (5.0, 15.0, 30.0, 60.0) if initial_failure else (0.0, 5.0, 15.0, 30.0, 60.0)
+    last_error = None
+    announced = False
+
+    for offset in offsets:
+        if offset > timeout:
+            break
+        wait_for = started + offset - time.time()
+        if wait_for > 0:
+            sleep_with_cancel(wait_for, cancel_callback)
+        raise_if_cancelled(cancel_callback)
+        try:
+            return cloudmail_get_messages(address)
+        except CloudMailAuthError as exc:
+            last_error = exc
+            if log_callback and not announced:
+                log_callback(
+                    "[!] Cloud Mail Public Token 暂时验证失败，将保持当前网络出口等待 Workers KV 收敛: "
+                    + _cloudmail_auth_context()
+                )
+                announced = True
+
+    if last_error is not None and time.time() < deadline:
+        sleep_with_cancel(max(deadline - time.time(), 0.0), cancel_callback)
+        raise_if_cancelled(cancel_callback)
+        try:
+            return cloudmail_get_messages(address)
+        except CloudMailAuthError as exc:
+            last_error = exc
+
+    if last_error is not None:
+        elapsed = max(time.time() - started, timeout)
+        raise CloudMailAuthError(
+            _cloudmail_auth_error_message(persistent=True, elapsed=elapsed)
+        ) from last_error
+
+    return cloudmail_get_messages(address)
+
+
+def cloudmail_preflight(
+    log_callback=None,
+    cancel_callback=None,
+    auth_timeout=CLOUDMAIL_AUTH_CONVERGENCE_SECONDS,
+    defer_until_slot=True,
+):
+    """Verify Cloud Mail auth in the same slot/network context as registration.
+
+    run_registration_common still calls this once for compatibility. That
+    early call is deliberately deferred; registration_flow performs the real
+    check after begin_registration_slot() and before browser startup.
+    """
+    if defer_until_slot:
+        if log_callback:
+            log_callback("[Debug] Cloud Mail 鉴权预检已延后到当前注册 slot / Proxy Lease 建立后")
+        return None
+
+    for warning in _cloudmail_token_warnings():
+        if log_callback:
+            log_callback(f"[!] Cloud Mail 配置提示: {warning}")
+
     try:
-        cloudmail_get_messages("__grok_register_preflight__@invalid.local")
+        cloudmail_wait_for_auth(
+            "__grok_register_preflight__@invalid.local",
+            timeout=auth_timeout,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+        )
     except CloudMailAuthError:
         raise
     except Exception as exc:
@@ -380,7 +509,7 @@ def cloudmail_preflight(log_callback=None):
             log_callback(f"[!] Cloud Mail 鉴权预检暂时无法完成，将在实际邮件轮询时继续检查: {exc}")
         return False
     if log_callback:
-        log_callback("[*] Cloud Mail Public Token 预检通过")
+        log_callback(f"[*] Cloud Mail Public Token 预检通过: {_cloudmail_auth_context()}")
     return True
 
 
@@ -459,6 +588,7 @@ def cloudmail_get_oai_code(
     deadline = time.time() + timeout
     seen_attempts = {}
     next_resend_at = time.time() + 35
+    auth_recovery_used = False
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
         if resend_callback and time.time() >= next_resend_at:
@@ -473,7 +603,19 @@ def cloudmail_get_oai_code(
         try:
             messages = cloudmail_get_messages(email)
         except CloudMailAuthError:
-            raise
+            if auth_recovery_used:
+                raise
+            remaining = max(deadline - time.time(), 0.0)
+            if remaining <= 0:
+                raise
+            auth_recovery_used = True
+            messages = cloudmail_wait_for_auth(
+                email,
+                timeout=min(CLOUDMAIL_AUTH_CONVERGENCE_SECONDS, remaining),
+                log_callback=log_callback,
+                cancel_callback=cancel_callback,
+                initial_failure=True,
+            )
         except Exception as exc:
             if log_callback:
                 log_callback(f"[Debug] Cloud Mail 拉取邮件列表失败: {exc}")
