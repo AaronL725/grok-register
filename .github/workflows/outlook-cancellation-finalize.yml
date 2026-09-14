@@ -1,4 +1,5 @@
 name: Finalize Outlook cancellation handling
+# One-shot validation; the workflow deletes itself after a successful run.
 
 on:
   push:
