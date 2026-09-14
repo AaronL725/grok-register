@@ -70,24 +70,30 @@ class OutlookCancellationTests(unittest.TestCase):
                         handle, email, cancel_callback=lambda: False
                     )
 
-    def test_auto_baseline_falls_back_to_graph_when_imap_has_no_folders(self):
+    def test_auto_baseline_falls_back_to_graph_when_imap_has_no_safe_baseline(self):
         account = outlook_mail.OutlookAccount(
             "u@example.com", "pw", "client", "refresh", "auto"
         )
 
-        class FakeImap:
-            def logout(self):
-                return None
+        def fail_imap(_account, _state, cancel_callback=None):
+            raise RuntimeError("未发现可建立 UID 基线的 Outlook IMAP 文件夹")
 
-        with patch.object(outlook_mail, "refresh_outlook_imap_token", return_value="imap"), \
-             patch.object(outlook_mail, "_connect_imap", return_value=FakeImap()), \
-             patch.object(outlook_mail, "_discover_folders", return_value=[]), \
-             patch.object(outlook_mail, "refresh_outlook_graph_token", return_value="graph"), \
-             patch.object(outlook_mail, "_graph_inbox_count", return_value=7):
-            self.assertEqual(
-                outlook_mail.load_folder_counts(account),
-                {outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: 7},
+        def prepare_graph(_account, state, cancel_callback=None):
+            state.graph_token = "graph"
+            state.graph[outlook_mail.OUTLOOK_GRAPH_INBOX_KEY] = outlook_mail.GraphFolderCursor(
+                "inbox",
+                outlook_mail.OUTLOOK_GRAPH_INBOX_KEY,
+                "2026-09-14T10:00:00Z",
+                {"baseline"},
             )
+
+        with patch.object(outlook_mail, "_prepare_imap_state", side_effect=fail_imap), \
+             patch.object(outlook_mail, "_prepare_graph_state", side_effect=prepare_graph):
+            state = outlook_mail.prepare_outlook_state(account)
+        self.assertFalse(state.has_imap)
+        self.assertTrue(state.has_graph)
+        self.assertIn("imap", state.errors)
+        state.close()
 
 
 if __name__ == "__main__":
