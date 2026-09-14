@@ -19,6 +19,16 @@ ACCOUNT_ROWS = "\n".join(
 )
 
 
+class Response:
+    status_code = 200
+    text = ""
+    headers = {}
+    ok = True
+
+    def json(self):
+        return {"access_token": "access"}
+
+
 class OutlookMailboxPoolTests(unittest.TestCase):
     def test_parser_supports_dash_pipe_and_modes(self):
         data = (
@@ -81,7 +91,7 @@ class OutlookMailboxPoolTests(unittest.TestCase):
             self.assertEqual(first.acquire()[0], "user1@example.com")
             self.assertEqual(second.acquire()[0], "user1@example.com")
 
-    def test_runtime_resolves_opaque_handle_and_timeout(self):
+    def test_runtime_handle_is_one_shot_and_timeout_is_typed(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             pool.OutlookMailbox, "prepare", return_value=None
         ):
@@ -91,12 +101,28 @@ class OutlookMailboxPoolTests(unittest.TestCase):
             email, handle = runtime.acquire()
             with patch.object(pool.OutlookMailbox, "wait_for_code", return_value="ABC123"):
                 self.assertEqual(runtime.wait_for_code(handle, email), "ABC123")
-            with self.assertRaises(RuntimeError):
-                runtime.wait_for_code(handle, "wrong@example.com")
+            with self.assertRaisesRegex(RuntimeError, "已使用|已失效|不存在"):
+                runtime.wait_for_code(handle, email)
+
             email2, handle2 = runtime.acquire()
             with patch.object(pool.OutlookMailbox, "wait_for_code", return_value=None):
                 with self.assertRaises(VerificationCodeUnavailable):
                     runtime.wait_for_code(handle2, email2, timeout=1)
+            with self.assertRaisesRegex(RuntimeError, "已使用|已失效|不存在"):
+                runtime.wait_for_code(handle2, email2)
+
+    def test_wrong_email_does_not_consume_handle(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            pool.OutlookMailbox, "prepare", return_value=None
+        ):
+            path = Path(tmp) / "pool.txt"
+            pool.save_outlook_mailbox_pool(path, ACCOUNT_ROWS)
+            runtime = pool.create_outlook_task_runtime(path)
+            email, handle = runtime.acquire()
+            with self.assertRaisesRegex(RuntimeError, "不匹配"):
+                runtime.wait_for_code(handle, "wrong@example.com")
+            with patch.object(pool.OutlookMailbox, "wait_for_code", return_value="ABC123"):
+                self.assertEqual(runtime.wait_for_code(handle, email), "ABC123")
 
     def test_mail_service_dispatches_to_injected_runtime(self):
         calls = []
@@ -140,70 +166,89 @@ class OutlookMailboxPoolTests(unittest.TestCase):
     def test_prepare_requires_pre_send_baseline(self):
         account = outlook_mail.OutlookAccount("u@example.com", "pw", "client", "refresh")
         mailbox = outlook_mail.OutlookMailbox(account)
-        with patch.object(outlook_mail, "load_folder_counts", side_effect=RuntimeError("network")):
+        with patch.object(outlook_mail, "prepare_outlook_state", side_effect=RuntimeError("network")):
             with self.assertRaises(RuntimeError):
                 mailbox.prepare()
 
     def test_token_refresh_uses_expected_scopes(self):
         account = outlook_mail.OutlookAccount("u@example.com", "pw", "client", "refresh")
-
-        class Response:
-            status_code = 200
-            text = ""
-            def json(self):
-                return {"access_token": "access"}
-
-        with patch.object(outlook_mail.requests, "post", return_value=Response()) as post:
+        with patch.object(outlook_mail, "_request_with_backoff", return_value=Response()) as request:
             self.assertEqual(outlook_mail.refresh_outlook_imap_token(account), "access")
-            imap_scope = post.call_args.kwargs["data"]["scope"]
+            imap_scope = request.call_args.kwargs["data"]["scope"]
             self.assertIn("IMAP.AccessAsUser.All", imap_scope)
-        with patch.object(outlook_mail.requests, "post", return_value=Response()) as post:
+        with patch.object(outlook_mail, "_request_with_backoff", return_value=Response()) as request:
             self.assertEqual(outlook_mail.refresh_outlook_graph_token(account), "access")
-            graph_scope = post.call_args.kwargs["data"]["scope"]
+            graph_scope = request.call_args.kwargs["data"]["scope"]
             self.assertIn("Mail.Read", graph_scope)
 
-    def test_graph_scan_only_reads_new_messages(self):
-        counts = {outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: 2}
-        with patch.object(outlook_mail, "_graph_inbox_count", return_value=2), patch.object(
-            outlook_mail, "_graph_get"
-        ) as get:
-            self.assertIsNone(outlook_mail._scan_graph_once("token", counts))
-            get.assert_not_called()
-
-        message = {
-            "subject": "ABC-123 xAI verification",
-            "bodyPreview": "verification code",
-            "body": {"content": "ABC-123"},
-            "from": {"emailAddress": {"address": "noreply@x.ai"}},
-        }
-        with patch.object(outlook_mail, "_graph_inbox_count", return_value=3), patch.object(
-            outlook_mail, "_graph_get", return_value={"value": [message]}
-        ):
-            self.assertEqual(outlook_mail._scan_graph_once("token", counts), "ABC123")
-            self.assertEqual(counts[outlook_mail.OUTLOOK_GRAPH_INBOX_KEY], 3)
-
-    def test_auto_mode_can_fall_back_to_graph(self):
+    def test_auto_mode_can_use_graph_when_imap_was_not_baselined(self):
         account = outlook_mail.OutlookAccount("u@example.com", "pw", "client", "refresh", "auto")
-        counts = {"INBOX": 0, outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: 0}
-        with patch.object(
-            outlook_mail, "refresh_outlook_imap_token", side_effect=RuntimeError("temporary imap error")
-        ), patch.object(outlook_mail, "refresh_outlook_graph_token", return_value="graph-token"), patch.object(
+        state = outlook_mail.OutlookMailboxState(
+            graph={
+                outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: outlook_mail.GraphFolderCursor(
+                    "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY
+                )
+            },
+            graph_token="graph-token",
+        )
+        with patch.object(outlook_mail, "refresh_outlook_imap_token") as imap_refresh, patch.object(
             outlook_mail, "_scan_graph_once", return_value="ABC123"
         ):
-            self.assertEqual(outlook_mail.wait_for_outlook_code(account, counts, timeout=2, interval=1), "ABC123")
+            self.assertEqual(
+                outlook_mail.wait_for_outlook_code(account, state, timeout=2, interval=0),
+                "ABC123",
+            )
+        imap_refresh.assert_not_called()
 
     def test_double_terminal_oauth_error_fails_fast(self):
         account = outlook_mail.OutlookAccount("u@example.com", "pw", "client", "refresh", "auto")
+        folder = outlook_mail.ImapFolderRef("INBOX", "INBOX")
+        state = outlook_mail.OutlookMailboxState(
+            imap={"INBOX": outlook_mail.ImapFolderCursor(folder, "42", 1)},
+            graph={
+                outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: outlook_mail.GraphFolderCursor(
+                    "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY
+                )
+            },
+        )
         with patch.object(
             outlook_mail, "refresh_outlook_imap_token", side_effect=RuntimeError("invalid_grant")
         ), patch.object(
             outlook_mail, "refresh_outlook_graph_token", side_effect=RuntimeError("invalid_grant")
-        ), patch.object(outlook_mail, "_sleep_interruptibly") as sleep:
+        ), patch.object(outlook_mail, "_connect_imap", side_effect=RuntimeError("invalid_grant")), patch.object(
+            outlook_mail, "_sleep_interruptibly"
+        ) as sleep:
             with self.assertRaises(RuntimeError):
-                outlook_mail.wait_for_outlook_code(
-                    account, {"INBOX": 0, outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: 0}, timeout=30, interval=3
-                )
+                outlook_mail.wait_for_outlook_code(account, state, timeout=30, interval=3)
             sleep.assert_not_called()
+
+    def test_pool_health_summary_contains_no_credentials(self):
+        data = (
+            "a@example.com----password----client-a----super-secret-token----auto\n"
+            "b@example.com----password----client-b----another-secret-token----graph\n"
+        )
+        safe_results = [
+            {
+                "email": "a@example.com", "mode": "auto", "usable": True,
+                "imap": {"ok": True, "folders": ["INBOX"], "error": ""},
+                "graph": {"ok": True, "folders": ["inbox"], "error": ""},
+            },
+            {
+                "email": "b@example.com", "mode": "graph", "usable": False,
+                "imap": {"ok": False, "folders": [], "error": ""},
+                "graph": {"ok": False, "folders": [], "error": "invalid_grant"},
+            },
+        ]
+        with patch.object(pool, "probe_outlook_account", side_effect=safe_results):
+            summary = pool.probe_outlook_mailbox_pool_data(data, max_workers=1)
+        self.assertEqual(summary["healthy"], 1)
+        self.assertEqual(summary["unhealthy"], 1)
+        self.assertEqual(summary["imap"], 1)
+        self.assertEqual(summary["graph"], 1)
+        rendered = repr(summary)
+        self.assertNotIn("super-secret-token", rendered)
+        self.assertNotIn("another-secret-token", rendered)
+        self.assertNotIn("password", rendered)
 
 
 if __name__ == "__main__":
