@@ -55,6 +55,7 @@ def patch_outlook_mail():
         "def _scan_imap_once(account: OutlookAccount, token: str, counts: dict[str, int], log_callback: LogCallback = None) -> str | None:": "def _scan_imap_once(account: OutlookAccount, token: str, counts: dict[str, int], log_callback: LogCallback = None) -> Optional[str]:",
         "def _scan_graph_once(token: str, counts: dict[str, int], email: str = \"\", log_callback: LogCallback = None) -> str | None:": "def _scan_graph_once(token: str, counts: dict[str, int], email: str = \"\", log_callback: LogCallback = None) -> Optional[str]:",
         "    before_counts: dict[str, int] | None,": "    before_counts: Optional[dict[str, int]],",
+        ") -> str | None:\n    mode = normalize_outlook_mode(account.mode)": ") -> Optional[str]:\n    mode = normalize_outlook_mode(account.mode)",
         "    imap_token: str | None = None": "    imap_token: Optional[str] = None",
         "    graph_token: str | None = None": "    graph_token: Optional[str] = None",
         "    def wait_for_code(self, timeout: int = 180, interval: int = 3, cancel_callback=None) -> str | None:": "    def wait_for_code(self, timeout: int = 180, interval: int = 3, cancel_callback=None) -> Optional[str]:",
@@ -65,8 +66,9 @@ def patch_outlook_mail():
     old_prepare = '''    def prepare(self) -> None:\n        _log(self._log_callback, f"[*] 使用 Outlook 邮箱: {self.email}（认证模式: {normalize_outlook_mode(self.account.mode)}）")\n        try:\n            self._folder_counts = load_folder_counts(self.account)\n            inbox = self._folder_counts.get("INBOX", self._folder_counts.get(OUTLOOK_GRAPH_INBOX_KEY, 0))\n            _log(self._log_callback, f"[*] Outlook 发送前邮件数: {inbox}")\n        except Exception as exc:\n            # Baseline failure should not prevent registration; code polling can still recover.\n            self._folder_counts = {}\n            _log(self._log_callback, f"[!] 获取 Outlook 邮件基线失败，使用 0 继续: {exc}")\n'''
     new_prepare = '''    def prepare(self) -> None:\n        _log(self._log_callback, f"[*] 使用 Outlook 邮箱: {self.email}（认证模式: {normalize_outlook_mode(self.account.mode)}）")\n        try:\n            self._folder_counts = load_folder_counts(self.account)\n            if not self._folder_counts:\n                raise RuntimeError("未能建立 Outlook 邮件基线")\n            inbox = self._folder_counts.get("INBOX", self._folder_counts.get(OUTLOOK_GRAPH_INBOX_KEY, 0))\n            _log(self._log_callback, f"[*] Outlook 发送前邮件数: {inbox}")\n        except Exception as exc:\n            self._folder_counts = {}\n            _log(self._log_callback, f"[!] 获取 Outlook 邮件基线失败，本邮箱不会提交注册: {exc}")\n            raise\n'''
     text = replace_once(text, old_prepare, new_prepare, "Outlook baseline safety")
-    if " | None" in text or "Exception |" in text or "bytes |" in text:
-        raise RuntimeError("outlook_mail.py still contains Python 3.10 union syntax")
+    leftovers = [line.strip() for line in text.splitlines() if " | None" in line or "Exception |" in line or "bytes |" in line]
+    if leftovers:
+        raise RuntimeError("outlook_mail.py still contains Python 3.10 union syntax: %r" % leftovers)
     write(path, text)
 
 
@@ -664,7 +666,6 @@ def write_tests():
     write("tests/test_outlook_mailbox_pool.py", r'''import os
 import stat
 import tempfile
-import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
