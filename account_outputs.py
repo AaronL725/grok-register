@@ -25,6 +25,8 @@ def append_account_line(path, email, password, sso):
 
 
 def save_mail_credential(base_dir, email, credential):
+    if str(credential or "").startswith("outlook:"):
+        return True
     path = os.path.join(base_dir, "mail_credentials.txt")
     record = f"{email}\t{credential}"
     with FileLock(path + ".lock", timeout=30):

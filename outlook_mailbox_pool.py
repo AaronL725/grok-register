@@ -1,24 +1,24 @@
-"""Thread-safe Outlook mailbox pool and private local persistence."""
+"""Thread-safe Outlook mailbox pool, task runtime and private local persistence."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import os
 from pathlib import Path
 import re
 import secrets
 import tempfile
 import threading
-from typing import Optional
+from typing import Optional, Union
 
 from outlook_mail import OutlookAccount, OutlookMailbox, normalize_outlook_mode
 
 _MAX_POOL_BYTES = 1_000_000
 _HANDLE_PREFIX = "outlook:"
+_DEFAULT_POOL_PATH = "./output/mailboxes/outlook-accounts.txt"
 
 
 def _split_by_dashes(line: str) -> list[str]:
-    parts: list[str] = []
+    parts = []
     last = 0
     for match in re.finditer(r"-{4,}", line):
         parts.append(line[last:match.start()] + "-" * (len(match.group(0)) - 4))
@@ -46,17 +46,26 @@ def _entries(data: str) -> list[str]:
 
 
 def parse_outlook_accounts(data: str) -> list[OutlookAccount]:
-    accounts: list[OutlookAccount] = []
-    for entry in _entries(str(data or "").replace("\r\n", "\n").replace("\r", "\n")):
+    accounts = []
+    normalized = str(data or "").replace("\r\n", "\n").replace("\r", "\n")
+    for entry in _entries(normalized):
         parts = _split_account_fields(entry)
         if len(parts) not in {4, 5}:
             continue
         if not parts[0] or not parts[2] or not parts[3]:
             continue
-        mode = normalize_outlook_mode(parts[4] if len(parts) == 5 else "auto")
-        if len(parts) == 5 and str(parts[4]).strip().lower() not in {"auto", "imap", "graph"}:
+        raw_mode = parts[4] if len(parts) == 5 else "auto"
+        if len(parts) == 5 and str(raw_mode).strip().lower() not in {"auto", "imap", "graph"}:
             continue
-        accounts.append(OutlookAccount(parts[0], parts[1], parts[2], parts[3], mode))
+        accounts.append(
+            OutlookAccount(
+                email=parts[0],
+                password=parts[1],
+                client_id=parts[2],
+                refresh_token=parts[3],
+                mode=normalize_outlook_mode(raw_mode),
+            )
+        )
     return accounts
 
 
@@ -64,8 +73,8 @@ def inspect_outlook_mailbox_pool(data: str) -> dict:
     normalized = str(data or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     entries = _entries(normalized)
     accounts = parse_outlook_accounts(normalized)
-    seen: set[str] = set()
-    duplicates: list[str] = []
+    seen = set()
+    duplicates = []
     for account in accounts:
         key = account.email.lower()
         if key in seen and key not in duplicates:
@@ -79,7 +88,7 @@ def inspect_outlook_mailbox_pool(data: str) -> dict:
     }
 
 
-def _validate_pool_data(data: str) -> tuple[str, list[OutlookAccount]]:
+def _validate_pool_data(data: str):
     normalized = str(data or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not normalized:
         raise ValueError("Outlook 账号池不能为空")
@@ -88,8 +97,9 @@ def _validate_pool_data(data: str) -> tuple[str, list[OutlookAccount]]:
     summary = inspect_outlook_mailbox_pool(normalized)
     if summary["invalid"]:
         raise ValueError(
-            f"账号池中有 {summary['invalid']} 条格式无效的记录；每行应为 "
+            "账号池中有 %s 条格式无效的记录；每行应为 "
             "email----password----clientId----refreshToken----auto/imap/graph"
+            % summary["invalid"]
         )
     if summary["duplicates"]:
         raise ValueError("账号池存在重复邮箱: " + ", ".join(summary["duplicates"][:3]))
@@ -99,27 +109,40 @@ def _validate_pool_data(data: str) -> tuple[str, list[OutlookAccount]]:
     return normalized + "\n", accounts
 
 
-def _canonical_path(path: str | os.PathLike[str]) -> Path:
-    raw = str(path or "").strip()
-    if not raw:
-        raw = "./output/mailboxes/outlook-accounts.txt"
+def _canonical_path(path: Union[str, os.PathLike]) -> Path:
+    raw = str(path or "").strip() or _DEFAULT_POOL_PATH
     return Path(raw).expanduser().resolve()
 
 
-def load_outlook_mailbox_pool(path: str | os.PathLike[str]) -> dict:
+def load_outlook_mailbox_pool(path: Union[str, os.PathLike]) -> dict:
     target = _canonical_path(path)
     try:
         data = target.read_text(encoding="utf-8")
     except FileNotFoundError:
         data = ""
     except OSError as exc:
-        raise RuntimeError(f"读取 Outlook 账号池失败: {exc}") from exc
+        raise RuntimeError("读取 Outlook 账号池失败: %s" % exc) from exc
     return {"path": str(target), "data": data, **inspect_outlook_mailbox_pool(data)}
+
+
+def _read_validated_pool(path: Union[str, os.PathLike]):
+    target = _canonical_path(path)
+    try:
+        data = target.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ValueError("Outlook 账号池文件不存在: %s" % target) from exc
+    normalized, accounts = _validate_pool_data(data)
+    return target, normalized, accounts
+
+
+def get_outlook_mailbox_pool_capacity(path: Union[str, os.PathLike]) -> int:
+    _target, _normalized, accounts = _read_validated_pool(path)
+    return len(accounts)
 
 
 def _write_private_file(path: Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    fd, temp_name = tempfile.mkstemp(prefix=".%s." % path.name, dir=str(path.parent))
     temp_path = Path(temp_name)
     try:
         try:
@@ -145,11 +168,10 @@ def _write_private_file(path: Path, data: str) -> None:
             pass
 
 
-def save_outlook_mailbox_pool(path: str | os.PathLike[str], data: str) -> dict:
+def save_outlook_mailbox_pool(path: Union[str, os.PathLike], data: str) -> dict:
     normalized, accounts = _validate_pool_data(data)
     target = _canonical_path(path)
     _write_private_file(target, normalized)
-    reset_shared_outlook_runtime()
     return {
         "path": str(target),
         "count": len(accounts),
@@ -169,6 +191,8 @@ class OutlookMailboxLease:
 
 
 class OutlookAccountPool:
+    """Monotonic per-task allocator. Accounts are never wrapped or reused."""
+
     def __init__(self, accounts: list[OutlookAccount]) -> None:
         if not accounts:
             raise ValueError("Outlook 邮箱池没有有效账号")
@@ -186,95 +210,108 @@ class OutlookAccountPool:
             return max(0, len(self._accounts) - self._next)
 
     def acquire(self, log_callback=None) -> OutlookMailbox:
+        last_error = None
+        while True:
+            with self._lock:
+                if self._next >= len(self._accounts):
+                    if last_error is not None:
+                        raise RuntimeError(
+                            "Outlook 邮箱池已耗尽；剩余邮箱预检均失败，且不会循环复用已领取账号: %s"
+                            % last_error
+                        ) from last_error
+                    raise RuntimeError("Outlook 邮箱池已耗尽，不会循环复用已领取账号")
+                account = self._accounts[self._next]
+                self._next += 1
+            mailbox = OutlookMailbox(account, log_callback=log_callback)
+            try:
+                mailbox.prepare()
+                return mailbox
+            except Exception as exc:
+                last_error = exc
+                if log_callback:
+                    log_callback("[!] Outlook 邮箱预检失败，跳过 %s: %s" % (account.email, exc))
+
+
+class OutlookTaskRuntime:
+    """One shared Outlook allocator/lease registry for exactly one registration task."""
+
+    def __init__(self, accounts: list[OutlookAccount], log_callback=None) -> None:
+        self._pool = OutlookAccountPool(accounts)
+        self._log_callback = log_callback
+        self._lock = threading.RLock()
+        self._leases = {}
+        self._closed = False
+
+    @property
+    def count(self) -> int:
+        return self._pool.count
+
+    @property
+    def remaining(self) -> int:
+        return self._pool.remaining
+
+    def acquire(self):
         with self._lock:
-            if self._next >= len(self._accounts):
-                raise RuntimeError("Outlook 邮箱池已耗尽，不会循环复用已领取账号")
-            account = self._accounts[self._next]
-            self._next += 1
-        mailbox = OutlookMailbox(account, log_callback=log_callback)
-        mailbox.prepare()
-        return mailbox
+            if self._closed:
+                raise RuntimeError("Outlook 邮箱任务运行时已关闭")
+        mailbox = self._pool.acquire(log_callback=self._log_callback)
+        handle = _HANDLE_PREFIX + secrets.token_urlsafe(24)
+        lease = OutlookMailboxLease(handle=handle, mailbox=mailbox)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Outlook 邮箱任务运行时已关闭")
+            self._leases[handle] = lease
+        return mailbox.email, handle
+
+    def wait_for_code(
+        self,
+        handle: str,
+        email: str,
+        timeout: int = 180,
+        poll_interval: int = 3,
+        log_callback=None,
+        cancel_callback=None,
+        resend_callback=None,
+    ) -> str:
+        del resend_callback
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Outlook 邮箱任务运行时已关闭")
+            lease = self._leases.get(str(handle or ""))
+            if lease is None:
+                raise RuntimeError("Outlook 邮箱会话不存在或已失效")
+            if lease.email.lower() != str(email or "").lower():
+                raise RuntimeError("Outlook 邮箱会话与目标邮箱不匹配")
+            lease.consumed = True
+        code = lease.mailbox.wait_for_code(
+            timeout=int(timeout),
+            interval=int(poll_interval),
+            cancel_callback=cancel_callback,
+        )
+        if not code:
+            from registration_flow import VerificationCodeUnavailable
+            raise VerificationCodeUnavailable("Outlook 在 %ss 内未收到验证码邮件" % timeout)
+        return str(code)
+
+    def status(self) -> dict:
+        with self._lock:
+            return {
+                "count": self.count,
+                "remaining": self.remaining,
+                "leased": len(self._leases),
+                "closed": self._closed,
+            }
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._leases.clear()
 
 
-_runtime_lock = threading.RLock()
-_runtime_path = ""
-_runtime_fingerprint = ""
-_runtime_pool: Optional[OutlookAccountPool] = None
-_runtime_leases: dict[str, OutlookMailboxLease] = {}
-
-
-def _pool_fingerprint(path: Path, data: str) -> str:
-    digest = hashlib.sha256(data.encode("utf-8")).hexdigest()
-    return f"{path}:{digest}"
-
-
-def reset_shared_outlook_runtime() -> None:
-    global _runtime_path, _runtime_fingerprint, _runtime_pool
-    with _runtime_lock:
-        _runtime_path = ""
-        _runtime_fingerprint = ""
-        _runtime_pool = None
-        _runtime_leases.clear()
-
-
-def _ensure_runtime(path: str | os.PathLike[str]) -> OutlookAccountPool:
-    global _runtime_path, _runtime_fingerprint, _runtime_pool
-    target = _canonical_path(path)
-    try:
-        data = target.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise ValueError(f"Outlook 账号池文件不存在: {target}") from exc
-    normalized, accounts = _validate_pool_data(data)
-    fingerprint = _pool_fingerprint(target, normalized)
-    with _runtime_lock:
-        if _runtime_pool is None or _runtime_fingerprint != fingerprint:
-            _runtime_path = str(target)
-            _runtime_fingerprint = fingerprint
-            _runtime_pool = OutlookAccountPool(accounts)
-            _runtime_leases.clear()
-        return _runtime_pool
-
-
-def get_shared_outlook_pool_status(path: str | os.PathLike[str]) -> dict:
-    pool = _ensure_runtime(path)
-    with _runtime_lock:
-        return {"count": pool.count, "remaining": pool.remaining, "leased": len(_runtime_leases)}
-
-
-def acquire_shared_outlook_mailbox(path: str | os.PathLike[str], log_callback=None) -> tuple[str, str]:
-    pool = _ensure_runtime(path)
-    mailbox = pool.acquire(log_callback=log_callback)
-    handle = _HANDLE_PREFIX + secrets.token_urlsafe(24)
-    lease = OutlookMailboxLease(handle=handle, mailbox=mailbox)
-    with _runtime_lock:
-        _runtime_leases[handle] = lease
-    return mailbox.email, handle
+def create_outlook_task_runtime(path: Union[str, os.PathLike], log_callback=None) -> OutlookTaskRuntime:
+    _target, _normalized, accounts = _read_validated_pool(path)
+    return OutlookTaskRuntime(accounts, log_callback=log_callback)
 
 
 def is_outlook_handle(value: str) -> bool:
     return str(value or "").startswith(_HANDLE_PREFIX)
-
-
-def wait_for_shared_outlook_code(
-    handle: str,
-    email: str,
-    timeout: int = 180,
-    poll_interval: int = 3,
-    log_callback=None,
-    cancel_callback=None,
-) -> str:
-    with _runtime_lock:
-        lease = _runtime_leases.get(str(handle or ""))
-    if lease is None:
-        raise RuntimeError("Outlook 邮箱会话不存在或已失效")
-    if lease.email.lower() != str(email or "").lower():
-        raise RuntimeError("Outlook 邮箱会话与目标邮箱不匹配")
-    code = lease.mailbox.wait_for_code(
-        timeout=int(timeout), interval=int(poll_interval), cancel_callback=cancel_callback
-    )
-    lease.consumed = True
-    if not code:
-        # Import here to avoid a module cycle during mail_service import.
-        from registration_flow import VerificationCodeUnavailable
-        raise VerificationCodeUnavailable(f"Outlook 在 {timeout}s 内未收到验证码邮件")
-    return code

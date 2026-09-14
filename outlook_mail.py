@@ -8,7 +8,7 @@ from email.message import Message
 import imaplib
 import re
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import requests
 
@@ -37,7 +37,7 @@ class OutlookAccount:
     mode: str = "auto"
 
 
-def normalize_outlook_mode(mode: str | None) -> str:
+def normalize_outlook_mode(mode: Optional[str]) -> str:
     normalized = str(mode or "").strip().lower()
     return normalized if normalized in {"auto", "imap", "graph"} else "auto"
 
@@ -54,7 +54,7 @@ def _normalize_code(code: str) -> str:
     return str(code or "").replace("-", "").strip()
 
 
-def extract_verification_code(subject: str = "", text: str = "", html: str = "", sender: str = "") -> str | None:
+def extract_verification_code(subject: str = "", text: str = "", html: str = "", sender: str = "") -> Optional[str]:
     combined = "\n".join(str(value or "") for value in (subject, text, html))
     trusted_sender = bool(re.search(r"(?:^|[<@.])(?:x\.ai|accounts\.x\.ai)(?:[>\s]|$)", str(sender or ""), re.I))
     contextual = bool(re.search(r"\b(?:verification|confirmation|security|verify|confirm)\b|验证码|验证|确认", combined, re.I))
@@ -85,7 +85,7 @@ def _microsoft_oauth_error_message(label: str, status_code: int, data: dict) -> 
     return f"{label} token 刷新失败 {status_code} {code}" + (f": {description}" if description else "")
 
 
-def is_terminal_microsoft_token_error(error: Exception | str | None) -> bool:
+def is_terminal_microsoft_token_error(error: Optional[Union[Exception, str]]) -> bool:
     text = str(error or "").lower()
     markers = (
         "invalid_grant", "aadsts7000012", "aadsts70000", "aadsts700082", "aadsts700084",
@@ -160,7 +160,7 @@ def _normalize_folder_name(name: str) -> str:
     return re.sub(r"\s+", " ", str(name or "").strip()).lower()
 
 
-def _decode_imap_list_name(raw_line: bytes | str) -> str:
+def _decode_imap_list_name(raw_line: Union[bytes, str]) -> str:
     line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
     quoted = re.findall(r'"([^\"]+)"', line)
     if quoted:
@@ -192,7 +192,7 @@ def _discover_folders(client: imaplib.IMAP4_SSL) -> list[str]:
     return ordered
 
 
-def _select_folder_count(client: imaplib.IMAP4_SSL, folder: str) -> int | None:
+def _select_folder_count(client: imaplib.IMAP4_SSL, folder: str) -> Optional[int]:
     status, data = client.select(folder, readonly=True)
     if status != "OK":
         return None
@@ -205,7 +205,7 @@ def _select_folder_count(client: imaplib.IMAP4_SSL, folder: str) -> int | None:
         return None
 
 
-def _graph_get(access_token: str, path: str, params: dict[str, str] | None = None) -> dict:
+def _graph_get(access_token: str, path: str, params: Optional[dict[str, str]] = None) -> dict:
     response = requests.get(
         f"{OUTLOOK_GRAPH_BASE_URL}{path}",
         params=params or {},
@@ -304,7 +304,7 @@ def _fetch_message_content(client: imaplib.IMAP4_SSL, seq: int) -> tuple[str, st
     return subject, "\n".join(text_parts), "\n".join(html_parts), sender
 
 
-def _scan_imap_once(account: OutlookAccount, token: str, counts: dict[str, int], log_callback: LogCallback = None) -> str | None:
+def _scan_imap_once(account: OutlookAccount, token: str, counts: dict[str, int], log_callback: LogCallback = None) -> Optional[str]:
     client = _connect_imap(account, token)
     try:
         for folder in _discover_folders(client):
@@ -331,7 +331,7 @@ def _scan_imap_once(account: OutlookAccount, token: str, counts: dict[str, int],
             pass
 
 
-def _scan_graph_once(token: str, counts: dict[str, int], email: str = "", log_callback: LogCallback = None) -> str | None:
+def _scan_graph_once(token: str, counts: dict[str, int], email: str = "", log_callback: LogCallback = None) -> Optional[str]:
     before = counts.get(OUTLOOK_GRAPH_INBOX_KEY, counts.get("INBOX", 0))
     total = _graph_inbox_count(token)
     if total <= before:
@@ -369,20 +369,20 @@ def _sleep_interruptibly(seconds: float, cancel_callback=None) -> None:
 
 def wait_for_outlook_code(
     account: OutlookAccount,
-    before_counts: dict[str, int] | None,
+    before_counts: Optional[dict[str, int]],
     timeout: int = 180,
     interval: int = 3,
     cancel_callback=None,
     log_callback: LogCallback = None,
-) -> str | None:
+) -> Optional[str]:
     mode = normalize_outlook_mode(account.mode)
     deadline = time.time() + max(int(timeout), 1)
     counts = before_counts if before_counts is not None else {}
     if not counts:
         counts["INBOX"] = 0
 
-    imap_token: str | None = None
-    graph_token: str | None = None
+    imap_token: Optional[str] = None
+    graph_token: Optional[str] = None
     imap_terminal = mode == "graph"
     graph_terminal = mode == "imap"
     terminal_errors: list[str] = []
@@ -453,14 +453,16 @@ class OutlookMailbox:
         _log(self._log_callback, f"[*] 使用 Outlook 邮箱: {self.email}（认证模式: {normalize_outlook_mode(self.account.mode)}）")
         try:
             self._folder_counts = load_folder_counts(self.account)
+            if not self._folder_counts:
+                raise RuntimeError("未能建立 Outlook 邮件基线")
             inbox = self._folder_counts.get("INBOX", self._folder_counts.get(OUTLOOK_GRAPH_INBOX_KEY, 0))
             _log(self._log_callback, f"[*] Outlook 发送前邮件数: {inbox}")
         except Exception as exc:
-            # Baseline failure should not prevent registration; code polling can still recover.
             self._folder_counts = {}
-            _log(self._log_callback, f"[!] 获取 Outlook 邮件基线失败，使用 0 继续: {exc}")
+            _log(self._log_callback, f"[!] 获取 Outlook 邮件基线失败，本邮箱不会提交注册: {exc}")
+            raise
 
-    def wait_for_code(self, timeout: int = 180, interval: int = 3, cancel_callback=None) -> str | None:
+    def wait_for_code(self, timeout: int = 180, interval: int = 3, cancel_callback=None) -> Optional[str]:
         return wait_for_outlook_code(
             self.account, self._folder_counts, timeout=timeout, interval=interval,
             cancel_callback=cancel_callback, log_callback=self._log_callback,

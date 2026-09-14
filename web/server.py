@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import grok_register_ttk as engine
 
@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 INDEX_HTML = Path(__file__).resolve().parent / "index.html"
 PROXY_POOL_JS = Path(__file__).resolve().parent / "proxy-pool.js"
 PROXY_POOL_CSS = Path(__file__).resolve().parent / "proxy-pool.css"
+OUTLOOK_MAILBOX_JS = Path(__file__).resolve().parent / "outlook-mailbox.js"
 LOG_LIMIT = 2000
 
 app = FastAPI(title="grok-register WebUI", version="1.2")
@@ -136,6 +137,8 @@ def index():
         html = html.replace("</head>", '<link rel="stylesheet" href="/proxy-pool.css">\n</head>', 1)
     if PROXY_POOL_JS.is_file():
         html = html.replace("</body>", '<script src="/proxy-pool.js"></script>\n</body>', 1)
+    if OUTLOOK_MAILBOX_JS.is_file():
+        html = html.replace("</body>", '<script src="/outlook-mailbox.js"></script>\n</body>', 1)
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
@@ -147,6 +150,30 @@ def proxy_pool_js():
 @app.get("/proxy-pool.css", include_in_schema=False)
 def proxy_pool_css():
     return FileResponse(PROXY_POOL_CSS, media_type="text/css", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/outlook-mailbox.js", include_in_schema=False)
+def outlook_mailbox_js():
+    return FileResponse(OUTLOOK_MAILBOX_JS, media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
+@app.middleware("http")
+async def protect_outlook_mailbox_api(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/mailboxes/outlook"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def _require_local_origin(request: Request) -> None:
+    origin = str(request.headers.get("origin") or "").strip()
+    if not origin:
+        return
+    from urllib.parse import urlsplit
+    host = (urlsplit(origin).hostname or "").lower()
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        raise HTTPException(status_code=403, detail="Outlook 邮箱池只允许本地 WebUI 访问")
 
 
 @app.get("/health")
@@ -187,6 +214,48 @@ async def put_config(request: Request):
         engine.save_config()
         result = dict(engine.config)
     return {"ok": True, "config": result}
+
+
+@app.get("/api/mailboxes/outlook")
+def get_outlook_mailboxes(request: Request):
+    _require_local_origin(request)
+    from outlook_mailbox_pool import load_outlook_mailbox_pool
+    cfg = _load_config_if_idle()
+    try:
+        summary = load_outlook_mailbox_pool(cfg.get("outlook_accounts_file", ""))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({
+        "ok": True,
+        "path": summary["path"],
+        "data": summary["data"],
+        "count": summary["count"],
+        "invalid": summary["invalid"],
+        "duplicates": summary["duplicates"],
+        "accounts": summary["accounts"],
+    })
+
+
+@app.put("/api/mailboxes/outlook")
+async def put_outlook_mailboxes(request: Request):
+    _require_local_origin(request)
+    payload = await request.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), str):
+        raise HTTPException(status_code=400, detail="请求必须包含字符串字段 data")
+    from outlook_mailbox_pool import save_outlook_mailbox_pool
+    with _job_lock:
+        if _job_state["running"]:
+            raise HTTPException(status_code=409, detail="任务运行期间不能修改 Outlook 邮箱池")
+        if _maintenance_state is not None:
+            raise HTTPException(status_code=409, detail="维护操作期间不能修改 Outlook 邮箱池")
+        engine.load_config()
+        path = engine.config.get("outlook_accounts_file", "")
+        try:
+            summary = save_outlook_mailbox_pool(path, payload["data"])
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_log("[*] Outlook 邮箱池已保存: %s 个账号" % summary["count"])
+    return JSONResponse({"ok": True, **summary})
 
 
 @app.get("/api/proxy-pool/status")
@@ -289,7 +358,9 @@ def start():
         engine.config.clear()
         engine.config.update(validated)
 
-        count = int(engine.config["register_count"])
+        count = engine.resolve_registration_count(
+            int(engine.config["register_count"]), log_callback=_append_log
+        )
         controller = engine.CliStopController()
         accounts_file = _new_accounts_file()
 

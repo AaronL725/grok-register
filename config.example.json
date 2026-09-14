@@ -11,6 +11,7 @@
   "cloudmail_public_token": "",
   "cloudmail_domains": "example.com",
   "cloudmail_path_messages": "/api/public/emailList",
+  "outlook_accounts_file": "./output/mailboxes/outlook-accounts.txt",
   "proxy_mode": "auto",
   "proxy": "",
   "proxy_fallback": "none",

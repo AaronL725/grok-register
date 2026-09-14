@@ -105,6 +105,9 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
         )
         mail_runtime = dict(runtime_namespace)
         mail_runtime["domain_allocator"] = domain_allocator
+        if runtime_namespace.get("outlook_runtime") is not None:
+            # Every isolated worker receives the same task-scoped allocator.
+            mail_runtime["outlook_runtime"] = runtime_namespace["outlook_runtime"]
         mail_module.bind_runtime(mail_runtime)
 
         worker_namespace = dict(mail_runtime)

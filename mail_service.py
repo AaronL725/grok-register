@@ -802,8 +802,16 @@ def get_domains(api_key=None):
 def get_duckmail_api_key():
     return config.get("duckmail_api_key", "")
 
+def _get_outlook_runtime():
+    runtime = globals().get("outlook_runtime")
+    if runtime is None:
+        raise RuntimeError("Outlook 邮箱运行时未初始化")
+    return runtime
+
 def get_email_and_token(api_key=None):
     provider = get_email_provider()
+    if provider == "outlook":
+        return _get_outlook_runtime().acquire()
     if provider == "yyds":
         return yyds_get_email_and_token(api_key=api_key, jwt=get_yyds_jwt())
     if provider == "cloudmail":
@@ -890,6 +898,16 @@ def get_oai_code(
     resend_callback=None,
 ):
     provider = get_email_provider()
+    if provider == "outlook":
+        return _get_outlook_runtime().wait_for_code(
+            dev_token,
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
+        )
     if provider == "yyds":
         return yyds_get_oai_code(
             dev_token,
