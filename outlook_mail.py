@@ -118,8 +118,6 @@ def _refresh_access_token(account: OutlookAccount, scope: str, token_urls: tuple
             data = {"raw": response.text}
         if response.status_code != 200:
             last_error = _microsoft_oauth_error_message(label, response.status_code, data)
-            if is_terminal_microsoft_token_error(last_error):
-                raise RuntimeError(last_error)
             continue
         token = str(data.get("access_token") or "").strip()
         if token:
@@ -229,36 +227,48 @@ def _graph_inbox_count(access_token: str) -> int:
 def load_folder_counts(account: OutlookAccount) -> dict[str, int]:
     mode = normalize_outlook_mode(account.mode)
     errors: list[str] = []
+    counts: dict[str, int] = {}
+
     if mode in {"imap", "auto"}:
         try:
             token = refresh_outlook_imap_token(account)
             client = _connect_imap(account, token)
             try:
-                counts: dict[str, int] = {}
+                imap_counts: dict[str, int] = {}
                 for folder in _discover_folders(client):
                     total = _select_folder_count(client, folder)
                     if total is not None:
-                        counts[folder] = total
-                if counts or mode == "imap":
-                    return counts
-                errors.append("IMAP: 未发现可读取的邮件文件夹")
+                        imap_counts[folder] = total
             finally:
                 try:
                     client.logout()
                 except Exception:
                     pass
+            if mode == "imap":
+                return imap_counts
+            if imap_counts:
+                counts.update(imap_counts)
+            else:
+                errors.append("IMAP: 未发现可读取的邮件文件夹")
         except Exception as exc:
             if mode == "imap":
                 raise
             errors.append(f"IMAP: {exc}")
+
     if mode in {"graph", "auto"}:
         try:
             token = refresh_outlook_graph_token(account)
-            return {OUTLOOK_GRAPH_INBOX_KEY: _graph_inbox_count(token)}
+            graph_count = _graph_inbox_count(token)
+            if mode == "graph":
+                return {OUTLOOK_GRAPH_INBOX_KEY: graph_count}
+            counts[OUTLOOK_GRAPH_INBOX_KEY] = graph_count
         except Exception as exc:
             if mode == "graph":
                 raise
             errors.append(f"Graph: {exc}")
+
+    if counts:
+        return counts
     if errors:
         raise RuntimeError("; ".join(errors))
     return {}
@@ -376,27 +386,45 @@ def wait_for_outlook_code(
     interval: int = 3,
     cancel_callback=None,
     log_callback: LogCallback = None,
+    resend_callback=None,
 ) -> Optional[str]:
     mode = normalize_outlook_mode(account.mode)
     deadline = time.time() + max(int(timeout), 1)
     counts = before_counts if before_counts is not None else {}
     if not counts:
-        counts["INBOX"] = 0
+        if mode == "graph":
+            counts[OUTLOOK_GRAPH_INBOX_KEY] = 0
+        else:
+            counts["INBOX"] = 0
 
+    imap_baselined = any(key != OUTLOOK_GRAPH_INBOX_KEY for key in counts)
+    graph_baselined = OUTLOOK_GRAPH_INBOX_KEY in counts
     imap_token: Optional[str] = None
     graph_token: Optional[str] = None
-    imap_terminal = mode == "graph"
-    graph_terminal = mode == "imap"
+    imap_terminal = mode == "graph" or (mode == "auto" and not imap_baselined)
+    graph_terminal = mode == "imap" or (mode == "auto" and not graph_baselined)
     terminal_errors: list[str] = []
     attempt = 0
+    next_resend_at = time.time() + 35
 
     _log(log_callback, f"[*] Outlook 等待验证码: {account.email}（模式: {mode}）")
+    if mode == "auto" and imap_terminal:
+        _log(log_callback, "[*] Outlook auto: IMAP 未建立发送前基线，本次禁用 IMAP 通道")
+    if mode == "auto" and graph_terminal:
+        _log(log_callback, "[*] Outlook auto: Graph 未建立发送前基线，本次禁用 Graph 通道")
     while time.time() < deadline:
         if cancel_callback and cancel_callback():
             raise RuntimeError("任务已停止")
         attempt += 1
         if attempt == 1 or attempt % 3 == 0:
             _log(log_callback, f"[*] 仍在等待 Outlook 验证码，剩余约 {max(0, int(deadline-time.time()))}s")
+        if resend_callback and time.time() >= next_resend_at:
+            try:
+                resend_callback()
+                _log(log_callback, "[*] 已触发重新发送验证码")
+            except Exception as exc:
+                _log(log_callback, f"[Debug] 触发重发验证码失败: {exc}")
+            next_resend_at = time.time() + 35
 
         if mode in {"imap", "auto"} and not imap_terminal:
             if imap_token is None:
@@ -464,8 +492,11 @@ class OutlookMailbox:
             _log(self._log_callback, f"[!] 获取 Outlook 邮件基线失败，本邮箱不会提交注册: {exc}")
             raise
 
-    def wait_for_code(self, timeout: int = 180, interval: int = 3, cancel_callback=None) -> Optional[str]:
+    def wait_for_code(
+        self, timeout: int = 180, interval: int = 3, cancel_callback=None, resend_callback=None
+    ) -> Optional[str]:
         return wait_for_outlook_code(
             self.account, self._folder_counts, timeout=timeout, interval=interval,
             cancel_callback=cancel_callback, log_callback=self._log_callback,
+            resend_callback=resend_callback,
         )

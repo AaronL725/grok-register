@@ -297,7 +297,7 @@ email----password----clientId----refreshToken----auto
 
 最后一列可选，支持 `auto` / `imap` / `graph`；省略时默认 `auto`。也兼容用 `|` 分隔的相同字段。`password` 字段会保留在池记录中，但验证码读取使用 `clientId + refreshToken` 获取 OAuth2 access token。
 
-- `auto`：优先尝试 IMAP，并在同一轮轮询中使用 Microsoft Graph 作为补充。
+- `auto`：提交邮箱前分别尝试为 IMAP 与 Microsoft Graph 建立基线；轮询时只启用已成功建立基线的通道。两者均可用时会在同一轮轮询中同时使用，避免通道恢复后误读旧邮件。
 - `imap`：通过 `outlook.office365.com:993` + XOAUTH2 读取收件箱、垃圾邮件、归档等常见文件夹。
 - `graph`：通过 Microsoft Graph 读取 Inbox。
 - 每个邮箱在单次注册任务中最多领取一次；多线程 worker 共用同一个任务级分配器，不会重复领取同一邮箱。

@@ -117,11 +117,19 @@ def _canonical_path(path: Union[str, os.PathLike]) -> Path:
 def load_outlook_mailbox_pool(path: Union[str, os.PathLike]) -> dict:
     target = _canonical_path(path)
     try:
-        data = target.read_text(encoding="utf-8")
+        with target.open("rb") as handle:
+            raw = handle.read(_MAX_POOL_BYTES + 1)
     except FileNotFoundError:
         data = ""
     except OSError as exc:
         raise RuntimeError("读取 Outlook 账号池失败: %s" % exc) from exc
+    else:
+        if len(raw) > _MAX_POOL_BYTES:
+            raise ValueError("Outlook 账号池过大")
+        try:
+            data = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Outlook 账号池必须是 UTF-8 文本") from exc
     return {"path": str(target), "data": data, **inspect_outlook_mailbox_pool(data)}
 
 
@@ -283,7 +291,6 @@ class OutlookTaskRuntime:
         cancel_callback=None,
         resend_callback=None,
     ) -> str:
-        del resend_callback
         with self._lock:
             if self._closed:
                 raise RuntimeError("Outlook 邮箱任务运行时已关闭")
@@ -299,6 +306,7 @@ class OutlookTaskRuntime:
                 timeout=int(timeout),
                 interval=int(poll_interval),
                 cancel_callback=cancel_callback,
+                resend_callback=resend_callback,
             )
         except Exception:
             # The low-level mailbox poller intentionally has no dependency on

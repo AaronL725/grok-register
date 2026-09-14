@@ -208,7 +208,7 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
             raise
     if not mail_ok:
         raise RuntimeError("验证码阶段失败，已达到最大重试次数")
-    callbacks.log(f"[*] 验证码: {code}")
+    callbacks.log("[*] 验证码已获取并提交（内容已隐藏）")
     callbacks.log("[*] 4. 填写资料")
     if not ops.internal_stage_markers:
         _set_registration_stage(STAGE_PROFILE_SUBMIT)

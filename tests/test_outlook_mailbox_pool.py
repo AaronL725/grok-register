@@ -184,7 +184,7 @@ class OutlookMailboxPoolTests(unittest.TestCase):
 
     def test_auto_mode_can_fall_back_to_graph(self):
         account = outlook_mail.OutlookAccount("u@example.com", "pw", "client", "refresh", "auto")
-        counts = {"INBOX": 0}
+        counts = {"INBOX": 0, outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: 0}
         with patch.object(
             outlook_mail, "refresh_outlook_imap_token", side_effect=RuntimeError("temporary imap error")
         ), patch.object(outlook_mail, "refresh_outlook_graph_token", return_value="graph-token"), patch.object(
@@ -200,7 +200,9 @@ class OutlookMailboxPoolTests(unittest.TestCase):
             outlook_mail, "refresh_outlook_graph_token", side_effect=RuntimeError("invalid_grant")
         ), patch.object(outlook_mail, "_sleep_interruptibly") as sleep:
             with self.assertRaises(RuntimeError):
-                outlook_mail.wait_for_outlook_code(account, {"INBOX": 0}, timeout=30, interval=3)
+                outlook_mail.wait_for_outlook_code(
+                    account, {"INBOX": 0, outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: 0}, timeout=30, interval=3
+                )
             sleep.assert_not_called()
 
 
