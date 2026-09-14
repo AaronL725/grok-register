@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 import grok_register_ttk as engine
 
@@ -255,6 +256,30 @@ async def put_outlook_mailboxes(request: Request):
         except (ValueError, RuntimeError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     _append_log("[*] Outlook 邮箱池已保存: %s 个账号" % summary["count"])
+    return JSONResponse({"ok": True, **summary})
+
+
+@app.post("/api/mailboxes/outlook/test")
+async def test_outlook_mailboxes(request: Request):
+    _require_local_origin(request)
+    payload = await request.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), str):
+        raise HTTPException(status_code=400, detail="请求必须包含字符串字段 data")
+    from outlook_mailbox_pool import probe_outlook_mailbox_pool_data
+
+    kind = "outlook_mailbox_test"
+    _begin_maintenance(kind)
+    try:
+        try:
+            summary = await run_in_threadpool(probe_outlook_mailbox_pool_data, payload["data"])
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        _end_maintenance(kind)
+    _append_log(
+        "[*] Outlook 邮箱池健康检查完成: %s/%s 个账号可用"
+        % (summary["healthy"], summary["count"])
+    )
     return JSONResponse({"ok": True, **summary})
 
 

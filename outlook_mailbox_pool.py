@@ -1,6 +1,7 @@
 """Thread-safe Outlook mailbox pool, task runtime and private local persistence."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -10,11 +11,17 @@ import tempfile
 import threading
 from typing import Optional, Union
 
-from outlook_mail import OutlookAccount, OutlookMailbox, normalize_outlook_mode
+from outlook_mail import (
+    OutlookAccount,
+    OutlookMailbox,
+    normalize_outlook_mode,
+    probe_outlook_account,
+)
 
 _MAX_POOL_BYTES = 1_000_000
 _HANDLE_PREFIX = "outlook:"
 _DEFAULT_POOL_PATH = "./output/mailboxes/outlook-accounts.txt"
+_HEALTH_MAX_WORKERS = 4
 
 
 def _split_by_dashes(line: str) -> list[str]:
@@ -188,11 +195,44 @@ def save_outlook_mailbox_pool(path: Union[str, os.PathLike], data: str) -> dict:
     }
 
 
+def _probe_accounts(accounts: list[OutlookAccount], max_workers: int = _HEALTH_MAX_WORKERS) -> dict:
+    workers = max(1, min(int(max_workers or 1), _HEALTH_MAX_WORKERS, len(accounts)))
+    if workers == 1:
+        results = [probe_outlook_account(account) for account in accounts]
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="outlook-health") as executor:
+            results = list(executor.map(probe_outlook_account, accounts))
+    healthy = sum(1 for result in results if result.get("usable"))
+    imap = sum(1 for result in results if result.get("imap", {}).get("ok"))
+    graph = sum(1 for result in results if result.get("graph", {}).get("ok"))
+    return {
+        "count": len(results),
+        "healthy": healthy,
+        "unhealthy": len(results) - healthy,
+        "imap": imap,
+        "graph": graph,
+        "results": results,
+    }
+
+
+def probe_outlook_mailbox_pool_data(data: str, max_workers: int = _HEALTH_MAX_WORKERS) -> dict:
+    """Validate and preflight unsaved pool data without persisting any credentials."""
+    _normalized, accounts = _validate_pool_data(data)
+    return _probe_accounts(accounts, max_workers=max_workers)
+
+
+def probe_outlook_mailbox_pool(
+    path: Union[str, os.PathLike], max_workers: int = _HEALTH_MAX_WORKERS
+) -> dict:
+    """Preflight a saved pool and return only safe status metadata."""
+    _target, _normalized, accounts = _read_validated_pool(path)
+    return _probe_accounts(accounts, max_workers=max_workers)
+
+
 @dataclass
 class OutlookMailboxLease:
     handle: str
     mailbox: OutlookMailbox
-    consumed: bool = False
 
     @property
     def email(self) -> str:
@@ -236,6 +276,7 @@ class OutlookAccountPool:
                 mailbox.prepare()
                 return mailbox
             except Exception as exc:
+                mailbox.close()
                 last_error = exc
                 if log_callback:
                     log_callback("[!] Outlook 邮箱预检失败，跳过 %s: %s" % (account.email, exc))
@@ -278,6 +319,7 @@ class OutlookTaskRuntime:
         lease = OutlookMailboxLease(handle=handle, mailbox=mailbox)
         with self._lock:
             if self._closed:
+                mailbox.close()
                 raise RuntimeError("Outlook 邮箱任务运行时已关闭")
             self._leases[handle] = lease
         return mailbox.email, handle
@@ -295,31 +337,35 @@ class OutlookTaskRuntime:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Outlook 邮箱任务运行时已关闭")
-            lease = self._leases.get(str(handle or ""))
+            key = str(handle or "")
+            lease = self._leases.get(key)
             if lease is None:
-                raise RuntimeError("Outlook 邮箱会话不存在或已失效")
+                raise RuntimeError("Outlook 邮箱会话不存在、已使用或已失效")
             if lease.email.lower() != str(email or "").lower():
                 raise RuntimeError("Outlook 邮箱会话与目标邮箱不匹配")
-            lease.consumed = True
-        self._raise_if_cancelled(cancel_callback)
+            # One-shot capability: once polling begins the opaque handle cannot
+            # be replayed, and its credential-bearing mailbox is released as
+            # soon as this wait finishes.
+            del self._leases[key]
         try:
-            code = lease.mailbox.wait_for_code(
-                timeout=int(timeout),
-                interval=int(poll_interval),
-                cancel_callback=cancel_callback,
-                resend_callback=resend_callback,
-            )
-        except Exception:
-            # The low-level mailbox poller intentionally has no dependency on
-            # the registration engine. Convert its generic stop signal back to
-            # the engine's cancellation exception at this task boundary.
             self._raise_if_cancelled(cancel_callback)
-            raise
-        self._raise_if_cancelled(cancel_callback)
-        if not code:
-            from registration_flow import VerificationCodeUnavailable
-            raise VerificationCodeUnavailable("Outlook 在 %ss 内未收到验证码邮件" % timeout)
-        return str(code)
+            try:
+                code = lease.mailbox.wait_for_code(
+                    timeout=int(timeout),
+                    interval=int(poll_interval),
+                    cancel_callback=cancel_callback,
+                    resend_callback=resend_callback,
+                )
+            except Exception:
+                self._raise_if_cancelled(cancel_callback)
+                raise
+            self._raise_if_cancelled(cancel_callback)
+            if not code:
+                from registration_flow import VerificationCodeUnavailable
+                raise VerificationCodeUnavailable("Outlook 在 %ss 内未收到验证码邮件" % timeout)
+            return str(code)
+        finally:
+            lease.mailbox.close()
 
     def status(self) -> dict:
         with self._lock:
@@ -333,7 +379,13 @@ class OutlookTaskRuntime:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            leases = list(self._leases.values())
             self._leases.clear()
+        for lease in leases:
+            try:
+                lease.mailbox.close()
+            except Exception:
+                pass
 
 
 def create_outlook_task_runtime(

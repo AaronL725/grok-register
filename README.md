@@ -297,15 +297,16 @@ email----password----clientId----refreshToken----auto
 
 最后一列可选，支持 `auto` / `imap` / `graph`；省略时默认 `auto`。也兼容用 `|` 分隔的相同字段。`password` 字段会保留在池记录中，但验证码读取使用 `clientId + refreshToken` 获取 OAuth2 access token。
 
-- `auto`：提交邮箱前分别尝试为 IMAP 与 Microsoft Graph 建立基线；轮询时只启用已成功建立基线的通道。两者均可用时会在同一轮轮询中同时使用，避免通道恢复后误读旧邮件。
-- `imap`：通过 `outlook.office365.com:993` + XOAUTH2 读取收件箱、垃圾邮件、归档等常见文件夹。
-- `graph`：通过 Microsoft Graph 读取 Inbox。
-- 每个邮箱在单次注册任务中最多领取一次；多线程 worker 共用同一个任务级分配器，不会重复领取同一邮箱。
-- 提交邮箱前先记录邮件数量基线，只扫描之后新到达的邮件，避免把旧验证码当成本次验证码。无法建立基线的邮箱不会提交注册。
-- 若请求注册数量大于邮箱池有效账号数，本次任务会自动把目标数量限制为邮箱池容量，不会循环复用已领取邮箱。
+- `auto`：提交邮箱前分别为 IMAP 与 Microsoft Graph 建立独立的发送前游标；轮询时只启用真正完成预检的通道，两者均可用时同时轮询。
+- `imap`：通过 `outlook.office365.com:993` + XOAUTH2 读取收件箱、垃圾邮件、归档等常见文件夹；使用 `UIDVALIDITY + UID` 作为稳定增量游标，而不是易受删除/移动邮件影响的邮件数量或 sequence number。文件夹 LIST 结果和预检阶段的 IMAP 连接/access token 会在短暂验证码窗口内复用，断线或认证失效时再重连/刷新。
+- `graph`：通过 Microsoft Graph 同时监控 `Inbox` 与 `JunkEmail`；使用 immutable message ID + `receivedDateTime` 的发送前游标，日常轮询只拉取轻量消息前沿，确认有新邮件后才读取正文。
+- Microsoft OAuth/Graph 对超时、连接错误、`429` 和 `5xx` 做有限重试；`429` 优先遵守 `Retry-After`，其余使用带 jitter 的指数退避，并限制 Microsoft HTTP 并发。
+- 验证码仅在明确验证码语境，或发件人确认为 xAI/Grok 官方域名时提取，避免把普通工单号等 `ABC-123` 文本误识别成 OTP。
+- 每个邮箱在单次注册任务中最多领取一次；多线程 worker 共用同一个任务级分配器。邮箱会话使用一次性 opaque handle，开始取码后即失效，取码结束立即释放内存中的邮箱状态/access token。
+- 无法建立安全发送前游标的邮箱不会提交注册；若请求注册数量大于邮箱池有效账号数，本次任务会自动限制为邮箱池容量。
 - Outlook refresh token / access token 不会写入 `mail_credentials.txt`、普通日志或 `config.json`。邮箱池文件会尽量以 `0600` 权限原子写入，并已加入 `.gitignore`。
 
-GUI 提供“管理 Outlook 邮箱池”编辑器；WebUI 的邮箱服务页也提供独立邮箱池编辑区。Web 接口仅监听本机，并对邮箱池响应设置 `no-store`。
+GUI 的“管理 Outlook 邮箱池”和 WebUI 邮箱池编辑区都提供健康检查，可在不触发 xAI 注册的情况下验证各邮箱的 IMAP/Graph 可用性；检查结果只返回邮箱、模式、通道状态和文件夹等安全元数据。Web 接口仅监听本机，并对邮箱池相关响应设置 `no-store`。
 
 #### Cloudflare 临时邮箱
 
