@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
     "cloudmail_public_token": "",
     "cloudmail_domains": "",
     "cloudmail_path_messages": "/api/public/emailList",
+    "outlook_accounts_file": "./output/mailboxes/outlook-accounts.txt",
     "proxy_mode": "auto",
     "proxy": "",
     "proxy_fallback": "none",
@@ -147,12 +148,12 @@ def validate_config_structure(raw):
     path_keys = {
         "grok2api_local_token_file", "api_reverse_tools", "cpa_auth_dir", "cpa_hotload_dir",
         "proxy_pool_file", "proxy_singbox_path", "proxy_pool_state_file",
-        "sso_risk_rejected_file",
+        "sso_risk_rejected_file", "outlook_accounts_file",
     }
     for key in string_keys:
         cfg[key] = _require_string(cfg, key, path=key in path_keys)
     enums = {
-        "email_provider": {"duckmail", "yyds", "cloudflare", "cloudmail"},
+        "email_provider": {"duckmail", "yyds", "cloudflare", "cloudmail", "outlook"},
         "cloudflare_auth_mode": {"query-key", "bearer", "x-api-key", "x-admin-auth", "none"},
         "grok2api_pool_name": {"ssoBasic", "ssoSuper"},
         "proxy_mode": {"auto", "direct", "single", "pool"},
@@ -212,6 +213,17 @@ def validate_run_requirements(cfg):
             raise ConfigError("Cloud Mail 模式缺少必需配置: " + ", ".join(missing))
     if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
         raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
+    if provider == "outlook":
+        path = os.path.realpath(os.path.abspath(os.path.expanduser(cfg["outlook_accounts_file"])))
+        if not os.path.isfile(path):
+            raise ConfigError(f"Outlook 模式需要有效的账号池文件: {path}")
+        try:
+            from outlook_mailbox_pool import get_outlook_mailbox_pool_capacity
+            count = get_outlook_mailbox_pool_capacity(path)
+        except Exception as exc:
+            raise ConfigError(f"Outlook 账号池校验失败: {exc}") from exc
+        if int(count) <= 0:
+            raise ConfigError("Outlook 账号池没有有效账号")
 
     if cfg["proxy_mode"] == "single" and not cfg["proxy"]:
         raise ConfigError("single 代理模式必须配置 proxy")
@@ -255,12 +267,14 @@ def load_config():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as handle:
                 loaded = json.load(handle)
-            return _replace_config(validate_config_structure(loaded))
+            result = _replace_config(validate_config_structure(loaded))
+            return result
         except ConfigError:
             raise
         except Exception as exc:
             raise ConfigError(f"配置文件解析失败: {CONFIG_FILE}: {exc}") from exc
-    return _replace_config(validate_config_structure(DEFAULT_CONFIG.copy()))
+    result = _replace_config(validate_config_structure(DEFAULT_CONFIG.copy()))
+    return result
 
 
 def save_config():

@@ -2,7 +2,7 @@
 
 [![Grok Register — GUI, CLI and WebUI registration automation toolkit](assets/banner.png)](https://github.com/AaronL725/grok-register)
 
-Grok Register 是一个面向自动化流程研究、测试环境验证和个人学习的 Python 工具。项目提供 GUI / CLI / WebUI、四种临时邮箱、可选 1–8 线程并发与账号级代理池，并集成 Chromium 页面自动化、账号安全落盘、pending 恢复、grok2api token 入池和可选 CPA xAI OIDC 凭证导出。
+Grok Register 是一个面向自动化流程研究、测试环境验证和个人学习的 Python 工具。项目提供 GUI / CLI / WebUI、四种临时邮箱与 Outlook 邮箱池、可选 1–8 线程并发与账号级代理池，并集成 Chromium 页面自动化、账号安全落盘、pending 恢复、grok2api token 入池和可选 CPA xAI OIDC 凭证导出。
 
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
@@ -79,7 +79,7 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
 主要功能：
 
 - 自动打开注册页、提交邮箱、轮询验证码、填写资料并获取 SSO cookie。
-- 支持 **DuckMail / YYDS / Cloudflare 临时邮箱 / Cloud Mail** 四种邮箱来源。
+- 支持 **DuckMail / YYDS / Cloudflare 临时邮箱 / Cloud Mail / Outlook 邮箱池** 五种邮箱来源。
 - 支持 **GUI / CLI / WebUI** 三种操作入口。
 - 支持可选 **1–8 线程并发注册**；默认关闭。
 - 支持 `direct / single / pool` 代理模式、健康检查、冷却、订阅、固定/旋转节点和账号级稳定 Proxy Lease。
@@ -244,7 +244,7 @@ CLI 读取 `config.json`，通过校验后提示：
 
 | 配置项 | 说明 |
 | --- | --- |
-| `email_provider` | `duckmail` / `yyds` / `cloudflare` / `cloudmail` |
+| `email_provider` | `duckmail` / `yyds` / `cloudflare` / `cloudmail` / `outlook` |
 | `register_count` | 本批次注册数量 |
 | `enable_nsfw` | 注册后是否尝试开启 NSFW |
 | `sso_risk_gate_enabled` | 入库前是否检查 grok.com `botFlagSource` / `policy=deny`，默认 `true` |
@@ -277,6 +277,35 @@ CLI 读取 `config.json`，通过校验后提示：
 ```
 
 `yyds_api_key` 和 `yyds_jwt` 至少填写一个。
+
+#### Outlook 邮箱池
+
+Outlook 模式使用已经存在、可通过 OAuth2 读取邮件的 Outlook / Microsoft 邮箱，不负责创建 Microsoft 邮箱。配置中只保存邮箱池文件路径：
+
+```json
+{
+  "email_provider": "outlook",
+  "outlook_accounts_file": "./output/mailboxes/outlook-accounts.txt"
+}
+```
+
+邮箱池每行格式：
+
+```text
+email----password----clientId----refreshToken----auto
+```
+
+最后一列可选，支持 `auto` / `imap` / `graph`；省略时默认 `auto`。也兼容用 `|` 分隔的相同字段。`password` 字段会保留在池记录中，但验证码读取使用 `clientId + refreshToken` 获取 OAuth2 access token。
+
+- `auto`：提交邮箱前分别尝试为 IMAP 与 Microsoft Graph 建立基线；轮询时只启用已成功建立基线的通道。两者均可用时会在同一轮轮询中同时使用，避免通道恢复后误读旧邮件。
+- `imap`：通过 `outlook.office365.com:993` + XOAUTH2 读取收件箱、垃圾邮件、归档等常见文件夹。
+- `graph`：通过 Microsoft Graph 读取 Inbox。
+- 每个邮箱在单次注册任务中最多领取一次；多线程 worker 共用同一个任务级分配器，不会重复领取同一邮箱。
+- 提交邮箱前先记录邮件数量基线，只扫描之后新到达的邮件，避免把旧验证码当成本次验证码。无法建立基线的邮箱不会提交注册。
+- 若请求注册数量大于邮箱池有效账号数，本次任务会自动把目标数量限制为邮箱池容量，不会循环复用已领取邮箱。
+- Outlook refresh token / access token 不会写入 `mail_credentials.txt`、普通日志或 `config.json`。邮箱池文件会尽量以 `0600` 权限原子写入，并已加入 `.gitignore`。
+
+GUI 提供“管理 Outlook 邮箱池”编辑器；WebUI 的邮箱服务页也提供独立邮箱池编辑区。Web 接口仅监听本机，并对邮箱池响应设置 `no-store`。
 
 #### Cloudflare 临时邮箱
 
