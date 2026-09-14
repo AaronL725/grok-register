@@ -239,7 +239,9 @@ def load_folder_counts(account: OutlookAccount) -> dict[str, int]:
                     total = _select_folder_count(client, folder)
                     if total is not None:
                         counts[folder] = total
-                return counts
+                if counts or mode == "imap":
+                    return counts
+                errors.append("IMAP: 未发现可读取的邮件文件夹")
             finally:
                 try:
                     client.logout()

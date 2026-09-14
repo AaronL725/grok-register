@@ -665,7 +665,9 @@ def run_registration_common(count, log_callback, cancel_callback, accounts_outpu
     if provider == "outlook":
         from outlook_mailbox_pool import create_outlook_task_runtime
         task_outlook_runtime = create_outlook_task_runtime(
-            config.get("outlook_accounts_file", ""), log_callback=log_callback
+            config.get("outlook_accounts_file", ""),
+            log_callback=log_callback,
+            cancelled_exception=RegistrationCancelled,
         )
         globals()["outlook_runtime"] = task_outlook_runtime
         effective_count = min(effective_count, task_outlook_runtime.count)

@@ -235,12 +235,22 @@ class OutlookAccountPool:
 class OutlookTaskRuntime:
     """One shared Outlook allocator/lease registry for exactly one registration task."""
 
-    def __init__(self, accounts: list[OutlookAccount], log_callback=None) -> None:
+    def __init__(
+        self, accounts: list[OutlookAccount], log_callback=None, cancelled_exception=None
+    ) -> None:
         self._pool = OutlookAccountPool(accounts)
         self._log_callback = log_callback
+        self._cancelled_exception = cancelled_exception
         self._lock = threading.RLock()
         self._leases = {}
         self._closed = False
+
+    def _raise_if_cancelled(self, cancel_callback=None) -> None:
+        if not cancel_callback or not cancel_callback():
+            return
+        if self._cancelled_exception is not None:
+            raise self._cancelled_exception("用户停止注册")
+        raise RuntimeError("任务已停止")
 
     @property
     def count(self) -> int:
@@ -283,11 +293,20 @@ class OutlookTaskRuntime:
             if lease.email.lower() != str(email or "").lower():
                 raise RuntimeError("Outlook 邮箱会话与目标邮箱不匹配")
             lease.consumed = True
-        code = lease.mailbox.wait_for_code(
-            timeout=int(timeout),
-            interval=int(poll_interval),
-            cancel_callback=cancel_callback,
-        )
+        self._raise_if_cancelled(cancel_callback)
+        try:
+            code = lease.mailbox.wait_for_code(
+                timeout=int(timeout),
+                interval=int(poll_interval),
+                cancel_callback=cancel_callback,
+            )
+        except Exception:
+            # The low-level mailbox poller intentionally has no dependency on
+            # the registration engine. Convert its generic stop signal back to
+            # the engine's cancellation exception at this task boundary.
+            self._raise_if_cancelled(cancel_callback)
+            raise
+        self._raise_if_cancelled(cancel_callback)
         if not code:
             from registration_flow import VerificationCodeUnavailable
             raise VerificationCodeUnavailable("Outlook 在 %ss 内未收到验证码邮件" % timeout)
@@ -308,9 +327,13 @@ class OutlookTaskRuntime:
             self._leases.clear()
 
 
-def create_outlook_task_runtime(path: Union[str, os.PathLike], log_callback=None) -> OutlookTaskRuntime:
+def create_outlook_task_runtime(
+    path: Union[str, os.PathLike], log_callback=None, cancelled_exception=None
+) -> OutlookTaskRuntime:
     _target, _normalized, accounts = _read_validated_pool(path)
-    return OutlookTaskRuntime(accounts, log_callback=log_callback)
+    return OutlookTaskRuntime(
+        accounts, log_callback=log_callback, cancelled_exception=cancelled_exception
+    )
 
 
 def is_outlook_handle(value: str) -> bool:
