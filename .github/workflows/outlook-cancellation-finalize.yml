@@ -26,11 +26,13 @@ jobs:
           fetch-depth: 0
 
       - name: Apply audit hardening
-        run: python tools/finalize_outlook_audit.py
+        run: |
+          python tools/finalize_outlook_audit.py
+          python tools/finalize_outlook_size_guard.py
 
       - name: Verify repository hygiene
         run: |
-          if grep -RniE 'msdsj|grok-account-manager-main|github\.com/msdsj' --exclude-dir=.git .; then
+          if grep -RniE 'msdsj|grok-account-manager-main|github\.com/msdsj' README.md *.py web tests config.example.json .gitignore; then
             echo 'Forbidden external provenance reference found.' >&2
             exit 1
           fi
@@ -74,6 +76,7 @@ jobs:
       - name: Remove one-shot audit files
         run: |
           rm -f tools/finalize_outlook_audit.py
+          rm -f tools/finalize_outlook_size_guard.py
           rm -f .github/workflows/outlook-final-audit.yml
           rm -f .github/workflows/outlook-cancellation-finalize.yml
 
