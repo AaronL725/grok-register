@@ -1,0 +1,149 @@
+name: Outlook hardening follow-up
+
+on:
+  push:
+    branches: [feature/outlook-mailbox-hardening]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Add temporary Outlook follow-up patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/outlook-mailbox-hardening
+          fetch-depth: 0
+
+      - name: Apply audited follow-up changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected one exact replacement, found {text.count(old)}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          def replace_between(path, start, end, replacement):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              i = text.find(start)
+              if i < 0:
+                  raise SystemExit(f'{path}: start marker not found: {start}')
+              j = text.find(end, i)
+              if j < 0:
+                  raise SystemExit(f'{path}: end marker not found: {end}')
+              p.write_text(text[:i] + replacement + text[j:], encoding='utf-8')
+
+          # Outlook mail layer: precise OTP context, lightweight Graph frontier,
+          # stable empty-folder baseline, and body fetch only for genuinely new mail.
+          replace_once(
+              'outlook_mail.py',
+              'import base64\nimport imaplib\n',
+              'import base64\nimport imaplib\nfrom datetime import datetime, timezone\n',
+          )
+          replace_once(
+              'outlook_mail.py',
+              'from typing import Callable, Optional, Union\n',
+              'from typing import Callable, Optional, Union\nfrom urllib.parse import quote\n',
+          )
+          replace_between(
+              'outlook_mail.py',
+              '_CODE_TOKEN_PATTERN =',
+              '\n\n\n@dataclass(frozen=True)\nclass OutlookAccount:',
+              '''_CODE_TOKEN_PATTERN = r"([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{4,8})"\n_CONTEXT_CODE_TOKEN_PATTERN = r"([A-Z0-9]{3}-[A-Z0-9]{3}|(?=[A-Z0-9]{0,7}\\d)[A-Z0-9]{4,8})"\n_VERIFICATION_PATTERNS = (\n    rf"(?:confirmation|verification|security|one[-\\s]?time)\\s*(?:code|pin|passcode)\\s*(?:is|:|：)\\s*{_CODE_TOKEN_PATTERN}",\n    rf"(?:confirmation|verification|security|one[-\\s]?time)\\s*(?:code|pin|passcode)\\s+{_CONTEXT_CODE_TOKEN_PATTERN}",\n    rf"(?:your\\s+code|code|pin|passcode)\\s*(?:is|:|：)\\s*{_CODE_TOKEN_PATTERN}",\n    rf"(?:验证码|确认码|校验码|一次性密码)\\s*(?:是|为|:|：)\\s*{_CODE_TOKEN_PATTERN}",\n    rf"{_CODE_TOKEN_PATTERN}[\\s\\S]{{0,80}}?(?:is\\s+your\\s+(?:confirmation|verification|security)?\\s*(?:code|pin|passcode)|(?:confirmation|verification)\\s*code|作为您的验证码)",\n)\n''',
+          )
+          replace_once(
+              'outlook_mail.py',
+              '''class GraphFolderCursor:\n    folder_name: str\n    key: str\n    newest_received: str = ""\n    seen_ids: set[str] = field(default_factory=set)\n''',
+              '''class GraphFolderCursor:\n    folder_name: str\n    key: str\n    newest_received: str = ""\n    seen_ids: set[str] = field(default_factory=set)\n    baseline_epoch: float = 0.0\n''',
+          )
+          replace_between(
+              'outlook_mail.py',
+              'def _graph_messages(',
+              'def _prepare_imap_state(',
+              '''def _graph_messages(\n    access_token: str,\n    folder_name: str,\n    cancel_callback=None,\n    include_content: bool = False,\n) -> list[dict]:\n    select = "id,receivedDateTime"\n    if include_content:\n        select += ",subject,bodyPreview,body,from"\n    data = _graph_get(\n        access_token,\n        f"/me/mailFolders/{folder_name}/messages",\n        {\n            "$top": str(OUTLOOK_GRAPH_SCAN_DEPTH),\n            "$orderby": "receivedDateTime desc",\n            "$select": select,\n        },\n        cancel_callback=cancel_callback,\n    )\n    return [item for item in (data.get("value") or []) if isinstance(item, dict)]\n\n\ndef _graph_message_detail(access_token: str, message_id: str, cancel_callback=None) -> dict:\n    return _graph_get(\n        access_token,\n        "/me/messages/" + quote(str(message_id or ""), safe=""),\n        {"$select": "id,subject,bodyPreview,body,receivedDateTime,from"},\n        cancel_callback=cancel_callback,\n    )\n\n\ndef _received_epoch(value: str) -> float:\n    raw = str(value or "").strip()\n    if not raw:\n        return 0.0\n    try:\n        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))\n        if parsed.tzinfo is None:\n            parsed = parsed.replace(tzinfo=timezone.utc)\n        return parsed.timestamp()\n    except (TypeError, ValueError):\n        return 0.0\n\n\ndef _graph_cursor_from_messages(folder_name: str, key: str, messages: list[dict]) -> GraphFolderCursor:\n    ids = {str(item.get("id") or "").strip() for item in messages if str(item.get("id") or "").strip()}\n    received = [str(item.get("receivedDateTime") or "").strip() for item in messages]\n    received = [value for value in received if value]\n    return GraphFolderCursor(\n        folder_name=folder_name,\n        key=key,\n        newest_received=max(received) if received else "",\n        seen_ids=ids,\n        # An empty or stale folder still needs a pre-send time frontier so an\n        # old message moved into the folder later cannot masquerade as new.\n        baseline_epoch=time.time() - 15.0,\n    )\n\n\n''',
+          )
+          replace_between(
+              'outlook_mail.py',
+              'def _graph_message_is_new(',
+              'def wait_for_outlook_code(',
+              '''def _graph_message_is_new(message: dict, cursor: GraphFolderCursor) -> bool:\n    message_id = str(message.get("id") or "").strip()\n    received = str(message.get("receivedDateTime") or "").strip()\n    if not message_id or message_id in cursor.seen_ids:\n        return False\n    received_epoch = _received_epoch(received)\n    if cursor.baseline_epoch and (not received_epoch or received_epoch < cursor.baseline_epoch):\n        return False\n    newest_epoch = _received_epoch(cursor.newest_received)\n    if newest_epoch and (not received_epoch or received_epoch < newest_epoch):\n        return False\n    return True\n\n\ndef _advance_graph_cursor(cursor: GraphFolderCursor, messages: list[dict]) -> None:\n    for message in messages:\n        message_id = str(message.get("id") or "").strip()\n        if message_id:\n            cursor.seen_ids.add(message_id)\n        received = str(message.get("receivedDateTime") or "").strip()\n        if _received_epoch(received) > _received_epoch(cursor.newest_received):\n            cursor.newest_received = received\n    if len(cursor.seen_ids) > OUTLOOK_GRAPH_SCAN_DEPTH * 4:\n        cursor.seen_ids = {\n            str(item.get("id") or "").strip()\n            for item in messages\n            if str(item.get("id") or "").strip()\n        }\n\n\ndef _scan_graph_once(\n    token: str,\n    state: OutlookMailboxState,\n    email: str = "",\n    log_callback: LogCallback = None,\n    cancel_callback=None,\n) -> Optional[str]:\n    for cursor in state.graph.values():\n        frontier = _graph_messages(token, cursor.folder_name, cancel_callback=cancel_callback)\n        new_messages = [message for message in frontier if _graph_message_is_new(message, cursor)]\n        if new_messages:\n            _log(log_callback, f"[*] Outlook Graph {cursor.folder_name} 发现 {len(new_messages)} 封新邮件")\n        try:\n            for metadata in new_messages:\n                # Baseline/poll listing stays lightweight. Fetch body/sender only\n                # for messages that crossed the stable frontier. Tests may pass\n                # already-expanded metadata, which is safe to reuse directly.\n                if any(key in metadata for key in ("subject", "bodyPreview", "body", "from")):\n                    message = metadata\n                else:\n                    message = _graph_message_detail(\n                        token, str(metadata.get("id") or ""), cancel_callback=cancel_callback\n                    )\n                body = message.get("body") if isinstance(message.get("body"), dict) else {}\n                sender_data = message.get("from") if isinstance(message.get("from"), dict) else {}\n                address = sender_data.get("emailAddress") if isinstance(sender_data.get("emailAddress"), dict) else {}\n                code = extract_verification_code(\n                    str(message.get("subject") or ""),\n                    str(message.get("bodyPreview") or ""),\n                    str(body.get("content") or ""),\n                    str(address.get("address") or ""),\n                )\n                if code:\n                    _log(log_callback, f"[*] Outlook Graph 已获取验证码（文件夹: {cursor.folder_name}）")\n                    return _normalize_code(code)\n            return_code = None\n        finally:\n            # Once a frontier has been examined, do not refetch the same\n            # unrelated messages on every polling cycle.\n            _advance_graph_cursor(cursor, frontier)\n        if return_code:\n            return return_code\n    return None\n\n\n''',
+          )
+
+          # One-shot lease must close even when cancellation is already set.
+          replace_once(
+              'outlook_mailbox_pool.py',
+              '''        self._raise_if_cancelled(cancel_callback)\n        try:\n            try:\n                code = lease.mailbox.wait_for_code(\n''',
+              '''        try:\n            self._raise_if_cancelled(cancel_callback)\n            try:\n                code = lease.mailbox.wait_for_code(\n''',
+          )
+
+          # Do synchronous mailbox probes outside FastAPI's event loop.
+          replace_once(
+              'web/server.py',
+              'from fastapi.responses import FileResponse, HTMLResponse, JSONResponse\n',
+              'from fastapi.responses import FileResponse, HTMLResponse, JSONResponse\nfrom starlette.concurrency import run_in_threadpool\n',
+          )
+          replace_once(
+              'web/server.py',
+              '            summary = probe_outlook_mailbox_pool_data(payload["data"])\n',
+              '            summary = await run_in_threadpool(probe_outlook_mailbox_pool_data, payload["data"])\n',
+          )
+
+          # GUI gets the same safe health check as WebUI without freezing Tk.
+          replace_once(
+              'grok_register_ttk.py',
+              '''            inspect_outlook_mailbox_pool, load_outlook_mailbox_pool,\n            save_outlook_mailbox_pool,\n''',
+              '''            inspect_outlook_mailbox_pool, load_outlook_mailbox_pool,\n            probe_outlook_mailbox_pool_data, save_outlook_mailbox_pool,\n''',
+          )
+          replace_once(
+              'grok_register_ttk.py',
+              '''        def load_pool():\n            try:\n                current = load_outlook_mailbox_pool(path)\n                editor.delete("1.0", tk.END)\n                editor.insert("1.0", current.get("data", ""))\n                update_summary()\n            except Exception as exc:\n                status_var.set("读取失败: %s" % exc)\n\n        editor.bind("<KeyRelease>", update_summary)\n''',
+              '''        def load_pool():\n            try:\n                current = load_outlook_mailbox_pool(path)\n                editor.delete("1.0", tk.END)\n                editor.insert("1.0", current.get("data", ""))\n                update_summary()\n            except Exception as exc:\n                status_var.set("读取失败: %s" % exc)\n\n        def test_pool():\n            if self.is_running or self.registration_starting:\n                messagebox.showwarning(\n                    "Outlook 邮箱池测试", "注册任务启动或运行期间不能测试邮箱池", parent=window\n                )\n                return\n            data = editor.get("1.0", tk.END)\n            status_var.set("正在测试 Outlook 邮箱访问能力…")\n\n            def worker():\n                try:\n                    summary = probe_outlook_mailbox_pool_data(data)\n                except Exception as exc:\n                    def show_error():\n                        status_var.set("测试失败: %s" % exc)\n                        messagebox.showerror("Outlook 邮箱池测试失败", str(exc), parent=window)\n                    window.after(0, show_error)\n                    return\n\n                def show_result():\n                    status_var.set(\n                        "健康: %s/%s | IMAP: %s | Graph: %s"\n                        % (summary["healthy"], summary["count"], summary["imap"], summary["graph"])\n                    )\n                    lines = []\n                    for item in summary["results"]:\n                        imap_state = "OK" if item["imap"]["ok"] else "FAIL"\n                        graph_state = "OK" if item["graph"]["ok"] else "FAIL"\n                        lines.append(\n                            "%s [%s] IMAP=%s Graph=%s"\n                            % (item["email"], item["mode"], imap_state, graph_state)\n                        )\n                    messagebox.showinfo(\n                        "Outlook 邮箱池测试",\n                        "健康: %s/%s\\n\\n%s"\n                        % (summary["healthy"], summary["count"], "\\n".join(lines[:100])),\n                        parent=window,\n                    )\n                window.after(0, show_result)\n\n            threading.Thread(target=worker, name="outlook-mailbox-gui-test", daemon=True).start()\n\n        editor.bind("<KeyRelease>", update_summary)\n''',
+          )
+          replace_once(
+              'grok_register_ttk.py',
+              '''        tk_button(buttons, text="保存邮箱池", command=save_pool).pack(side=tk.LEFT)\n        tk_button(buttons, text="重新加载", command=load_pool).pack(side=tk.LEFT, padx=(8, 0))\n        tk_button(buttons, text="关闭", command=window.destroy).pack(side=tk.RIGHT)\n''',
+              '''        tk_button(buttons, text="保存邮箱池", command=save_pool).pack(side=tk.LEFT)\n        tk_button(buttons, text="重新加载", command=load_pool).pack(side=tk.LEFT, padx=(8, 0))\n        tk_button(buttons, text="测试邮箱池", command=test_pool).pack(side=tk.LEFT, padx=(8, 0))\n        tk_button(buttons, text="关闭", command=window.destroy).pack(side=tk.RIGHT)\n''',
+          )
+
+          # Keep documentation aligned with actual cursor/retry/security behavior.
+          replace_once(
+              'README.md',
+              '''- `auto`：提交邮箱前分别尝试为 IMAP 与 Microsoft Graph 建立基线；轮询时只启用已成功建立基线的通道。两者均可用时会在同一轮轮询中同时使用，避免通道恢复后误读旧邮件。\n- `imap`：通过 `outlook.office365.com:993` + XOAUTH2 读取收件箱、垃圾邮件、归档等常见文件夹。\n- `graph`：通过 Microsoft Graph 读取 Inbox。\n- 每个邮箱在单次注册任务中最多领取一次；多线程 worker 共用同一个任务级分配器，不会重复领取同一邮箱。\n- 提交邮箱前先记录邮件数量基线，只扫描之后新到达的邮件，避免把旧验证码当成本次验证码。无法建立基线的邮箱不会提交注册。\n- 若请求注册数量大于邮箱池有效账号数，本次任务会自动把目标数量限制为邮箱池容量，不会循环复用已领取邮箱。\n- Outlook refresh token / access token 不会写入 `mail_credentials.txt`、普通日志或 `config.json`。邮箱池文件会尽量以 `0600` 权限原子写入，并已加入 `.gitignore`。\n\nGUI 提供“管理 Outlook 邮箱池”编辑器；WebUI 的邮箱服务页也提供独立邮箱池编辑区。Web 接口仅监听本机，并对邮箱池响应设置 `no-store`。\n''',
+              '''- `auto`：提交邮箱前分别为 IMAP 与 Microsoft Graph 建立独立的发送前游标；轮询时只启用真正完成预检的通道，两者均可用时同时轮询。\n- `imap`：通过 `outlook.office365.com:993` + XOAUTH2 读取收件箱、垃圾邮件、归档等常见文件夹；使用 `UIDVALIDITY + UID` 作为稳定增量游标，而不是易受删除/移动邮件影响的邮件数量或 sequence number。文件夹 LIST 结果和预检阶段的 IMAP 连接/access token 会在短暂验证码窗口内复用，断线或认证失效时再重连/刷新。\n- `graph`：通过 Microsoft Graph 同时监控 `Inbox` 与 `JunkEmail`；使用 immutable message ID + `receivedDateTime` 的发送前游标，日常轮询只拉取轻量消息前沿，确认有新邮件后才读取正文。\n- Microsoft OAuth/Graph 对超时、连接错误、`429` 和 `5xx` 做有限重试；`429` 优先遵守 `Retry-After`，其余使用带 jitter 的指数退避，并限制 Microsoft HTTP 并发。\n- 验证码仅在明确验证码语境，或发件人确认为 xAI/Grok 官方域名时提取，避免把普通工单号等 `ABC-123` 文本误识别成 OTP。\n- 每个邮箱在单次注册任务中最多领取一次；多线程 worker 共用同一个任务级分配器。邮箱会话使用一次性 opaque handle，开始取码后即失效，取码结束立即释放内存中的邮箱状态/access token。\n- 无法建立安全发送前游标的邮箱不会提交注册；若请求注册数量大于邮箱池有效账号数，本次任务会自动限制为邮箱池容量。\n- Outlook refresh token / access token 不会写入 `mail_credentials.txt`、普通日志或 `config.json`。邮箱池文件会尽量以 `0600` 权限原子写入，并已加入 `.gitignore`。\n\nGUI 的“管理 Outlook 邮箱池”和 WebUI 邮箱池编辑区都提供健康检查，可在不触发 xAI 注册的情况下验证各邮箱的 IMAP/Graph 可用性；检查结果只返回邮箱、模式、通道状态和文件夹等安全元数据。Web 接口仅监听本机，并对邮箱池相关响应设置 `no-store`。\n''',
+          )
+
+          # Regression: Graph polling should avoid fetching message bodies until
+          # a new frontier item is observed.
+          test_path = Path('tests/test_outlook_audit.py')
+          tests = test_path.read_text(encoding='utf-8')
+          marker = '    def test_graph_cursor_ignores_old_unseen_message_after_deletion_or_move(self):\n'
+          if marker not in tests:
+              raise SystemExit('tests/test_outlook_audit.py: insertion marker missing')
+          addition = '''    def test_graph_poll_fetches_body_only_after_new_frontier_item(self):\n        cursor = outlook_mail.GraphFolderCursor(\n            "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY,\n            newest_received="2026-09-14T10:00:00Z",\n            seen_ids={"baseline"},\n        )\n        state = outlook_mail.OutlookMailboxState(\n            graph={cursor.key: cursor}, graph_token="token"\n        )\n        unchanged = [graph_message("baseline", "2026-09-14T10:00:00Z")]\n        with patch.object(outlook_mail, "_graph_messages", return_value=unchanged), \\\n             patch.object(outlook_mail, "_graph_message_detail") as detail:\n            self.assertIsNone(outlook_mail._scan_graph_once("token", state))\n        detail.assert_not_called()\n\n        metadata = {"id": "new", "receivedDateTime": "2026-09-14T10:01:00Z"}\n        detail_message = graph_message(\n            "new", "2026-09-14T10:01:00Z",\n            "Verification code ABC-123", "ABC-123", "no-reply@x.ai",\n        )\n        with patch.object(outlook_mail, "_graph_messages", return_value=[metadata]), \\\n             patch.object(outlook_mail, "_graph_message_detail", return_value=detail_message) as detail:\n            self.assertEqual(outlook_mail._scan_graph_once("token", state), "ABC123")\n        detail.assert_called_once_with("token", "new", cancel_callback=None)\n\n'''
+          test_path.write_text(tests.replace(marker, addition + marker, 1), encoding='utf-8')
+
+          # Regression: immediate cancellation after a one-shot lease is claimed
+          # must still close the credential-bearing mailbox object.
+          test_path = Path('tests/test_outlook_cancellation.py')
+          tests = test_path.read_text(encoding='utf-8')
+          marker = '    def test_low_level_stop_is_converted_to_registration_cancel_exception(self):\n'
+          if marker not in tests:
+              raise SystemExit('tests/test_outlook_cancellation.py: insertion marker missing')
+          addition = '''    def test_immediate_cancel_closes_claimed_mailbox(self):\n        class Cancelled(Exception):\n            pass\n\n        with tempfile.TemporaryDirectory() as tmp:\n            runtime = self._runtime(tmp, cancelled_exception=Cancelled)\n            email, handle = self._acquire_without_network(runtime)\n            with patch.object(pool.OutlookMailbox, "close") as close:\n                with self.assertRaises(Cancelled):\n                    runtime.wait_for_code(handle, email, cancel_callback=lambda: True)\n            close.assert_called_once_with()\n\n'''
+          test_path.write_text(tests.replace(marker, addition + marker, 1), encoding='utf-8')
+          PY
+
+          git diff --check
+          python -m compileall -q outlook_mail.py outlook_mailbox_pool.py web/server.py grok_register_ttk.py tests
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add outlook_mail.py outlook_mailbox_pool.py web/server.py grok_register_ttk.py README.md tests/test_outlook_audit.py tests/test_outlook_cancellation.py
+          git commit -m "Refine Outlook hardening internals"
+          git push origin HEAD:feature/outlook-mailbox-hardening
