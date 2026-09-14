@@ -31,6 +31,33 @@ class OutlookAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "过大"):
                 pool.load_outlook_mailbox_pool(path)
 
+    def test_capacity_path_uses_same_bounded_reader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outlook.txt"
+            path.write_bytes(b"x" * 1_000_001)
+            with self.assertRaisesRegex(ValueError, "过大"):
+                pool.get_outlook_mailbox_pool_capacity(path)
+
+    def test_imap_folder_with_spaces_is_quoted(self):
+        client = Mock()
+        client.select.return_value = ("OK", [b"5"])
+        self.assertEqual(outlook_mail._select_folder_count(client, "Junk Email"), 5)
+        client.select.assert_called_once_with('"Junk Email"', readonly=True)
+
+    def test_unencodable_localized_fallback_does_not_break_other_folders(self):
+        client = Mock()
+        client.select.side_effect = UnicodeEncodeError(
+            "ascii", "垃圾邮件", 0, 1, "ordinal not in range"
+        )
+        self.assertIsNone(outlook_mail._select_folder_count(client, "垃圾邮件"))
+
+    def test_graph_fetch_is_capped_to_scan_depth(self):
+        counts = {outlook_mail.OUTLOOK_GRAPH_INBOX_KEY: 1}
+        with patch.object(outlook_mail, "_graph_inbox_count", return_value=100), \
+             patch.object(outlook_mail, "_graph_get", return_value={"value": []}) as get:
+            self.assertIsNone(outlook_mail._scan_graph_once("token", counts))
+        self.assertEqual(get.call_args.args[2]["$top"], str(outlook_mail.OUTLOOK_GRAPH_SCAN_DEPTH))
+
     def test_graph_oauth_tries_compatibility_endpoint_after_first_terminal_error(self):
         account = outlook_mail.OutlookAccount("u@example.com", "pw", "client", "refresh", "graph")
         responses = [

@@ -190,8 +190,18 @@ def _discover_folders(client: imaplib.IMAP4_SSL) -> list[str]:
     return ordered
 
 
+def _quote_imap_mailbox(folder: str) -> str:
+    raw = str(folder or "")
+    return '"' + raw.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _select_folder_count(client: imaplib.IMAP4_SSL, folder: str) -> Optional[int]:
-    status, data = client.select(folder, readonly=True)
+    try:
+        status, data = client.select(_quote_imap_mailbox(folder), readonly=True)
+    except (imaplib.IMAP4.error, UnicodeError):
+        # A missing localized fallback folder or a name that cannot be encoded
+        # must not invalidate other folders that were already readable.
+        return None
     if status != "OK":
         return None
     raw = data[0] if data else b"0"

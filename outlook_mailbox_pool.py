@@ -114,31 +114,32 @@ def _canonical_path(path: Union[str, os.PathLike]) -> Path:
     return Path(raw).expanduser().resolve()
 
 
-def load_outlook_mailbox_pool(path: Union[str, os.PathLike]) -> dict:
+def _read_pool_text(path: Union[str, os.PathLike], missing_ok: bool = False):
     target = _canonical_path(path)
     try:
         with target.open("rb") as handle:
             raw = handle.read(_MAX_POOL_BYTES + 1)
-    except FileNotFoundError:
-        data = ""
+    except FileNotFoundError as exc:
+        if missing_ok:
+            return target, ""
+        raise ValueError("Outlook 账号池文件不存在: %s" % target) from exc
     except OSError as exc:
         raise RuntimeError("读取 Outlook 账号池失败: %s" % exc) from exc
-    else:
-        if len(raw) > _MAX_POOL_BYTES:
-            raise ValueError("Outlook 账号池过大")
-        try:
-            data = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError("Outlook 账号池必须是 UTF-8 文本") from exc
+    if len(raw) > _MAX_POOL_BYTES:
+        raise ValueError("Outlook 账号池过大")
+    try:
+        return target, raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Outlook 账号池必须是 UTF-8 文本") from exc
+
+
+def load_outlook_mailbox_pool(path: Union[str, os.PathLike]) -> dict:
+    target, data = _read_pool_text(path, missing_ok=True)
     return {"path": str(target), "data": data, **inspect_outlook_mailbox_pool(data)}
 
 
 def _read_validated_pool(path: Union[str, os.PathLike]):
-    target = _canonical_path(path)
-    try:
-        data = target.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise ValueError("Outlook 账号池文件不存在: %s" % target) from exc
+    target, data = _read_pool_text(path, missing_ok=False)
     normalized, accounts = _validate_pool_data(data)
     return target, normalized, accounts
 

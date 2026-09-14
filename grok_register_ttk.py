@@ -1221,16 +1221,21 @@ class GrokRegisterGUI:
             except Exception as exc:
                 messagebox.showerror("Outlook 邮箱池保存失败", str(exc), parent=window)
 
-        try:
-            current = load_outlook_mailbox_pool(path)
-            editor.insert("1.0", current.get("data", ""))
-        except Exception as exc:
-            status_var.set("读取失败: %s" % exc)
+        def load_pool():
+            try:
+                current = load_outlook_mailbox_pool(path)
+                editor.delete("1.0", tk.END)
+                editor.insert("1.0", current.get("data", ""))
+                update_summary()
+            except Exception as exc:
+                status_var.set("读取失败: %s" % exc)
+
         editor.bind("<KeyRelease>", update_summary)
-        update_summary()
+        load_pool()
         buttons = tk.Frame(window, bg=UI_BG)
         buttons.pack(fill=tk.X, padx=12, pady=(0, 12))
         tk_button(buttons, text="保存邮箱池", command=save_pool).pack(side=tk.LEFT)
+        tk_button(buttons, text="重新加载", command=load_pool).pack(side=tk.LEFT, padx=(8, 0))
         tk_button(buttons, text="关闭", command=window.destroy).pack(side=tk.RIGHT)
 
     def test_proxy_pool(self):
