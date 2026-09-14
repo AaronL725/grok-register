@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import imaplib
+from datetime import datetime, timezone
 import random
 import re
 import threading
@@ -13,6 +14,7 @@ from email.header import decode_header
 from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Callable, Optional, Union
+from urllib.parse import quote
 
 import requests
 
@@ -41,12 +43,15 @@ LogCallback = Optional[Callable[[str], None]]
 _MICROSOFT_HTTP_SEMAPHORE = threading.BoundedSemaphore(MICROSOFT_HTTP_CONCURRENCY)
 
 _CODE_TOKEN_PATTERN = r"([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{4,8})"
+_CONTEXT_CODE_TOKEN_PATTERN = r"([A-Z0-9]{3}-[A-Z0-9]{3}|(?=[A-Z0-9]{0,7}\d)[A-Z0-9]{4,8})"
 _VERIFICATION_PATTERNS = (
-    rf"(?:confirmation|verification|security|one[-\s]?time)\s*(?:code|pin|passcode)[\s\S]{{0,80}}?{_CODE_TOKEN_PATTERN}",
-    rf"(?:your\s+code|code|pin|passcode)\s*(?:is|:|：)[\s\S]{{0,40}}?{_CODE_TOKEN_PATTERN}",
-    rf"(?:验证码|确认码|校验码|一次性密码)[：:\s为是]*{_CODE_TOKEN_PATTERN}",
+    rf"(?:confirmation|verification|security|one[-\s]?time)\s*(?:code|pin|passcode)\s*(?:is|:|：)\s*{_CODE_TOKEN_PATTERN}",
+    rf"(?:confirmation|verification|security|one[-\s]?time)\s*(?:code|pin|passcode)\s+{_CONTEXT_CODE_TOKEN_PATTERN}",
+    rf"(?:your\s+code|code|pin|passcode)\s*(?:is|:|：)\s*{_CODE_TOKEN_PATTERN}",
+    rf"(?:验证码|确认码|校验码|一次性密码)\s*(?:是|为|:|：)\s*{_CODE_TOKEN_PATTERN}",
     rf"{_CODE_TOKEN_PATTERN}[\s\S]{{0,80}}?(?:is\s+your\s+(?:confirmation|verification|security)?\s*(?:code|pin|passcode)|(?:confirmation|verification)\s*code|作为您的验证码)",
 )
+
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,7 @@ class GraphFolderCursor:
     key: str
     newest_received: str = ""
     seen_ids: set[str] = field(default_factory=set)
+    baseline_epoch: float = 0.0
 
 
 @dataclass
@@ -596,18 +602,48 @@ def _graph_inbox_count(access_token: str) -> int:
     return int(data.get("totalItemCount") or 0)
 
 
-def _graph_messages(access_token: str, folder_name: str, cancel_callback=None) -> list[dict]:
+def _graph_messages(
+    access_token: str,
+    folder_name: str,
+    cancel_callback=None,
+    include_content: bool = False,
+) -> list[dict]:
+    select = "id,receivedDateTime"
+    if include_content:
+        select += ",subject,bodyPreview,body,from"
     data = _graph_get(
         access_token,
         f"/me/mailFolders/{folder_name}/messages",
         {
             "$top": str(OUTLOOK_GRAPH_SCAN_DEPTH),
             "$orderby": "receivedDateTime desc",
-            "$select": "id,subject,bodyPreview,body,receivedDateTime,from",
+            "$select": select,
         },
         cancel_callback=cancel_callback,
     )
     return [item for item in (data.get("value") or []) if isinstance(item, dict)]
+
+
+def _graph_message_detail(access_token: str, message_id: str, cancel_callback=None) -> dict:
+    return _graph_get(
+        access_token,
+        "/me/messages/" + quote(str(message_id or ""), safe=""),
+        {"$select": "id,subject,bodyPreview,body,receivedDateTime,from"},
+        cancel_callback=cancel_callback,
+    )
+
+
+def _received_epoch(value: str) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _graph_cursor_from_messages(folder_name: str, key: str, messages: list[dict]) -> GraphFolderCursor:
@@ -619,6 +655,9 @@ def _graph_cursor_from_messages(folder_name: str, key: str, messages: list[dict]
         key=key,
         newest_received=max(received) if received else "",
         seen_ids=ids,
+        # An empty or stale folder still needs a pre-send time frontier so an
+        # old message moved into the folder later cannot masquerade as new.
+        baseline_epoch=time.time() - 15.0,
     )
 
 
@@ -780,9 +819,12 @@ def _graph_message_is_new(message: dict, cursor: GraphFolderCursor) -> bool:
     received = str(message.get("receivedDateTime") or "").strip()
     if not message_id or message_id in cursor.seen_ids:
         return False
-    if cursor.newest_received:
-        if not received or received < cursor.newest_received:
-            return False
+    received_epoch = _received_epoch(received)
+    if cursor.baseline_epoch and (not received_epoch or received_epoch < cursor.baseline_epoch):
+        return False
+    newest_epoch = _received_epoch(cursor.newest_received)
+    if newest_epoch and (not received_epoch or received_epoch < newest_epoch):
+        return False
     return True
 
 
@@ -792,17 +834,14 @@ def _advance_graph_cursor(cursor: GraphFolderCursor, messages: list[dict]) -> No
         if message_id:
             cursor.seen_ids.add(message_id)
         received = str(message.get("receivedDateTime") or "").strip()
-        if received and received > cursor.newest_received:
+        if _received_epoch(received) > _received_epoch(cursor.newest_received):
             cursor.newest_received = received
-    # The polling window is intentionally bounded; keep enough IDs to cover
-    # reordering at the current frontier without unbounded growth.
     if len(cursor.seen_ids) > OUTLOOK_GRAPH_SCAN_DEPTH * 4:
-        current_ids = {
+        cursor.seen_ids = {
             str(item.get("id") or "").strip()
             for item in messages
             if str(item.get("id") or "").strip()
         }
-        cursor.seen_ids = current_ids
 
 
 def _scan_graph_once(
@@ -813,25 +852,40 @@ def _scan_graph_once(
     cancel_callback=None,
 ) -> Optional[str]:
     for cursor in state.graph.values():
-        messages = _graph_messages(token, cursor.folder_name, cancel_callback=cancel_callback)
-        new_messages = [message for message in messages if _graph_message_is_new(message, cursor)]
+        frontier = _graph_messages(token, cursor.folder_name, cancel_callback=cancel_callback)
+        new_messages = [message for message in frontier if _graph_message_is_new(message, cursor)]
         if new_messages:
             _log(log_callback, f"[*] Outlook Graph {cursor.folder_name} 发现 {len(new_messages)} 封新邮件")
-        for message in new_messages:
-            body = message.get("body") if isinstance(message.get("body"), dict) else {}
-            sender_data = message.get("from") if isinstance(message.get("from"), dict) else {}
-            address = sender_data.get("emailAddress") if isinstance(sender_data.get("emailAddress"), dict) else {}
-            code = extract_verification_code(
-                str(message.get("subject") or ""),
-                str(message.get("bodyPreview") or ""),
-                str(body.get("content") or ""),
-                str(address.get("address") or ""),
-            )
-            if code:
-                _advance_graph_cursor(cursor, messages)
-                _log(log_callback, f"[*] Outlook Graph 已获取验证码（文件夹: {cursor.folder_name}）")
-                return _normalize_code(code)
-        _advance_graph_cursor(cursor, messages)
+        try:
+            for metadata in new_messages:
+                # Baseline/poll listing stays lightweight. Fetch body/sender only
+                # for messages that crossed the stable frontier. Tests may pass
+                # already-expanded metadata, which is safe to reuse directly.
+                if any(key in metadata for key in ("subject", "bodyPreview", "body", "from")):
+                    message = metadata
+                else:
+                    message = _graph_message_detail(
+                        token, str(metadata.get("id") or ""), cancel_callback=cancel_callback
+                    )
+                body = message.get("body") if isinstance(message.get("body"), dict) else {}
+                sender_data = message.get("from") if isinstance(message.get("from"), dict) else {}
+                address = sender_data.get("emailAddress") if isinstance(sender_data.get("emailAddress"), dict) else {}
+                code = extract_verification_code(
+                    str(message.get("subject") or ""),
+                    str(message.get("bodyPreview") or ""),
+                    str(body.get("content") or ""),
+                    str(address.get("address") or ""),
+                )
+                if code:
+                    _log(log_callback, f"[*] Outlook Graph 已获取验证码（文件夹: {cursor.folder_name}）")
+                    return _normalize_code(code)
+            return_code = None
+        finally:
+            # Once a frontier has been examined, do not refetch the same
+            # unrelated messages on every polling cycle.
+            _advance_graph_cursor(cursor, frontier)
+        if return_code:
+            return return_code
     return None
 
 

@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 import grok_register_ttk as engine
 
@@ -270,7 +271,7 @@ async def test_outlook_mailboxes(request: Request):
     _begin_maintenance(kind)
     try:
         try:
-            summary = probe_outlook_mailbox_pool_data(payload["data"])
+            summary = await run_in_threadpool(probe_outlook_mailbox_pool_data, payload["data"])
         except (ValueError, RuntimeError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:

@@ -36,6 +36,18 @@ class OutlookCancellationTests(unittest.TestCase):
                     )
                 wait.assert_not_called()
 
+    def test_immediate_cancel_closes_claimed_mailbox(self):
+        class Cancelled(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = self._runtime(tmp, cancelled_exception=Cancelled)
+            email, handle = self._acquire_without_network(runtime)
+            with patch.object(pool.OutlookMailbox, "close") as close:
+                with self.assertRaises(Cancelled):
+                    runtime.wait_for_code(handle, email, cancel_callback=lambda: True)
+            close.assert_called_once_with()
+
     def test_low_level_stop_is_converted_to_registration_cancel_exception(self):
         class Cancelled(Exception):
             pass

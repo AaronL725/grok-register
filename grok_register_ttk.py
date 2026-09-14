@@ -1178,7 +1178,7 @@ class GrokRegisterGUI:
     def manage_outlook_mailbox_pool(self):
         from outlook_mailbox_pool import (
             inspect_outlook_mailbox_pool, load_outlook_mailbox_pool,
-            save_outlook_mailbox_pool,
+            probe_outlook_mailbox_pool_data, save_outlook_mailbox_pool,
         )
         path = self.outlook_accounts_file_var.get().strip() or "./output/mailboxes/outlook-accounts.txt"
         self.outlook_accounts_file_var.set(path)
@@ -1230,12 +1230,55 @@ class GrokRegisterGUI:
             except Exception as exc:
                 status_var.set("读取失败: %s" % exc)
 
+        def test_pool():
+            if self.is_running or self.registration_starting:
+                messagebox.showwarning(
+                    "Outlook 邮箱池测试", "注册任务启动或运行期间不能测试邮箱池", parent=window
+                )
+                return
+            data = editor.get("1.0", tk.END)
+            status_var.set("正在测试 Outlook 邮箱访问能力…")
+
+            def worker():
+                try:
+                    summary = probe_outlook_mailbox_pool_data(data)
+                except Exception as exc:
+                    def show_error():
+                        status_var.set("测试失败: %s" % exc)
+                        messagebox.showerror("Outlook 邮箱池测试失败", str(exc), parent=window)
+                    window.after(0, show_error)
+                    return
+
+                def show_result():
+                    status_var.set(
+                        "健康: %s/%s | IMAP: %s | Graph: %s"
+                        % (summary["healthy"], summary["count"], summary["imap"], summary["graph"])
+                    )
+                    lines = []
+                    for item in summary["results"]:
+                        imap_state = "OK" if item["imap"]["ok"] else "FAIL"
+                        graph_state = "OK" if item["graph"]["ok"] else "FAIL"
+                        lines.append(
+                            "%s [%s] IMAP=%s Graph=%s"
+                            % (item["email"], item["mode"], imap_state, graph_state)
+                        )
+                    messagebox.showinfo(
+                        "Outlook 邮箱池测试",
+                        "健康: %s/%s\n\n%s"
+                        % (summary["healthy"], summary["count"], "\n".join(lines[:100])),
+                        parent=window,
+                    )
+                window.after(0, show_result)
+
+            threading.Thread(target=worker, name="outlook-mailbox-gui-test", daemon=True).start()
+
         editor.bind("<KeyRelease>", update_summary)
         load_pool()
         buttons = tk.Frame(window, bg=UI_BG)
         buttons.pack(fill=tk.X, padx=12, pady=(0, 12))
         tk_button(buttons, text="保存邮箱池", command=save_pool).pack(side=tk.LEFT)
         tk_button(buttons, text="重新加载", command=load_pool).pack(side=tk.LEFT, padx=(8, 0))
+        tk_button(buttons, text="测试邮箱池", command=test_pool).pack(side=tk.LEFT, padx=(8, 0))
         tk_button(buttons, text="关闭", command=window.destroy).pack(side=tk.RIGHT)
 
     def test_proxy_pool(self):

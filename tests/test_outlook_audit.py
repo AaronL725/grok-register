@@ -160,6 +160,31 @@ class OutlookAuditTests(unittest.TestCase):
         self.assertIn("id", params["$select"])
         self.assertIn("receivedDateTime", params["$select"])
 
+    def test_graph_poll_fetches_body_only_after_new_frontier_item(self):
+        cursor = outlook_mail.GraphFolderCursor(
+            "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY,
+            newest_received="2026-09-14T10:00:00Z",
+            seen_ids={"baseline"},
+        )
+        state = outlook_mail.OutlookMailboxState(
+            graph={cursor.key: cursor}, graph_token="token"
+        )
+        unchanged = [graph_message("baseline", "2026-09-14T10:00:00Z")]
+        with patch.object(outlook_mail, "_graph_messages", return_value=unchanged), \
+             patch.object(outlook_mail, "_graph_message_detail") as detail:
+            self.assertIsNone(outlook_mail._scan_graph_once("token", state))
+        detail.assert_not_called()
+
+        metadata = {"id": "new", "receivedDateTime": "2026-09-14T10:01:00Z"}
+        detail_message = graph_message(
+            "new", "2026-09-14T10:01:00Z",
+            "Verification code ABC-123", "ABC-123", "no-reply@x.ai",
+        )
+        with patch.object(outlook_mail, "_graph_messages", return_value=[metadata]), \
+             patch.object(outlook_mail, "_graph_message_detail", return_value=detail_message) as detail:
+            self.assertEqual(outlook_mail._scan_graph_once("token", state), "ABC123")
+        detail.assert_called_once_with("token", "new", cancel_callback=None)
+
     def test_graph_cursor_ignores_old_unseen_message_after_deletion_or_move(self):
         cursor = outlook_mail.GraphFolderCursor(
             "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY,

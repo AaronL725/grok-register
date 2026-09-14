@@ -347,8 +347,8 @@ class OutlookTaskRuntime:
             # be replayed, and its credential-bearing mailbox is released as
             # soon as this wait finishes.
             del self._leases[key]
-        self._raise_if_cancelled(cancel_callback)
         try:
+            self._raise_if_cancelled(cancel_callback)
             try:
                 code = lease.mailbox.wait_for_code(
                     timeout=int(timeout),
