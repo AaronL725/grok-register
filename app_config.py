@@ -218,15 +218,11 @@ def validate_run_requirements(cfg):
         if not os.path.isfile(path):
             raise ConfigError(f"Outlook 模式需要有效的账号池文件: {path}")
         try:
-            from outlook_mailbox_pool import load_outlook_mailbox_pool
-            summary = load_outlook_mailbox_pool(path)
+            from outlook_mailbox_pool import get_outlook_mailbox_pool_capacity
+            count = get_outlook_mailbox_pool_capacity(path)
         except Exception as exc:
-            raise ConfigError(f"Outlook 账号池读取失败: {exc}") from exc
-        if summary.get("invalid"):
-            raise ConfigError(f"Outlook 账号池存在 {summary['invalid']} 条无效记录")
-        if summary.get("duplicates"):
-            raise ConfigError("Outlook 账号池存在重复邮箱: " + ", ".join(summary["duplicates"][:3]))
-        if int(summary.get("count") or 0) <= 0:
+            raise ConfigError(f"Outlook 账号池校验失败: {exc}") from exc
+        if int(count) <= 0:
             raise ConfigError("Outlook 账号池没有有效账号")
 
     if cfg["proxy_mode"] == "single" and not cfg["proxy"]:
@@ -266,28 +262,18 @@ def _replace_config(value):
     return config
 
 
-def _reset_outlook_runtime():
-    try:
-        from outlook_mailbox_pool import reset_shared_outlook_runtime
-        reset_shared_outlook_runtime()
-    except Exception:
-        pass
-
-
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as handle:
                 loaded = json.load(handle)
             result = _replace_config(validate_config_structure(loaded))
-            _reset_outlook_runtime()
             return result
         except ConfigError:
             raise
         except Exception as exc:
             raise ConfigError(f"配置文件解析失败: {CONFIG_FILE}: {exc}") from exc
     result = _replace_config(validate_config_structure(DEFAULT_CONFIG.copy()))
-    _reset_outlook_runtime()
     return result
 
 
@@ -329,5 +315,4 @@ def save_config():
                 os.unlink(temp_path)
             except Exception:
                 pass
-    _reset_outlook_runtime()
     return config
