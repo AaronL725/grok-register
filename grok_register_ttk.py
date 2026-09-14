@@ -1243,9 +1243,9 @@ class GrokRegisterGUI:
                 try:
                     summary = probe_outlook_mailbox_pool_data(data)
                 except Exception as exc:
-                    def show_error():
-                        status_var.set("测试失败: %s" % exc)
-                        messagebox.showerror("Outlook 邮箱池测试失败", str(exc), parent=window)
+                    def show_error(error=str(exc)):
+                        status_var.set("测试失败: %s" % error)
+                        messagebox.showerror("Outlook 邮箱池测试失败", error, parent=window)
                     window.after(0, show_error)
                     return
 

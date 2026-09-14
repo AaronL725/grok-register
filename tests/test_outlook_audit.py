@@ -185,6 +185,49 @@ class OutlookAuditTests(unittest.TestCase):
             self.assertEqual(outlook_mail._scan_graph_once("token", state), "ABC123")
         detail.assert_called_once_with("token", "new", cancel_callback=None)
 
+    def test_graph_detail_failure_does_not_advance_cursor(self):
+        cursor = outlook_mail.GraphFolderCursor(
+            "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY,
+            newest_received="2026-09-14T10:00:00Z",
+            seen_ids={"baseline"},
+        )
+        state = outlook_mail.OutlookMailboxState(
+            graph={cursor.key: cursor}, graph_token="token"
+        )
+        metadata = {"id": "retry-me", "receivedDateTime": "2026-09-14T10:01:00Z"}
+        with patch.object(outlook_mail, "_graph_messages", return_value=[metadata]), \
+             patch.object(outlook_mail, "_graph_message_detail", side_effect=RuntimeError("temporary 503")):
+            with self.assertRaisesRegex(RuntimeError, "temporary 503"):
+                outlook_mail._scan_graph_once("token", state)
+        self.assertNotIn("retry-me", cursor.seen_ids)
+        self.assertNotIn("retry-me", state.graph_seen_ids)
+        self.assertEqual(cursor.newest_received, "2026-09-14T10:00:00Z")
+
+    def test_graph_seen_ids_are_shared_across_inbox_and_junk(self):
+        inbox = outlook_mail.GraphFolderCursor(
+            "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY,
+            newest_received="2026-09-14T10:00:00Z",
+            seen_ids={"baseline"},
+        )
+        junk = outlook_mail.GraphFolderCursor(
+            "junkemail", outlook_mail.OUTLOOK_GRAPH_JUNK_KEY,
+            newest_received="2026-09-14T10:00:00Z",
+            seen_ids=set(),
+        )
+        state = outlook_mail.OutlookMailboxState(
+            graph={inbox.key: inbox, junk.key: junk},
+            graph_token="token",
+            graph_seen_ids={"baseline"},
+        )
+        moved = graph_message(
+            "cross-folder", "2026-09-14T10:01:00Z",
+            "Verification code ABC-123", "ABC-123", "no-reply@x.ai",
+        )
+        with patch.object(outlook_mail, "_graph_messages", side_effect=[[moved], [moved]]):
+            self.assertEqual(outlook_mail._scan_graph_once("token", state), "ABC123")
+        self.assertIn("cross-folder", state.graph_seen_ids)
+        self.assertFalse(outlook_mail._graph_message_is_new(moved, junk, state.graph_seen_ids))
+
     def test_graph_cursor_ignores_old_unseen_message_after_deletion_or_move(self):
         cursor = outlook_mail.GraphFolderCursor(
             "inbox", outlook_mail.OUTLOOK_GRAPH_INBOX_KEY,
