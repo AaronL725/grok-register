@@ -1,13 +1,17 @@
 """Outlook OAuth2 mailbox access through IMAP or Microsoft Graph."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+import base64
+import imaplib
+import random
+import re
+import threading
+import time
+from dataclasses import dataclass, field
 from email import message_from_bytes
 from email.header import decode_header
 from email.message import Message
-import imaplib
-import re
-import time
+from email.utils import parseaddr, parsedate_to_datetime
 from typing import Callable, Optional, Union
 
 import requests
@@ -18,14 +22,31 @@ OUTLOOK_IMAP_HOST = "outlook.office365.com"
 OUTLOOK_IMAP_PORT = 993
 OUTLOOK_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 OUTLOOK_GRAPH_INBOX_KEY = "GRAPH:INBOX"
+OUTLOOK_GRAPH_JUNK_KEY = "GRAPH:JUNKEMAIL"
+OUTLOOK_GRAPH_FOLDERS = (
+    ("inbox", OUTLOOK_GRAPH_INBOX_KEY),
+    ("junkemail", OUTLOOK_GRAPH_JUNK_KEY),
+)
 OUTLOOK_SCAN_DEPTH = 15
 OUTLOOK_GRAPH_SCAN_DEPTH = 15
 OUTLOOK_FALLBACK_FOLDERS = (
     "INBOX", "Junk Email", "Junk", "Spam", "Archive", "Deleted Items",
     "垃圾邮件", "垃圾箱", "归档", "已删除邮件", "已删除项目",
 )
+MICROSOFT_HTTP_MAX_ATTEMPTS = 4
+MICROSOFT_HTTP_MAX_BACKOFF = 20.0
+MICROSOFT_HTTP_CONCURRENCY = 6
 
 LogCallback = Optional[Callable[[str], None]]
+_MICROSOFT_HTTP_SEMAPHORE = threading.BoundedSemaphore(MICROSOFT_HTTP_CONCURRENCY)
+
+_CODE_TOKEN_PATTERN = r"([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{4,8})"
+_VERIFICATION_PATTERNS = (
+    rf"(?:confirmation|verification|security|one[-\s]?time)\s*(?:code|pin|passcode)[\s\S]{{0,80}}?{_CODE_TOKEN_PATTERN}",
+    rf"(?:your\s+code|code|pin|passcode)\s*(?:is|:|：)[\s\S]{{0,40}}?{_CODE_TOKEN_PATTERN}",
+    rf"(?:验证码|确认码|校验码|一次性密码)[：:\s为是]*{_CODE_TOKEN_PATTERN}",
+    rf"{_CODE_TOKEN_PATTERN}[\s\S]{{0,80}}?(?:is\s+your\s+(?:confirmation|verification|security)?\s*(?:code|pin|passcode)|(?:confirmation|verification)\s*code|作为您的验证码)",
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +56,66 @@ class OutlookAccount:
     client_id: str
     refresh_token: str
     mode: str = "auto"
+
+
+@dataclass(frozen=True)
+class ImapFolderRef:
+    name: str
+    wire_name: str
+    attributes: frozenset[str] = frozenset()
+
+
+@dataclass
+class ImapFolderCursor:
+    folder: ImapFolderRef
+    uidvalidity: str
+    last_uid: int
+
+
+@dataclass
+class GraphFolderCursor:
+    folder_name: str
+    key: str
+    newest_received: str = ""
+    seen_ids: set[str] = field(default_factory=set)
+
+
+@dataclass
+class OutlookMailboxState:
+    imap: dict[str, ImapFolderCursor] = field(default_factory=dict)
+    graph: dict[str, GraphFolderCursor] = field(default_factory=dict)
+    imap_token: Optional[str] = None
+    graph_token: Optional[str] = None
+    imap_client: Optional[imaplib.IMAP4_SSL] = None
+    errors: dict[str, str] = field(default_factory=dict)
+    closed: bool = False
+
+    @property
+    def has_imap(self) -> bool:
+        return bool(self.imap)
+
+    @property
+    def has_graph(self) -> bool:
+        return bool(self.graph)
+
+    @property
+    def usable(self) -> bool:
+        return self.has_imap or self.has_graph
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        if self.imap_client is not None:
+            try:
+                self.imap_client.logout()
+            except Exception:
+                pass
+        self.imap_client = None
+        self.imap_token = None
+        self.graph_token = None
+        self.imap.clear()
+        self.graph.clear()
 
 
 def normalize_outlook_mode(mode: Optional[str]) -> str:
@@ -51,25 +132,89 @@ def _log(callback: LogCallback, message: str) -> None:
 
 
 def _normalize_code(code: str) -> str:
-    return str(code or "").replace("-", "").strip()
+    return str(code or "").replace("-", "").strip().upper()
 
 
-def extract_verification_code(subject: str = "", text: str = "", html: str = "", sender: str = "") -> Optional[str]:
+def _trusted_xai_sender(sender: str) -> bool:
+    address = parseaddr(str(sender or ""))[1].strip().lower()
+    if not address and "@" in str(sender or ""):
+        address = str(sender).strip().lower().strip("<>")
+    domain = address.rsplit("@", 1)[-1] if "@" in address else ""
+    return domain in {"x.ai", "grok.com"} or domain.endswith((".x.ai", ".grok.com"))
+
+
+def extract_verification_code(
+    subject: str = "", text: str = "", html: str = "", sender: str = ""
+) -> Optional[str]:
+    """Extract an OTP only from explicit verification context or trusted xAI/Grok mail."""
     combined = "\n".join(str(value or "") for value in (subject, text, html))
-    trusted_sender = bool(re.search(r"(?:^|[<@.])(?:x\.ai|accounts\.x\.ai)(?:[>\s]|$)", str(sender or ""), re.I))
-    contextual = bool(re.search(r"\b(?:verification|confirmation|security|verify|confirm)\b|验证码|验证|确认", combined, re.I))
+    for pattern in _VERIFICATION_PATTERNS:
+        match = re.search(pattern, combined, re.I | re.S)
+        if match:
+            return match.group(1)
 
-    patterns = (
-        r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b",
-        r"(?:verification|confirmation|security)\s+code\s*[:：]?\s*([A-Z0-9]{4,8})\b",
-        r"(?:your\s+code|code)\s*[:：]\s*([A-Z0-9]{4,8})\b",
-        r"(?:验证码|校验码|确认码)\s*[:：]?\s*([A-Z0-9]{4,8})\b",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, combined, re.I)
-        if match and (contextual or trusted_sender or "-" in match.group(1)):
+    if _trusted_xai_sender(sender):
+        # Trusted senders may use a terse subject/body. Keep the fallback narrow
+        # enough that ordinary words and ticket identifiers are not accepted.
+        match = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3}|\d{6})\b", combined, re.I)
+        if match:
             return match.group(1)
     return None
+
+
+def _sleep_interruptibly(seconds: float, cancel_callback=None) -> None:
+    deadline = time.monotonic() + max(float(seconds or 0), 0.0)
+    while time.monotonic() < deadline:
+        if cancel_callback and cancel_callback():
+            raise RuntimeError("任务已停止")
+        time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+
+
+def _retry_after_seconds(response) -> Optional[float]:
+    value = str(getattr(response, "headers", {}).get("Retry-After") or "").strip()
+    if not value:
+        return None
+    try:
+        return max(0.0, min(float(value), MICROSOFT_HTTP_MAX_BACKOFF))
+    except (TypeError, ValueError):
+        try:
+            when = parsedate_to_datetime(value)
+            if when.tzinfo is None:
+                return None
+            delay = when.timestamp() - time.time()
+            return max(0.0, min(delay, MICROSOFT_HTTP_MAX_BACKOFF))
+        except Exception:
+            return None
+
+
+def _request_with_backoff(method: str, url: str, cancel_callback=None, **kwargs):
+    """Microsoft HTTP request with bounded concurrency and transient backoff."""
+    last_error = None
+    for attempt in range(MICROSOFT_HTTP_MAX_ATTEMPTS):
+        if cancel_callback and cancel_callback():
+            raise RuntimeError("任务已停止")
+        try:
+            with _MICROSOFT_HTTP_SEMAPHORE:
+                response = requests.request(method, url, **kwargs)
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_error = exc
+            response = None
+        except requests.RequestException:
+            raise
+
+        transient = response is None or response.status_code == 429 or response.status_code >= 500
+        if not transient or attempt + 1 >= MICROSOFT_HTTP_MAX_ATTEMPTS:
+            if response is not None:
+                return response
+            raise last_error or RuntimeError("Microsoft 请求失败")
+
+        explicit = _retry_after_seconds(response) if response is not None else None
+        if explicit is not None:
+            delay = explicit
+        else:
+            delay = min(1.0 * (2 ** attempt) + random.uniform(0.0, 0.75), MICROSOFT_HTTP_MAX_BACKOFF)
+        _sleep_interruptibly(delay, cancel_callback)
+    raise last_error or RuntimeError("Microsoft 请求失败")
 
 
 def _microsoft_oauth_error_message(label: str, status_code: int, data: dict) -> str:
@@ -94,12 +239,20 @@ def is_terminal_microsoft_token_error(error: Optional[Union[Exception, str]]) ->
     return any(marker in text for marker in markers)
 
 
-def _refresh_access_token(account: OutlookAccount, scope: str, token_urls: tuple[str, ...], label: str) -> str:
+def _refresh_access_token(
+    account: OutlookAccount,
+    scope: str,
+    token_urls: tuple[str, ...],
+    label: str,
+    cancel_callback=None,
+) -> str:
     last_error = ""
     for token_url in token_urls:
         try:
-            response = requests.post(
+            response = _request_with_backoff(
+                "POST",
                 token_url,
+                cancel_callback=cancel_callback,
                 data={
                     "client_id": account.client_id,
                     "refresh_token": account.refresh_token,
@@ -118,6 +271,8 @@ def _refresh_access_token(account: OutlookAccount, scope: str, token_urls: tuple
             data = {"raw": response.text}
         if response.status_code != 200:
             last_error = _microsoft_oauth_error_message(label, response.status_code, data)
+            # Continue through compatibility endpoints even for tenant/terminal
+            # errors; a refresh token may be valid on the alternate endpoint.
             continue
         token = str(data.get("access_token") or "").strip()
         if token:
@@ -126,21 +281,23 @@ def _refresh_access_token(account: OutlookAccount, scope: str, token_urls: tuple
     raise RuntimeError(last_error or f"{label} token 刷新失败")
 
 
-def refresh_outlook_imap_token(account: OutlookAccount) -> str:
+def refresh_outlook_imap_token(account: OutlookAccount, cancel_callback=None) -> str:
     return _refresh_access_token(
         account,
         "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
         (MICROSOFT_CONSUMERS_TOKEN_URL,),
         "Outlook IMAP",
+        cancel_callback=cancel_callback,
     )
 
 
-def refresh_outlook_graph_token(account: OutlookAccount) -> str:
+def refresh_outlook_graph_token(account: OutlookAccount, cancel_callback=None) -> str:
     return _refresh_access_token(
         account,
         "https://graph.microsoft.com/Mail.Read offline_access",
         (MICROSOFT_COMMON_TOKEN_URL, MICROSOFT_CONSUMERS_TOKEN_URL),
         "Outlook Graph",
+        cancel_callback=cancel_callback,
     )
 
 
@@ -158,49 +315,125 @@ def _normalize_folder_name(name: str) -> str:
     return re.sub(r"\s+", " ", str(name or "").strip()).lower()
 
 
+def _decode_modified_utf7(value: str) -> str:
+    def decode_match(match) -> str:
+        payload = match.group(1)
+        if payload == "":
+            return "&"
+        raw = payload.replace(",", "/")
+        raw += "=" * ((4 - len(raw) % 4) % 4)
+        try:
+            return base64.b64decode(raw).decode("utf-16-be")
+        except Exception:
+            return "&" + payload + "-"
+
+    return re.sub(r"&([^-]*)-", decode_match, str(value or ""))
+
+
+def _encode_modified_utf7(value: str) -> str:
+    output: list[str] = []
+    non_ascii: list[str] = []
+
+    def flush() -> None:
+        if not non_ascii:
+            return
+        raw = "".join(non_ascii).encode("utf-16-be")
+        encoded = base64.b64encode(raw).decode("ascii").rstrip("=").replace("/", ",")
+        output.append("&" + encoded + "-")
+        non_ascii.clear()
+
+    for char in str(value or ""):
+        code = ord(char)
+        if 0x20 <= code <= 0x7E:
+            flush()
+            output.append("&-" if char == "&" else char)
+        else:
+            non_ascii.append(char)
+    flush()
+    return "".join(output)
+
+
+def _unquote_imap_token(value: str) -> str:
+    raw = str(value or "").strip()
+    if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+        raw = raw[1:-1]
+        raw = re.sub(r"\\([\\\"])", r"\1", raw)
+    return raw
+
+
+def _parse_imap_list_line(raw_line: Union[bytes, str]) -> ImapFolderRef:
+    if isinstance(raw_line, bytes):
+        try:
+            line = raw_line.decode("utf-8")
+        except UnicodeDecodeError:
+            line = raw_line.decode("ascii", errors="replace")
+    else:
+        line = str(raw_line)
+    match = re.match(r'^\((?P<attrs>[^)]*)\)\s+(?P<delimiter>NIL|"(?:\\.|[^"])*")\s+(?P<name>.+)$', line.strip())
+    if match:
+        attrs = frozenset(part.lower() for part in match.group("attrs").split() if part)
+        wire_name = _unquote_imap_token(match.group("name"))
+    else:
+        attrs = frozenset()
+        quoted = re.findall(r'"([^\"]+)"', line)
+        wire_name = quoted[-1].strip() if quoted else (line.split()[-1].strip().strip('"') if line.split() else "")
+    return ImapFolderRef(name=_decode_modified_utf7(wire_name), wire_name=wire_name, attributes=attrs)
+
+
 def _decode_imap_list_name(raw_line: Union[bytes, str]) -> str:
-    line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
-    quoted = re.findall(r'"([^\"]+)"', line)
-    if quoted:
-        return quoted[-1].strip()
-    parts = line.split()
-    return parts[-1].strip().strip('"') if parts else ""
+    return _parse_imap_list_line(raw_line).name
 
 
-def _discover_folders(client: imaplib.IMAP4_SSL) -> list[str]:
-    discovered: list[str] = []
+def _looks_like_verification_folder(folder: ImapFolderRef) -> bool:
+    special = {"\\inbox", "\\junk", "\\spam", "\\archive", "\\trash"}
+    if folder.attributes.intersection(special):
+        return True
+    normalized = _normalize_folder_name(folder.name)
+    keywords = (
+        "inbox", "junk", "spam", "archive", "deleted", "trash",
+        "收件箱", "垃圾", "归档", "已删除",
+    )
+    return any(keyword in normalized for keyword in keywords)
+
+
+def _discover_folders(client: imaplib.IMAP4_SSL) -> list[ImapFolderRef]:
+    discovered: list[ImapFolderRef] = []
     try:
         status, data = client.list()
         if status == "OK":
             for raw in data or []:
-                folder = _decode_imap_list_name(raw)
-                if folder:
+                folder = _parse_imap_list_line(raw)
+                if folder.name:
                     discovered.append(folder)
     except Exception:
         pass
-    keywords = ("inbox", "junk", "spam", "archive", "deleted", "trash", "收件箱", "垃圾", "归档", "已删除")
-    preferred = [f for f in discovered if any(k in _normalize_folder_name(f) for k in keywords)]
-    ordered: list[str] = []
+
+    preferred = [folder for folder in discovered if _looks_like_verification_folder(folder)]
+    source = preferred or discovered
+    ordered: list[ImapFolderRef] = []
     seen: set[str] = set()
-    for folder in [*(preferred or discovered), *OUTLOOK_FALLBACK_FOLDERS]:
-        key = _normalize_folder_name(folder)
+    for folder in source:
+        key = _normalize_folder_name(folder.name)
         if key and key not in seen:
             seen.add(key)
             ordered.append(folder)
+    for name in OUTLOOK_FALLBACK_FOLDERS:
+        key = _normalize_folder_name(name)
+        if key and key not in seen:
+            seen.add(key)
+            ordered.append(ImapFolderRef(name=name, wire_name=_encode_modified_utf7(name)))
     return ordered
 
 
-def _quote_imap_mailbox(folder: str) -> str:
-    raw = str(folder or "")
+def _quote_imap_mailbox(folder: Union[str, ImapFolderRef]) -> str:
+    raw = folder.wire_name if isinstance(folder, ImapFolderRef) else str(folder or "")
     return '"' + raw.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _select_folder_count(client: imaplib.IMAP4_SSL, folder: str) -> Optional[int]:
+def _select_folder_count(client: imaplib.IMAP4_SSL, folder: Union[str, ImapFolderRef]) -> Optional[int]:
     try:
         status, data = client.select(_quote_imap_mailbox(folder), readonly=True)
     except (imaplib.IMAP4.error, UnicodeError):
-        # A missing localized fallback folder or a name that cannot be encoded
-        # must not invalidate other folders that were already readable.
         return None
     if status != "OK":
         return None
@@ -213,75 +446,66 @@ def _select_folder_count(client: imaplib.IMAP4_SSL, folder: str) -> Optional[int
         return None
 
 
-def _graph_get(access_token: str, path: str, params: Optional[dict[str, str]] = None) -> dict:
-    response = requests.get(
-        f"{OUTLOOK_GRAPH_BASE_URL}{path}",
-        params=params or {},
-        headers={"Authorization": f"Bearer {access_token}", "Prefer": 'outlook.body-content-type="text"'},
-        timeout=30,
-    )
+def _selected_uidvalidity(client: imaplib.IMAP4_SSL) -> str:
+    values = []
     try:
-        data = response.json()
+        response = client.response("UIDVALIDITY")
+        if response and len(response) > 1:
+            values = response[1] or []
     except Exception:
-        data = {"raw": response.text}
-    if not response.ok:
-        raise RuntimeError(f"Outlook Graph 请求失败 {response.status_code}: {str(data)[:300]}")
-    return data
-
-
-def _graph_inbox_count(access_token: str) -> int:
-    data = _graph_get(access_token, "/me/mailFolders/inbox", {"$select": "totalItemCount"})
-    return int(data.get("totalItemCount") or 0)
-
-
-def load_folder_counts(account: OutlookAccount) -> dict[str, int]:
-    mode = normalize_outlook_mode(account.mode)
-    errors: list[str] = []
-    counts: dict[str, int] = {}
-
-    if mode in {"imap", "auto"}:
+        values = []
+    if not values:
         try:
-            token = refresh_outlook_imap_token(account)
-            client = _connect_imap(account, token)
+            values = getattr(client, "untagged_responses", {}).get("UIDVALIDITY") or []
+        except Exception:
+            values = []
+    for value in values:
+        if isinstance(value, bytes):
+            value = value.decode("ascii", errors="ignore")
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _select_folder_uidvalidity(
+    client: imaplib.IMAP4_SSL, folder: ImapFolderRef
+) -> Optional[str]:
+    try:
+        status, _data = client.select(_quote_imap_mailbox(folder), readonly=True)
+    except (imaplib.IMAP4.error, UnicodeError):
+        return None
+    if status != "OK":
+        return None
+    uidvalidity = _selected_uidvalidity(client)
+    return uidvalidity or None
+
+
+def _parse_uid_search(data) -> list[int]:
+    values: list[int] = []
+    for item in data or []:
+        if isinstance(item, bytes):
+            item = item.decode("ascii", errors="ignore")
+        for token in str(item or "").split():
             try:
-                imap_counts: dict[str, int] = {}
-                for folder in _discover_folders(client):
-                    total = _select_folder_count(client, folder)
-                    if total is not None:
-                        imap_counts[folder] = total
-            finally:
-                try:
-                    client.logout()
-                except Exception:
-                    pass
-            if mode == "imap":
-                return imap_counts
-            if imap_counts:
-                counts.update(imap_counts)
-            else:
-                errors.append("IMAP: 未发现可读取的邮件文件夹")
-        except Exception as exc:
-            if mode == "imap":
-                raise
-            errors.append(f"IMAP: {exc}")
+                values.append(int(token))
+            except ValueError:
+                continue
+    return values
 
-    if mode in {"graph", "auto"}:
-        try:
-            token = refresh_outlook_graph_token(account)
-            graph_count = _graph_inbox_count(token)
-            if mode == "graph":
-                return {OUTLOOK_GRAPH_INBOX_KEY: graph_count}
-            counts[OUTLOOK_GRAPH_INBOX_KEY] = graph_count
-        except Exception as exc:
-            if mode == "graph":
-                raise
-            errors.append(f"Graph: {exc}")
 
-    if counts:
-        return counts
-    if errors:
-        raise RuntimeError("; ".join(errors))
-    return {}
+def _search_all_uids(client: imaplib.IMAP4_SSL) -> list[int]:
+    status, data = client.uid("search", None, "ALL")
+    if status != "OK":
+        raise RuntimeError(f"UID SEARCH ALL 失败: {status}")
+    return _parse_uid_search(data)
+
+
+def _search_uids_after(client: imaplib.IMAP4_SSL, last_uid: int) -> list[int]:
+    status, data = client.uid("search", None, "UID", f"{max(1, int(last_uid) + 1)}:*")
+    if status != "OK":
+        raise RuntimeError(f"UID SEARCH 失败: {status}")
+    return [uid for uid in _parse_uid_search(data) if uid > int(last_uid)]
 
 
 def _decode_header_value(value: str) -> str:
@@ -302,11 +526,11 @@ def _decode_payload(part: Message) -> str:
     return payload.decode(part.get_content_charset() or "utf-8", errors="replace")
 
 
-def _fetch_message_content(client: imaplib.IMAP4_SSL, seq: int) -> tuple[str, str, str, str]:
-    status, data = client.fetch(str(seq), "(BODY.PEEK[])")
-    if status != "OK":
-        raise RuntimeError(f"FETCH {seq} 失败: {status}")
-    raw_parts = [item[1] for item in data or [] if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes)]
+def _message_from_fetch_data(data) -> tuple[str, str, str, str]:
+    raw_parts = [
+        item[1] for item in data or []
+        if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes)
+    ]
     if not raw_parts:
         return "", "", "", ""
     message = message_from_bytes(b"".join(raw_parts))
@@ -326,72 +550,294 @@ def _fetch_message_content(client: imaplib.IMAP4_SSL, seq: int) -> tuple[str, st
     return subject, "\n".join(text_parts), "\n".join(html_parts), sender
 
 
-def _scan_imap_once(account: OutlookAccount, token: str, counts: dict[str, int], log_callback: LogCallback = None) -> Optional[str]:
+def _fetch_message_content(client: imaplib.IMAP4_SSL, seq: int) -> tuple[str, str, str, str]:
+    status, data = client.fetch(str(seq), "(BODY.PEEK[])")
+    if status != "OK":
+        raise RuntimeError(f"FETCH {seq} 失败: {status}")
+    return _message_from_fetch_data(data)
+
+
+def _fetch_message_content_by_uid(client: imaplib.IMAP4_SSL, uid: int) -> tuple[str, str, str, str]:
+    status, data = client.uid("fetch", str(uid), "(BODY.PEEK[])")
+    if status != "OK":
+        raise RuntimeError(f"UID FETCH {uid} 失败: {status}")
+    return _message_from_fetch_data(data)
+
+
+def _graph_get(
+    access_token: str,
+    path: str,
+    params: Optional[dict[str, str]] = None,
+    cancel_callback=None,
+) -> dict:
+    response = _request_with_backoff(
+        "GET",
+        f"{OUTLOOK_GRAPH_BASE_URL}{path}",
+        cancel_callback=cancel_callback,
+        params=params or {},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Prefer": 'outlook.body-content-type="text", IdType="ImmutableId"',
+        },
+        timeout=30,
+    )
+    try:
+        data = response.json()
+    except Exception:
+        data = {"raw": response.text}
+    if not response.ok:
+        raise RuntimeError(f"Outlook Graph 请求失败 {response.status_code}: {str(data)[:300]}")
+    return data
+
+
+def _graph_inbox_count(access_token: str) -> int:
+    """Compatibility helper retained for callers that only need the Inbox count."""
+    data = _graph_get(access_token, "/me/mailFolders/inbox", {"$select": "totalItemCount"})
+    return int(data.get("totalItemCount") or 0)
+
+
+def _graph_messages(access_token: str, folder_name: str, cancel_callback=None) -> list[dict]:
+    data = _graph_get(
+        access_token,
+        f"/me/mailFolders/{folder_name}/messages",
+        {
+            "$top": str(OUTLOOK_GRAPH_SCAN_DEPTH),
+            "$orderby": "receivedDateTime desc",
+            "$select": "id,subject,bodyPreview,body,receivedDateTime,from",
+        },
+        cancel_callback=cancel_callback,
+    )
+    return [item for item in (data.get("value") or []) if isinstance(item, dict)]
+
+
+def _graph_cursor_from_messages(folder_name: str, key: str, messages: list[dict]) -> GraphFolderCursor:
+    ids = {str(item.get("id") or "").strip() for item in messages if str(item.get("id") or "").strip()}
+    received = [str(item.get("receivedDateTime") or "").strip() for item in messages]
+    received = [value for value in received if value]
+    return GraphFolderCursor(
+        folder_name=folder_name,
+        key=key,
+        newest_received=max(received) if received else "",
+        seen_ids=ids,
+    )
+
+
+def _prepare_imap_state(account: OutlookAccount, state: OutlookMailboxState, cancel_callback=None) -> None:
+    token = refresh_outlook_imap_token(account, cancel_callback=cancel_callback)
     client = _connect_imap(account, token)
+    cursors: dict[str, ImapFolderCursor] = {}
     try:
         for folder in _discover_folders(client):
-            total = _select_folder_count(client, folder)
-            if total is None or total <= 0:
+            uidvalidity = _select_folder_uidvalidity(client, folder)
+            if not uidvalidity:
                 continue
-            before = counts.get(folder, 0)
-            if total <= before:
-                continue
-            start = max(1, total - OUTLOOK_SCAN_DEPTH + 1, before + 1)
-            _log(log_callback, f"[*] Outlook 文件夹更新: {folder} {before} -> {total}")
-            for seq in range(total, start - 1, -1):
-                subject, text, html, sender = _fetch_message_content(client, seq)
-                code = extract_verification_code(subject, text, html, sender)
-                if code:
-                    counts[folder] = max(counts.get(folder, 0), total)
-                    _log(log_callback, f"[*] Outlook IMAP 已获取验证码（文件夹: {folder}）")
-                    return _normalize_code(code)
-        return None
-    finally:
+            uids = _search_all_uids(client)
+            cursors[folder.name] = ImapFolderCursor(
+                folder=folder,
+                uidvalidity=uidvalidity,
+                last_uid=max(uids) if uids else 0,
+            )
+        if not cursors:
+            raise RuntimeError("未发现可建立 UID 基线的 Outlook IMAP 文件夹")
+    except Exception:
         try:
             client.logout()
         except Exception:
             pass
+        raise
+    state.imap_token = token
+    state.imap_client = client
+    state.imap = cursors
 
 
-def _scan_graph_once(token: str, counts: dict[str, int], email: str = "", log_callback: LogCallback = None) -> Optional[str]:
-    before = counts.get(OUTLOOK_GRAPH_INBOX_KEY, counts.get("INBOX", 0))
-    total = _graph_inbox_count(token)
-    if total <= before:
+def _prepare_graph_state(account: OutlookAccount, state: OutlookMailboxState, cancel_callback=None) -> None:
+    token = refresh_outlook_graph_token(account, cancel_callback=cancel_callback)
+    cursors: dict[str, GraphFolderCursor] = {}
+    errors: list[str] = []
+    for folder_name, key in OUTLOOK_GRAPH_FOLDERS:
+        try:
+            messages = _graph_messages(token, folder_name, cancel_callback=cancel_callback)
+            cursors[key] = _graph_cursor_from_messages(folder_name, key, messages)
+        except Exception as exc:
+            errors.append(f"{folder_name}: {exc}")
+    if not cursors:
+        raise RuntimeError("；".join(errors) or "Graph 未能建立任何邮件文件夹基线")
+    state.graph_token = token
+    state.graph = cursors
+    if errors:
+        state.errors["graph_folders"] = "；".join(errors)
+
+
+def prepare_outlook_state(
+    account: OutlookAccount, log_callback: LogCallback = None, cancel_callback=None
+) -> OutlookMailboxState:
+    """Build independent pre-send baselines for every usable channel."""
+    mode = normalize_outlook_mode(account.mode)
+    state = OutlookMailboxState()
+
+    if mode in {"imap", "auto"}:
+        try:
+            _prepare_imap_state(account, state, cancel_callback=cancel_callback)
+        except Exception as exc:
+            state.errors["imap"] = str(exc)
+            if mode == "imap":
+                state.close()
+                raise
+
+    if mode in {"graph", "auto"}:
+        try:
+            _prepare_graph_state(account, state, cancel_callback=cancel_callback)
+        except Exception as exc:
+            state.errors["graph"] = str(exc)
+            if mode == "graph":
+                state.close()
+                raise
+
+    if not state.usable:
+        detail = "；".join(f"{key}: {value}" for key, value in state.errors.items())
+        state.close()
+        raise RuntimeError(detail or "未能建立 Outlook 邮件基线")
+
+    if state.has_imap:
+        _log(log_callback, "[*] Outlook IMAP 已建立 UID 基线: %s" % ", ".join(state.imap))
+    if state.has_graph:
+        labels = [cursor.folder_name for cursor in state.graph.values()]
+        _log(log_callback, "[*] Outlook Graph 已建立稳定消息基线: %s" % ", ".join(labels))
+    return state
+
+
+def load_folder_counts(account: OutlookAccount) -> OutlookMailboxState:
+    """Backward-compatible name; returns the stronger cursor-based mailbox state."""
+    return prepare_outlook_state(account)
+
+
+def _ensure_imap_client(account: OutlookAccount, state: OutlookMailboxState, cancel_callback=None) -> imaplib.IMAP4_SSL:
+    if state.imap_client is not None:
+        return state.imap_client
+    token = state.imap_token
+    if token:
+        try:
+            state.imap_client = _connect_imap(account, token)
+            return state.imap_client
+        except Exception:
+            pass
+    state.imap_token = refresh_outlook_imap_token(account, cancel_callback=cancel_callback)
+    state.imap_client = _connect_imap(account, state.imap_token)
+    return state.imap_client
+
+
+def _scan_imap_once(
+    account: OutlookAccount,
+    state: OutlookMailboxState,
+    log_callback: LogCallback = None,
+    cancel_callback=None,
+) -> Optional[str]:
+    client = _ensure_imap_client(account, state, cancel_callback=cancel_callback)
+    try:
+        for cursor in state.imap.values():
+            uidvalidity = _select_folder_uidvalidity(client, cursor.folder)
+            if not uidvalidity:
+                continue
+            if uidvalidity != cursor.uidvalidity:
+                # UIDVALIDITY changed, so old UIDs are no longer comparable.
+                # Re-baseline instead of risking an old-message false positive.
+                uids = _search_all_uids(client)
+                cursor.uidvalidity = uidvalidity
+                cursor.last_uid = max(uids) if uids else 0
+                _log(log_callback, f"[!] Outlook IMAP {cursor.folder.name} UIDVALIDITY 已变化，已安全重建基线")
+                continue
+
+            new_uids = _search_uids_after(client, cursor.last_uid)
+            if not new_uids:
+                continue
+            newest_uid = max(new_uids)
+            candidates = sorted(new_uids, reverse=True)[:OUTLOOK_SCAN_DEPTH]
+            _log(
+                log_callback,
+                f"[*] Outlook IMAP 新邮件: {cursor.folder.name} UID {cursor.last_uid} -> {newest_uid}",
+            )
+            for uid in candidates:
+                subject, text, html, sender = _fetch_message_content_by_uid(client, uid)
+                code = extract_verification_code(subject, text, html, sender)
+                if code:
+                    cursor.last_uid = newest_uid
+                    _log(log_callback, f"[*] Outlook IMAP 已获取验证码（文件夹: {cursor.folder.name}）")
+                    return _normalize_code(code)
+            cursor.last_uid = newest_uid
         return None
-    limit = min(max(1, total - max(before, 0)), OUTLOOK_GRAPH_SCAN_DEPTH)
-    _log(log_callback, f"[*] Outlook Graph 收件箱更新: {before} -> {total}")
-    data = _graph_get(token, "/me/mailFolders/inbox/messages", {
-        "$top": str(limit), "$orderby": "receivedDateTime desc",
-        "$select": "subject,bodyPreview,body,receivedDateTime,from",
-    })
-    for message in data.get("value") or []:
-        if not isinstance(message, dict):
-            continue
-        body = message.get("body") if isinstance(message.get("body"), dict) else {}
-        sender_data = message.get("from") if isinstance(message.get("from"), dict) else {}
-        address = sender_data.get("emailAddress") if isinstance(sender_data.get("emailAddress"), dict) else {}
-        code = extract_verification_code(
-            str(message.get("subject") or ""), str(message.get("bodyPreview") or ""),
-            str(body.get("content") or ""), str(address.get("address") or ""),
-        )
-        if code:
-            counts[OUTLOOK_GRAPH_INBOX_KEY] = max(counts.get(OUTLOOK_GRAPH_INBOX_KEY, 0), total)
-            _log(log_callback, "[*] Outlook Graph 已获取验证码")
-            return _normalize_code(code)
+    except Exception:
+        if state.imap_client is not None:
+            try:
+                state.imap_client.logout()
+            except Exception:
+                pass
+        state.imap_client = None
+        raise
+
+
+def _graph_message_is_new(message: dict, cursor: GraphFolderCursor) -> bool:
+    message_id = str(message.get("id") or "").strip()
+    received = str(message.get("receivedDateTime") or "").strip()
+    if not message_id or message_id in cursor.seen_ids:
+        return False
+    if cursor.newest_received:
+        if not received or received < cursor.newest_received:
+            return False
+    return True
+
+
+def _advance_graph_cursor(cursor: GraphFolderCursor, messages: list[dict]) -> None:
+    for message in messages:
+        message_id = str(message.get("id") or "").strip()
+        if message_id:
+            cursor.seen_ids.add(message_id)
+        received = str(message.get("receivedDateTime") or "").strip()
+        if received and received > cursor.newest_received:
+            cursor.newest_received = received
+    # The polling window is intentionally bounded; keep enough IDs to cover
+    # reordering at the current frontier without unbounded growth.
+    if len(cursor.seen_ids) > OUTLOOK_GRAPH_SCAN_DEPTH * 4:
+        current_ids = {
+            str(item.get("id") or "").strip()
+            for item in messages
+            if str(item.get("id") or "").strip()
+        }
+        cursor.seen_ids = current_ids
+
+
+def _scan_graph_once(
+    token: str,
+    state: OutlookMailboxState,
+    email: str = "",
+    log_callback: LogCallback = None,
+    cancel_callback=None,
+) -> Optional[str]:
+    for cursor in state.graph.values():
+        messages = _graph_messages(token, cursor.folder_name, cancel_callback=cancel_callback)
+        new_messages = [message for message in messages if _graph_message_is_new(message, cursor)]
+        if new_messages:
+            _log(log_callback, f"[*] Outlook Graph {cursor.folder_name} 发现 {len(new_messages)} 封新邮件")
+        for message in new_messages:
+            body = message.get("body") if isinstance(message.get("body"), dict) else {}
+            sender_data = message.get("from") if isinstance(message.get("from"), dict) else {}
+            address = sender_data.get("emailAddress") if isinstance(sender_data.get("emailAddress"), dict) else {}
+            code = extract_verification_code(
+                str(message.get("subject") or ""),
+                str(message.get("bodyPreview") or ""),
+                str(body.get("content") or ""),
+                str(address.get("address") or ""),
+            )
+            if code:
+                _advance_graph_cursor(cursor, messages)
+                _log(log_callback, f"[*] Outlook Graph 已获取验证码（文件夹: {cursor.folder_name}）")
+                return _normalize_code(code)
+        _advance_graph_cursor(cursor, messages)
     return None
-
-
-def _sleep_interruptibly(seconds: float, cancel_callback=None) -> None:
-    deadline = time.time() + max(float(seconds or 0), 0.0)
-    while time.time() < deadline:
-        if cancel_callback and cancel_callback():
-            raise RuntimeError("任务已停止")
-        time.sleep(min(0.2, max(0.0, deadline - time.time())))
 
 
 def wait_for_outlook_code(
     account: OutlookAccount,
-    before_counts: Optional[dict[str, int]],
+    state: OutlookMailboxState,
     timeout: int = 180,
     interval: int = 3,
     cancel_callback=None,
@@ -399,87 +845,130 @@ def wait_for_outlook_code(
     resend_callback=None,
 ) -> Optional[str]:
     mode = normalize_outlook_mode(account.mode)
-    deadline = time.time() + max(int(timeout), 1)
-    counts = before_counts if before_counts is not None else {}
-    if not counts:
-        if mode == "graph":
-            counts[OUTLOOK_GRAPH_INBOX_KEY] = 0
-        else:
-            counts["INBOX"] = 0
-
-    imap_baselined = any(key != OUTLOOK_GRAPH_INBOX_KEY for key in counts)
-    graph_baselined = OUTLOOK_GRAPH_INBOX_KEY in counts
-    imap_token: Optional[str] = None
-    graph_token: Optional[str] = None
-    imap_terminal = mode == "graph" or (mode == "auto" and not imap_baselined)
-    graph_terminal = mode == "imap" or (mode == "auto" and not graph_baselined)
+    deadline = time.monotonic() + max(int(timeout), 1)
+    imap_terminal = mode == "graph" or not state.has_imap
+    graph_terminal = mode == "imap" or not state.has_graph
     terminal_errors: list[str] = []
     attempt = 0
-    next_resend_at = time.time() + 35
+    next_resend_at = time.monotonic() + 35
 
     _log(log_callback, f"[*] Outlook 等待验证码: {account.email}（模式: {mode}）")
     if mode == "auto" and imap_terminal:
         _log(log_callback, "[*] Outlook auto: IMAP 未建立发送前基线，本次禁用 IMAP 通道")
     if mode == "auto" and graph_terminal:
         _log(log_callback, "[*] Outlook auto: Graph 未建立发送前基线，本次禁用 Graph 通道")
-    while time.time() < deadline:
+
+    while time.monotonic() < deadline:
         if cancel_callback and cancel_callback():
             raise RuntimeError("任务已停止")
         attempt += 1
         if attempt == 1 or attempt % 3 == 0:
-            _log(log_callback, f"[*] 仍在等待 Outlook 验证码，剩余约 {max(0, int(deadline-time.time()))}s")
-        if resend_callback and time.time() >= next_resend_at:
+            _log(log_callback, f"[*] 仍在等待 Outlook 验证码，剩余约 {max(0, int(deadline-time.monotonic()))}s")
+        if resend_callback and time.monotonic() >= next_resend_at:
             try:
                 resend_callback()
                 _log(log_callback, "[*] 已触发重新发送验证码")
             except Exception as exc:
                 _log(log_callback, f"[Debug] 触发重发验证码失败: {exc}")
-            next_resend_at = time.time() + 35
+            next_resend_at = time.monotonic() + 35
 
-        if mode in {"imap", "auto"} and not imap_terminal:
-            if imap_token is None:
-                try:
-                    imap_token = refresh_outlook_imap_token(account)
-                except Exception as exc:
-                    if is_terminal_microsoft_token_error(exc):
-                        imap_terminal = True
-                        terminal_errors.append(str(exc))
-                    _log(log_callback, f"[!] Outlook IMAP token 刷新失败: {exc}")
-            if imap_token:
-                try:
-                    code = _scan_imap_once(account, imap_token, counts, log_callback)
-                    if code:
-                        return code
-                except Exception as exc:
-                    _log(log_callback, f"[!] Outlook IMAP 读取失败: {exc}")
-                    imap_token = None
+        if not imap_terminal:
+            try:
+                code = _scan_imap_once(
+                    account, state, log_callback=log_callback, cancel_callback=cancel_callback
+                )
+                if code:
+                    return code
+            except Exception as exc:
+                _log(log_callback, f"[!] Outlook IMAP 读取失败，稍后重试: {exc}")
+                if is_terminal_microsoft_token_error(exc):
+                    imap_terminal = True
+                    terminal_errors.append(str(exc))
+                elif state.imap_client is None:
+                    # Keep the pre-send token for one reconnect attempt. If it
+                    # can no longer authenticate, _ensure_imap_client refreshes it.
+                    pass
 
-        if mode in {"graph", "auto"} and not graph_terminal:
-            if graph_token is None:
+        if not graph_terminal:
+            if not state.graph_token:
                 try:
-                    graph_token = refresh_outlook_graph_token(account)
+                    state.graph_token = refresh_outlook_graph_token(account, cancel_callback=cancel_callback)
                 except Exception as exc:
                     if is_terminal_microsoft_token_error(exc):
                         graph_terminal = True
                         terminal_errors.append(str(exc))
                     _log(log_callback, f"[!] Outlook Graph token 刷新失败: {exc}")
-            if graph_token:
+            if state.graph_token and not graph_terminal:
                 try:
-                    code = _scan_graph_once(graph_token, counts, account.email, log_callback)
+                    code = _scan_graph_once(
+                        state.graph_token,
+                        state,
+                        account.email,
+                        log_callback=log_callback,
+                        cancel_callback=cancel_callback,
+                    )
                     if code:
                         return code
                 except Exception as exc:
-                    _log(log_callback, f"[!] Outlook Graph 读取失败: {exc}")
-                    graph_token = None
+                    _log(log_callback, f"[!] Outlook Graph 读取失败，稍后重试: {exc}")
+                    state.graph_token = None
 
         if ((mode == "imap" and imap_terminal) or (mode == "graph" and graph_terminal)
                 or (mode == "auto" and imap_terminal and graph_terminal)):
             detail = "；".join(terminal_errors[-2:])
-            raise RuntimeError(f"Outlook refresh_token 无效或租户不匹配，无法读取邮箱" + (f"：{detail}" if detail else ""))
-        _sleep_interruptibly(interval, cancel_callback)
+            raise RuntimeError(
+                "Outlook refresh_token 无效或所有预检通道均不可用，无法读取邮箱"
+                + (f"：{detail}" if detail else "")
+            )
+
+        jitter = random.uniform(0.0, min(0.75, max(float(interval), 0.0) * 0.25))
+        _sleep_interruptibly(float(interval) + jitter, cancel_callback)
 
     _log(log_callback, f"[!] Outlook 在 {timeout}s 内未收到验证码邮件")
     return None
+
+
+def _redact_probe_error(account: OutlookAccount, error: object) -> str:
+    text = str(error or "").strip()
+    for secret in (account.password, account.refresh_token):
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    return text[:500]
+
+
+def probe_outlook_account(account: OutlookAccount) -> dict:
+    """Safely preflight one mailbox without sending mail or exposing credentials."""
+    state: Optional[OutlookMailboxState] = None
+    try:
+        state = prepare_outlook_state(account)
+        imap_error = state.errors.get("imap", "")
+        graph_error = state.errors.get("graph", state.errors.get("graph_folders", ""))
+        return {
+            "email": account.email,
+            "mode": normalize_outlook_mode(account.mode),
+            "usable": state.usable,
+            "imap": {
+                "ok": state.has_imap,
+                "folders": list(state.imap.keys()),
+                "error": _redact_probe_error(account, imap_error),
+            },
+            "graph": {
+                "ok": state.has_graph,
+                "folders": [cursor.folder_name for cursor in state.graph.values()],
+                "error": _redact_probe_error(account, graph_error),
+            },
+        }
+    except Exception as exc:
+        return {
+            "email": account.email,
+            "mode": normalize_outlook_mode(account.mode),
+            "usable": False,
+            "imap": {"ok": False, "folders": [], "error": _redact_probe_error(account, exc)},
+            "graph": {"ok": False, "folders": [], "error": _redact_probe_error(account, exc)},
+        }
+    finally:
+        if state is not None:
+            state.close()
 
 
 class OutlookMailbox:
@@ -487,26 +976,42 @@ class OutlookMailbox:
         self.account = account
         self.email = account.email
         self._log_callback = log_callback
-        self._folder_counts: dict[str, int] = {}
+        self._state: Optional[OutlookMailboxState] = None
 
     def prepare(self) -> None:
-        _log(self._log_callback, f"[*] 使用 Outlook 邮箱: {self.email}（认证模式: {normalize_outlook_mode(self.account.mode)}）")
+        _log(
+            self._log_callback,
+            f"[*] 使用 Outlook 邮箱: {self.email}（认证模式: {normalize_outlook_mode(self.account.mode)}）",
+        )
         try:
-            self._folder_counts = load_folder_counts(self.account)
-            if not self._folder_counts:
-                raise RuntimeError("未能建立 Outlook 邮件基线")
-            inbox = self._folder_counts.get("INBOX", self._folder_counts.get(OUTLOOK_GRAPH_INBOX_KEY, 0))
-            _log(self._log_callback, f"[*] Outlook 发送前邮件数: {inbox}")
+            self._state = prepare_outlook_state(self.account, log_callback=self._log_callback)
+            channels = []
+            if self._state.has_imap:
+                channels.append("IMAP")
+            if self._state.has_graph:
+                channels.append("Graph")
+            _log(self._log_callback, "[*] Outlook 发送前基线已建立: " + " + ".join(channels))
         except Exception as exc:
-            self._folder_counts = {}
+            self.close()
             _log(self._log_callback, f"[!] 获取 Outlook 邮件基线失败，本邮箱不会提交注册: {exc}")
             raise
 
     def wait_for_code(
         self, timeout: int = 180, interval: int = 3, cancel_callback=None, resend_callback=None
     ) -> Optional[str]:
+        if self._state is None or self._state.closed:
+            raise RuntimeError("Outlook 邮箱尚未完成发送前预检")
         return wait_for_outlook_code(
-            self.account, self._folder_counts, timeout=timeout, interval=interval,
-            cancel_callback=cancel_callback, log_callback=self._log_callback,
+            self.account,
+            self._state,
+            timeout=timeout,
+            interval=interval,
+            cancel_callback=cancel_callback,
+            log_callback=self._log_callback,
             resend_callback=resend_callback,
         )
+
+    def close(self) -> None:
+        if self._state is not None:
+            self._state.close()
+            self._state = None
