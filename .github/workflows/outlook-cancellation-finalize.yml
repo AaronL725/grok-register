@@ -1,0 +1,74 @@
+name: Finalize Outlook cancellation handling
+
+on:
+  push:
+    branches: [feature/outlook-mailbox-pool]
+    paths:
+      - .github/workflows/outlook-cancellation-finalize.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: outlook-cancellation-finalize-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  finalize-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: feature/outlook-mailbox-pool
+          fetch-depth: 0
+
+      - name: Apply cancellation hardening
+        run: python tools/finalize_outlook_cancellation.py
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.9"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-web.txt
+
+      - name: Test Python 3.9
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-web.txt pytest
+          python -m compileall -q .
+          python -m pytest -q
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-web.txt
+
+      - name: Test Python 3.13
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-web.txt pytest
+          python -m compileall -q .
+          python -m pytest -q
+
+      - name: Remove one-shot helpers
+        run: |
+          rm -f tools/finalize_outlook_cancellation.py
+          rm -f .github/workflows/outlook-cancellation-finalize.yml
+
+      - name: Commit validated cancellation hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Harden Outlook cancellation handling"
+          git push origin HEAD:feature/outlook-mailbox-pool
