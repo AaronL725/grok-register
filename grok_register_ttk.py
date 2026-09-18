@@ -435,6 +435,121 @@ def sleep_with_cancel(seconds, cancel_callback=None):
 
 
 
+
+def calculate_gui_window_size(screen_width, screen_height):
+    """Return a screen-aware initial and minimum GUI size."""
+    try:
+        screen_width = int(screen_width)
+    except (TypeError, ValueError):
+        screen_width = 1120
+    try:
+        screen_height = int(screen_height)
+    except (TypeError, ValueError):
+        screen_height = 900
+
+    screen_width = max(640, screen_width)
+    screen_height = max(480, screen_height)
+    width = min(1120, max(720, int(screen_width * 0.92)))
+    height = min(900, max(520, int(screen_height * 0.86)))
+    width = min(width, screen_width)
+    height = min(height, screen_height)
+    min_width = min(width, 900)
+    min_height = min(height, 600)
+    return width, height, min_width, min_height
+
+
+class ScrollableFrame(tk.Frame):
+    """A vertically scrollable frame that leaves sibling controls fixed."""
+
+    def __init__(self, parent, bg=UI_BG, canvas_height=440, **kwargs):
+        super().__init__(parent, bg=bg, **kwargs)
+        self._bg = bg
+        self.canvas = tk.Canvas(
+            self,
+            bg=bg,
+            highlightthickness=0,
+            borderwidth=0,
+            height=canvas_height,
+        )
+        self.scrollbar = tk.Scrollbar(
+            self,
+            orient=tk.VERTICAL,
+            command=self.canvas.yview,
+        )
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.content = tk.Frame(self.canvas, bg=bg, padx=10, pady=10)
+        self._window_id = self.canvas.create_window(
+            (0, 0),
+            window=self.content,
+            anchor="nw",
+        )
+
+        self.canvas.grid(row=0, column=0, sticky=tk.NSEW)
+        self.scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        self.content.bind("<Configure>", self._on_content_configure, add="+")
+        self.canvas.bind("<Configure>", self._on_canvas_configure, add="+")
+        self.bind("<Destroy>", self._on_destroy, add="+")
+
+        self._wheel_bindings = {}
+        top = self.winfo_toplevel()
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            func_id = top.bind(sequence, self._on_mousewheel, add="+")
+            if func_id:
+                self._wheel_bindings[sequence] = func_id
+
+    def _on_content_configure(self, _event=None):
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            self.canvas.configure(scrollregion=bbox)
+
+    def _on_canvas_configure(self, event):
+        self.canvas.itemconfigure(self._window_id, width=max(1, event.width))
+
+    def _pointer_is_inside(self):
+        try:
+            widget = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+        except (tk.TclError, AttributeError):
+            return False
+        while widget is not None:
+            if widget is self:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def _on_mousewheel(self, event):
+        if not self._pointer_is_inside():
+            return None
+        delta = int(getattr(event, "delta", 0) or 0)
+        number = getattr(event, "num", None)
+        if number == 4:
+            units = -1
+        elif number == 5:
+            units = 1
+        elif delta:
+            if abs(delta) >= 120:
+                units = -int(delta / 120)
+            else:
+                units = -1 if delta > 0 else 1
+        else:
+            return None
+        self.canvas.yview_scroll(units, "units")
+        return "break"
+
+    def _on_destroy(self, event):
+        if event.widget is not self:
+            return
+        try:
+            top = self.winfo_toplevel()
+            for sequence, func_id in self._wheel_bindings.items():
+                top.unbind(sequence, func_id)
+        except (tk.TclError, AttributeError):
+            pass
+        self._wheel_bindings.clear()
+
+
 def setup_light_theme(root):
     try:
         root.option_add("*Background", UI_BG)
@@ -744,8 +859,12 @@ class GrokRegisterGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Grok 注册机")
-        self.root.geometry("1120x900")
-        self.root.minsize(960, 700)
+        width, height, min_width, min_height = calculate_gui_window_size(
+            self.root.winfo_screenwidth(),
+            self.root.winfo_screenheight(),
+        )
+        self.root.geometry(f"{width}x{height}")
+        self.root.minsize(min_width, min_height)
         self.operation_lock = threading.Lock()
         self.is_running = False
         self.registration_starting = False
@@ -768,21 +887,35 @@ class GrokRegisterGUI:
         main_frame = tk.Frame(self.root, bg=UI_BG, padx=10, pady=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_rowconfigure(3, weight=1)
+        main_frame.grid_rowconfigure(0, weight=3, minsize=260)
+        main_frame.grid_rowconfigure(3, weight=2, minsize=150)
 
-        config_frame = tk.LabelFrame(
+        config_container = tk.LabelFrame(
             main_frame,
             text="配置",
             bg=UI_PANEL_BG,
             fg=UI_FG,
-            padx=10,
-            pady=10,
+            padx=0,
+            pady=0,
             relief=tk.GROOVE,
             borderwidth=1,
         )
-        config_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 8))
-        config_frame.grid_columnconfigure(1, weight=1, minsize=260)
-        config_frame.grid_columnconfigure(3, weight=1, minsize=260)
+        config_container.grid(row=0, column=0, sticky=tk.NSEW, pady=(0, 8))
+        config_container.grid_columnconfigure(0, weight=1)
+        config_container.grid_rowconfigure(0, weight=1)
+
+        self.config_scroll = ScrollableFrame(
+            config_container,
+            bg=UI_PANEL_BG,
+            canvas_height=440,
+        )
+        self.config_scroll.grid(row=0, column=0, sticky=tk.NSEW)
+        self.config_canvas = self.config_scroll.canvas
+        self.config_scrollbar = self.config_scroll.scrollbar
+        config_frame = self.config_scroll.content
+        self.config_frame = config_frame
+        config_frame.grid_columnconfigure(1, weight=1, minsize=220)
+        config_frame.grid_columnconfigure(3, weight=1, minsize=220)
 
         def add_label(row, column, text):
             tk_label(config_frame, text=text, bg=UI_PANEL_BG).grid(
@@ -1067,6 +1200,7 @@ class GrokRegisterGUI:
             borderwidth=1,
         )
         log_frame.grid(row=3, column=0, sticky=tk.NSEW)
+        self.log_frame = log_frame
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(0, weight=1)
         self.log_text = scrolledtext.ScrolledText(
