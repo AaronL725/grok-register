@@ -1,5 +1,7 @@
 # 注册代理池
 
+<p><strong>简体中文</strong> | <a href="proxy-pool.en.md">English</a></p>
+
 代理池是主注册流程的可选网络层。默认 `proxy_mode=auto`，继续保持旧配置的历史单代理/直连行为；只有显式选择 `single` 或 `pool` 时才启用账号级 `ProxyLease`、节点调度、探测和健康反馈。
 
 ## 核心原则
