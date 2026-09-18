@@ -458,10 +458,12 @@ def calculate_gui_window_size(screen_width, screen_height):
     return width, height, min_width, min_height
 
 
-class ScrollableFrame(tk.Frame):
+class ScrollableFrame(tk.Frame if TK_AVAILABLE else object):
     """A vertically scrollable frame that leaves sibling controls fixed."""
 
     def __init__(self, parent, bg=UI_BG, canvas_height=440, **kwargs):
+        if not TK_AVAILABLE:
+            raise RuntimeError("Tkinter is required for the scrollable GUI")
         super().__init__(parent, bg=bg, **kwargs)
         self._bg = bg
         self.canvas = tk.Canvas(
@@ -494,9 +496,9 @@ class ScrollableFrame(tk.Frame):
         self.bind("<Destroy>", self._on_destroy, add="+")
 
         self._wheel_bindings = {}
-        top = self.winfo_toplevel()
+        self._wheel_toplevel = self.winfo_toplevel()
         for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            func_id = top.bind(sequence, self._on_mousewheel, add="+")
+            func_id = self._wheel_toplevel.bind(sequence, self._on_mousewheel, add="+")
             if func_id:
                 self._wheel_bindings[sequence] = func_id
 
@@ -542,9 +544,8 @@ class ScrollableFrame(tk.Frame):
         if event.widget is not self:
             return
         try:
-            top = self.winfo_toplevel()
             for sequence, func_id in self._wheel_bindings.items():
-                top.unbind(sequence, func_id)
+                self._wheel_toplevel.unbind(sequence, func_id)
         except (tk.TclError, AttributeError):
             pass
         self._wheel_bindings.clear()
