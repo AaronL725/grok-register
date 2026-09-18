@@ -1,7 +1,6 @@
-import os
-import tkinter as tk
-
 import pytest
+
+tk = pytest.importorskip("tkinter")
 
 import grok_register_ttk as app
 
