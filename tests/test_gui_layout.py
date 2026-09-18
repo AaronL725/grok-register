@@ -1,8 +1,40 @@
+import subprocess
+import sys
+import textwrap
+
 import pytest
 
 tk = pytest.importorskip("tkinter")
 
 import grok_register_ttk as app
+
+
+def test_module_imports_when_tkinter_is_unavailable():
+    script = textwrap.dedent(
+        """
+        import builtins
+
+        original_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name == "tkinter" or name.startswith("tkinter."):
+                raise ImportError("tkinter intentionally blocked")
+            return original_import(name, *args, **kwargs)
+
+        builtins.__import__ = blocked_import
+        import grok_register_ttk as app
+        assert app.TK_AVAILABLE is False
+        assert app.tk is None
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=".",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_calculate_gui_window_size_respects_large_and_small_screens():
