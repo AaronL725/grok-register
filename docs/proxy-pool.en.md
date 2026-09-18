@@ -132,26 +132,318 @@ account_confirmed / postprocess
 â†’ a confirmed account is not registered again
 ```
 
-This avoids replaying a registration through a new IP after a submission may already have reached the server but the local client lost the response, reducing duplicate accounts and duplicate submissions. Only when the flow is still at `code_wait` and no usable verification code has been obtained may recovery switch the email address while keeping the same account Lease. Once `code_submit` begins,[ˆ[˜ÛÛ™š\›YYİX›Z\ÜÚ[Ûˆ™\İ[\ÈÛİ[Y\Èİ]ÛÛYH[˜Ù\Z[ˆ[™[XZ[™]šY\È›ÈÛ™Ù\ˆ\\ÜÈHØY™K\™]H›İ[™\K‚‚•HÙX•RHY][Û˜[H˜XÚÜÈ[ˆ[˜Ù\Z[˜Ûİ[‚‚ˆÈÈİ\ÜY›İØÛÛÂ‚”›ŞHÛİ\˜Ù\ÈX^HÛÛZ[ˆ[HZ^Ù‚‚˜^’ÈB”ÓĞÒÔÈÈÓĞÒÔÍÈÓĞÒÔÍHÈÓĞÒÔÍHÈÓĞÒÔÍR•“TÔÂ•“Y\ÜÂ•›Ú˜[‚’\İ\šXLˆÈL‚•RPÂ”ÚYİÜÛØÚÜÈÈÜÂ˜‚Y˜[˜ÙY›İØÛÛÈ\™HÛÛ™\YÛˆ[X[™HÚ[™ËX›Ş[ÈHØØ[[™Ú[ˆYˆ›ŞWÜÚ[™Ø›ŞÜ]\È[\KH›Ú™XİÛÚÜÈ›ÜˆÚ[™ËX›Ş[ˆHŞ\İ[HUˆ]Ù\È›İ]]ÛX]XØ[HİÛ›ØYÜˆ\]H]‚‚”ÚYİÜÛØÚÜÈİ\ÜÈÛÛ[[ÛˆÒTˆÈYØXŞH˜\ÙMT’\ËˆHZ[Z[ˆ[\[Y[][Ûˆİ\œ™[Hİ\ÜÈÛÛ[[ÛˆQPQÈŒŒˆY]ÙÎÈ[œİ\ÜYYÚ[œÈÜˆY]ÙÈ›ÙXÙH^XÚ]\œ›ÜœÈ˜]\ˆ[ˆÚ[[HYÜ˜Y[™Ë‚‚ˆÈÈ˜]]™HT’H›Ü›X[^˜][Û‚‚“˜]]™HÒËÔÓĞÒÔÈ›ŞY\È]\İY[YH[ˆ^XÚ]›ŞH[™Ú[‚‚˜^œØÚ[YN‹ËÖİ\Ù\œ\ÜİÛÜ™ZÜİœÜ˜‚”[\Î‚‚‹HHÜ\È™\]Z\™Y‚‹H›İ][™È]ÈÜˆ]Y\Hİš[™ÜÈ\™H›İXØÙ\Y‚‹HÙœ˜YÛY[\È\ÙYÛ›H\ÈH\Ü^H˜[YH[™\È^ÛYYœ›ÛHHØ[›ÛšXØ[T’HÈ›ÙHY[]K‚‹HØXØÛİ[XX^H\X\ˆ][ÜİÛ˜ÙH[™Û›H[ˆH›ŞH\Ù\›˜[YK‚‹HÛØÚÜÎ‹ËØ\È›Ü›X[^™YÈÛØÚÜÍN‹ËØ‚‚ˆÈÈÓĞÒÔÈ”ÈÙ[X[XÜÂ‚•HÚ\™YœšYÙH^XÚ]H\İ[™İZ\Ú\Î‚‚˜^œÛØÚÜÍN‹ËÂ¸¡¤ˆ™\ÛÛ™H”ÈØØ[B¸¡¤ˆÙ[™HTY™\ÜÈÈHÓĞÒÔÈÙ\™\‚‚œÛØÚÜÍZ‹ËÂ¸¡¤ˆÈ›İ™\ÛÛ™HHÜİ˜[YHØØ[B¸¡¤ˆ]HÓĞÒÔÈÙ\™\ˆ™\ÛÛ™HHÜİ˜[YB˜‚”ÓĞÒÔÍÈÓĞÒÔÍHZÙ]Ú\ÙH™\Ù\™HØØ[È™[[İH”ÈÙ[X[XÜÈ™\ÜXİ]™[K‚‚ˆÈÈ[[YHYHØXÚB‚”[[Y\È\™Hİ[Ü™X]Y^š[NÈH\™ÙHİXœØÜš\[ÛˆÙ\È›İØ]\ÙHH\™ÙH[X™\ˆÙˆœšYÙHÈÚ[™ËX›Ş[[Y\ÈÈİ\[]Û˜ÙK‚‚Y\ˆH™Y™\™[˜ÙHÛİ[›ÜÈÈH[[YH[\œÈHYHØXÚHHY˜][‚‚˜^œ›ŞWÜ[[YWÚYWİÜÙXÈHLŒœ›ŞWÜ[[YWØØXÚWÛX^HÌ‚˜‚’YˆHØ[YH›ÙH\ÈXÜ]Z\™YYØZ[ˆÚ][ˆHH[[YHØ[ˆ™H™]\ÙY\™XİKˆÛ˜ÙHH^\™\ÈÜˆHYKXØXÚH[Z]\È^ÙYYYHX\İ™XÙ[H\ÙY[[YH\ÈÛX[™Y\ˆÙ]›ŞWÜ[[YWÚYWİÜÙXÏLÈ™\İÜ™H[[YYX]HÚ]İÛˆ]™\›È™Y™\™[˜Ù\ËˆX[˜YÙ\ˆÚ]İÛˆÛÜÙ\È[™[XZ[š[™È[[Y\Ë‚‚ˆÈÈ˜\ÙMİXœØÜš\[Ûˆ™Yœ™\Ú[™\İRÛ›İÛ‹QÛÛÙ‚˜›ŞWÜÛÛÙš[X[™›ŞWÜÛÛÜİXœØÜš\[Û—İ\›İ\Ü‚‚‹HZ[ˆ[™KXK[[™HT’\Ë‚‹H[\™HØİ[Y[È[˜ÛÙYÚ]İ[™\™˜\ÙM‚‹HT“\ØY™H˜\ÙM‚‹HZ^Y][K\›İØÛÛ›Ù\Ë‚‚‘XXÚÛİ\˜ÙH\È[Z]YÈˆZPˆ[™L›Ù\Ëˆ\œÚ[™È™\İ[È™XÛÜ™İ[[™HÛİ[˜\ÙMİ]\ËİXØÙ\ÜÙ[›ÙHÛİ[ÚÚ\YÛİ[›İØÛÛÛİ[Ë[™\œ›ÜœË‚‚‘š[H[™İXœØÜš\[ÛˆÛİ\˜Ù\È[™\[™[HXZ[Z[‚‚˜^›\İÜİXØÙ\Ü×Ø]›\İÙ\œ›Ü‚™Ù[™\˜][Û‚››Ù\Â™XYÛ›ÜİXÜÂ˜‚‘›Üˆ^[\KYˆHš[H™Yœ™\ÚİXØÙYYÈ]HİXœØÜš\[Ûˆ[\Ü˜\š[H[Y\Èİ]‚‚˜^™š[H8¡¤ˆ\ÙHH]\İÙ[™\˜][Û‚œİXœØÜš\[Ûˆ8¡¤ˆ™]Z[ˆH\İİXØÙ\ÜÙ[Ù[™\˜][Ûˆ[™X\šÈ]İ[B˜‚HİXØÙ\ÜÙ[™Yœ™\Úœ›ÛHÛ™HÛİ\˜ÙHÙ\È›İÛX\ˆH[Üİ™XÙ[İXØÙ\ÜÙ[›Ù\Èœ›ÛH[›İ\ˆÛİ\˜ÙH][\Ü˜\š[H˜Z[Y‚‚ˆÈÈİXœØÜš\[Ûˆ\™Ù]™\İšXİ[ÛœÈ
-Ü[Û˜[
-B‚•Ú[ˆ›ŞWÜÛÛÜİXœØÜš\[Û—ÜX›X×ÛÛ›O]YXH[š]X[İXœØÜš\[ÛˆT“[™]™\H™Y\™Xİ\™H™]˜[Y]Y‚‚‹HÛ›HÈØ\™H[İÙY‚‹HHÜİ˜[YH]\İ™\ÛÛ™K‚‹Hš]˜]HÈÛÜ˜XÚÈÈ[šË[ØØ[È][XØ\İÈ™\Ù\™YÈ[œÜXÚYšYYY™\ÜÙ\È\™H™Z™XİY‚‹H][ÜİÈ™Y\™XİÈ\™H[İÙY‚‹HH™\ÜÛœÙH™[XZ[œÈİXš™XİÈHˆZPˆÛÛ[[Z]‚‚•\ÈÜ[Ûˆ\È\ØX›YHY˜][ÛÈØØ[™\ÙX\˜Ú[š\›Û›Y[ÈØ[ˆÛÛ[YHÈ\ÙHSˆÜˆÙ[‹ZÜİYİXœØÜš\[ÛˆÙ\šXÙ\Ë‚‚ˆÈÈ›Ø™NˆTÈTˆ[™˜[ÙKTÜÚ]]™H›İXİ[Û‚‚”İ\ÜYÙ][™ÜÎ‚‚˜^œ›ŞWÜÛÛÜ›Ø™WÜ›İšY\ˆHÛİY›\™H\[™›Âœ›ŞWÜÛÛÜ›Ø™WÙX[ÜİXÚÈHYH˜[ÙB˜‚•Ú]X[\İXÚÈ[˜X›YT[™Tˆ\™H›Ø™Y[™\[™[H[™İÜ™N‚‚˜^œİ]\Â\İYØ]›][˜ŞWÛ\Â™^]Ú\™\œ›Ü‚˜‚’YˆÛ™H˜[Z[HÛÜšÜÈ[™Hİ\ˆ˜Z[ËH›ÙHX^Hİ[™HÛÛœÚY\™Y\ØX›HÚ[H™]Z[š[™ÈH[™\[™[™\İ[È›Üˆ›İ˜[Z[Y\Ë‚‚ŠŠ’›ÈÛ™Ù\ˆ]]ÛX]XØ[HYX[œÈHX[H›Ø™KŠŠˆH›Ø™H]\İØ]\ÙH[ÙˆH›ÛİÚ[™Î‚‚˜^’ŠÈİXØÙ\ÜÙ[H\œÙHH˜[Y^]TŠÈT˜[Z[HX]Ú\ÈHİ\œ™[TÒTˆ›Ø™B˜‚“İ\Ú\ÙH]\ÈX\šÙY[šX[X™]™[[™È˜[ÙHÜÚ]]™\ÈİXÚ\È’Œ]X[›Ü›YY™\ÜÛœÙHÈ›ÈT‹‚‚ˆÈÈ›Ø™KP]Ø\™HÛÙÙ[Xİ[Û‚‚“›ÙHØÚY[[™Èš\œİ™\]Z\™\Î‚‚˜^™[˜X›Y››İ™]\™Y˜Ø\XÚ]H]˜Z[X›B™š^Y›ÙH›İÛÛÛ[™Â˜‚’][ˆÜ›İ\È›Ù\ÈH™XÙ[›Ø™Hİ]\Î‚‚˜^•Y\ˆˆ™XÙ[X[B•Y\ˆNˆ[šÛ›İÛˆÈİ[B•Y\ˆˆ™XÙ[[šX[B˜‚Y™š[š]HÈX[È[™›YÚÙ[Xİ[Ûˆ\È\™›Ü›YYœ›ÛHH™\İ]˜Z[X›HY\ˆš\œİˆ™XÙ[[šX[Hİ]\È\ÈH
-ŠœÛÙ\š[Üš]^˜][ÛŠŠ‹›İH\›X[™[\™˜[ÈYˆ]\ÈHÛ›H]˜Z[X›H›ÙK]X^Hİ[™HšYY‚‚ˆÈÈš^Y[™›İ][™ÈX[[Ù[Â‚ˆÈÈÈš^Y›ÙB‚”™X[™YÚ\İ˜][ÛˆİXØÙ\ÜÎ‚‚˜^œ™YÚ\İ˜][Û—ÜİXØÙ\ÜÙ\È
-ÏHB˜\Ú[™\Ü×ÜØ[\\È
-ÏHBšX[HZ[ŠKŒX[
-ÈŒJB™˜Z[\™WØÛİ[H˜ÛÛÛİÛˆH›Û™B˜‚ÛÛ™š\›YY˜[œÜÜ˜Z[\™N‚‚˜^˜[œÜÜÙ˜Z[\™\È
-ÏHB˜\Ú[™\Ü×ÜØ[\\È
-ÏHB™˜Z[\™WØÛİ[
-ÏHBšX[HX^
-ŒKX[
-ˆÊB˜‚ÛÛÛİÛ‚‚˜^ŒÌÈ8¡¤ˆŒÈ8¡¤ˆLŒÈ8¡¤ˆÈ8¡¤ˆÈ8¡¤ˆX^ŒÂ˜‚ˆÈÈÈ›İ][™ÈØ]]Ø^B‚H›İ][™ÈØ]]Ø^HÙ\È›İ\Ü^Hš^Y[›ÙHX[[™Ù\È›İ\HHØ]]Ø^K]ÚYHÛÛÛİÛˆ™XØ]\ÙHÙˆÛ™H˜Y^]ˆ]™XÛÜ™Î‚‚˜^™^]ÜİXØÙ\ÜÙ\Â™^]Ù˜Z[\™\Â™Ø]]Ø^WÜİXØÙ\Ü×Ü˜]B˜‚•\È™]™[ÈHØ]]Ø^H]œ™\]Y[HÚ[™Ù\È^]Èœ›ÛH\X\š[™È\›X[™[H\ÈX[LKŒÚ[\H™XØ]\ÙH]XØİ[][]YİXØÙ\ÜÙ[Ø[\\Ë‚‚ˆÈÈÈ\Ú[™\ÜÈØ[\HY\XØ][Û‚‚HÚ[™ÛHXØÛİ[][\ÛÛšX]\È][ÜİÛ™H\Ú[™\ÜËZX[Ø[\KˆYˆHİ\ÜXİY˜Z[\™H›Ø™HØØİ\œÈY\ˆHİXØÙ\ÜÙ[][\]][\\È›İÛİ[YÚXÙH\ÈÛÈ\Ú[™\ÜÈØ[\\Ë‚‚ŠŠÛÛ™šYİ\˜][Û‹Ø]][XØ][Ûˆ\œ›ÜœÈ\™H›İ\Ú[™\ÜËZX[Ø[\\ËŠŠˆ^H[˜Ü™[Y[ÛÛ™šYİ\˜][Û—Ù˜Z[\™\Ø[™X\šÈH›ÙH[˜]˜Z[X›K]È›İ™YXÙHX[[˜Ü™[Y[\Ú[™\Ü×ÜØ[\\ØÜˆ[\ˆ^Û™[X[˜[œÜÜÛÛÛİÛ‹‚‚ˆÈÈš]™H˜Z[\™HØ]YÛÜšY\Â‚“™]ÛÜšÈ™YY˜XÚÈ\È]šYY[Èš]™HØ]YÛÜšY\Î‚‚ŒKˆ
-Š˜ÛÛ\]Xš[]JŠˆ[ˆ[\›˜[ÛÛ\Û™[Ü›İØÛÛÛÛ˜Xİ\È[˜ÛÛ\]X›NÈ›ÙHX[\È›İ[˜[^™Y‚Œ‹ˆ
-Š˜ÛÛ™šYİ\˜][ÛŠŠˆ›ŞH]][XØ][Û‹Ü™Y[X[ËÜˆØš[İ\ÈÛÛ™šYİ\˜][Ûˆ›Ø›[\ÎÈH›ÙH\ÈX\šÙY[˜]˜Z[X›H]H]™[\È›İÛİ[Y\ÈH˜[œÜÜX[Ø[\K‚ŒËˆ
-Šš\™İ˜[œÜÜ
-Šˆ^XÚ]^]]˜[œÜÜ˜Z[\™\ÈİXÚ\È›ŞHÛÛ›™Xİ[Ûˆ˜Z[\™KÓĞÒÔÈÓÓ“‘PÕÓÓ“‘PÕÜˆ™]ÛÜšÈ[œ™XXÚX›NÈš^Y[›ÙHX[\È™YXÙY[™ÛÛÛİÛˆ\Y\Ë‚ˆ
-Šœİ\ÜXİYİ˜[œÜÜ
-ŠˆËSÑ‹™\Ù][Y[İ][™Ú[Z[\ˆ\œ›ÜœÈ]X^HÛÛYHœ›ÛHZ]\ˆH›ŞHÜˆ\™Ù]]ÈH›ÙH\È[[YYX][H™\›Ø™Y[™\È[˜[^™YÛ›HYˆ]™\›Ø™H[ÛÈ˜Z[Ë‚Kˆ
-Š˜\XØ][ÛŠŠˆ\XØ][Û‹[^Y\ˆÛÛ™][ÛœÈİXÚ\ÈKK›Ü›X[Ğ]]İ]\ËÜˆ\Ú[™\ÜÈ\˜[Y]\œÎÈ›ŞK[›ÙHX[\È›İ[˜[^™Y‚‚ˆÈÈİXİ\™YœšYÙHXYÛ›ÜİXÜÂ‚“ØØ[›ŞPœšYÙH›ÈÛ™Ù\ˆİØ[İÜÈ[\›˜[^Ù\[ÛœÈ\ÈÙ[™\šXÈSÑœËˆ]™XÛÜ™ÈİXİ\™Y˜Z[\™HÚ[™ÈİXÚ\Î‚‚˜^\İ™X[WØÛÛ›™XİšÜ›ŞWØ]]šØÛÛ›™XİœÛØÚÜ×Ø]]œÛØÚÜ×ØÛÛ›™Xİš×Ü›ŞWİÂ›ØØ[ÙœÂœ™[[İWÙœÂœ™[[İWÜ™\Ù]˜œšYÙB˜‚”›ŞTÛÛš[Üš]^™\È\ÙHİXİ\™YXYÛ›ÜİXÜÈ›ÜˆÛ\ÜÚYšXØ][ÛÈİš[™ÈX]Ú[™È\ÈÛ›HH˜[˜XÚË‚‚ˆÈÈ”Ñ•ÈÈÔHÜİT›ØÙ\ÜÚ[™Â‚“”Ñ•ÈÜˆÔH˜Z[\™\ÈÈ›İ\ØØ\™Üˆ™K\™YÚ\İ\ˆ[ˆXØÛİ[]Ø\È[™XYH™YÚ\İ\™YİXØÙ\ÜÙ[K‚‚‹H^XÚ]›ŞH˜[œÜÜ\œ›Üˆ8¡¤ˆ™YY˜XÚÈ[ÈHÛÜœ™\ÜÛ™[™È›ŞHØ]YÛÜK‚‹HËÑSÑ‹İ[Y[İ]8¡¤ˆ™X]\Èİ\ÜXİY[™™\›Ø™H[[YYX][H™Y›Ü™HXÚY[™ÈÚ]\ˆÈ[˜[^™K‚‹HÛÛ\]Xš[]KØÛÛ™šYËØ\XØ][Ûˆ8¡¤ˆ[™HXØÛÜ™[™ÈÈHÛÜœ™\ÜÛ™[™ÈØ]YÛÜK‚‹H›İ[ˆ^XÚ]ÔHÜWÜ›ŞX[™H™YÚ\İ˜][ÛˆX\ÙH\™Hš\œİÛÛ™\YÈXÛÛ\]X›H[™Ú[Ë™]™[[™È˜]ÈÓĞÒÔÈT“Èœ›ÛH™Z[™È\ÜÙY\™XİHÈ™]ÛÜšÈÛÛ\Û™[È]È›İİ\Ü]ØÚ[YK‚‚ˆÈÈ™YÚ\İ˜][Û‹T]™Y›YÚ
-Ü[Û˜[
-B‚H›Û‹Y\İXİ]™H›ÙK\]™Y›YÚ\È›İšYY›Ü‚‚˜^˜XØÛİ[Ë˜ZB™Ü›ÚË˜ÛÛB˜‚’]ÚXÚÜÈÛ›H™XXÚXš[]Kİ]\Ë][˜ŞK[™Øš[İ\ÈÛİY›\™H›ØÚÈ[™XØ][ÛœËˆ]Ù\È›İÜ™X]HXZ[›Ş\ËÜ™X]HXØÛİ[Ë[ÙYHXØÛİ[Ù][™ÜËÜˆÛİ[\ÈH[[YHX[Ø[\K‚‚•ÙXˆTN‚‚˜^”ÔÕØ\KÜ›ŞK\ÛÛÜ™Y›YÚÛ›ÙWÚYO›ÙKZY‚˜‚“X[X[™Y›YÚ\È\ØX›YÚ[HH\ÚÈ\È[›š[™Ëˆ]Ø[ˆ™H\›™YÙ™ˆ[\™[HÚ]‚‚˜^œ›ŞWÜÛÛÜ™Y›YÚÙ[˜X›YH˜[ÙB˜‚ˆÈÈX[Tİ]H\œÚ\İ[˜ÙH
-Ü[Û˜[
-B‚‘Y˜][‚‚˜^œ›ŞWÜÛÛÜ\œÚ\İÚX[H˜[ÙB˜‚•Ú[ˆ[˜X›Y›ÙH\Ú[™\ÜËZX[İ]H\È]ÛZXØ[HÜš][ˆÎ‚‚˜^œ›ŞWÜÛÛÜİ]WÙš[HH‹Ü›ŞWÜÛÛÜİ]KšœÛÛ‚˜‚Y\ˆHX[˜YÙ\ˆ\È™XZ[›Ù\ÈÚ]HØ[YHİX›H›ÙHQ™\İÜ™HX[\Ú[™\ÜÈÛİ[\œË˜Z[\™KĞÛÛÛİÛˆİ]K[™™XÙ[\Ú[™\ÜÈ\œ›ÜœËˆ\Èš[H\È[˜ÛYY[ˆ™Ú]YÛ›Ü™XHY˜][‚‚ˆÈÈÙX•RB‚•H›ŞK\ÛÛYÙH\Ü^\ÈÜˆİÜ™\Î‚‚‹H[›ÙHT’K‚‹H›İØÛÛÈ˜XÚÙ[™Èš^Y[Ü‹\›İ][™Ë‚‹HTÈTˆ›Ø™H™\İ[Ë‚‹Hš^Y[[YHX[Üˆ›İ][™ÈØ]]Ø^HİXØÙ\ÜÈ˜]K‚‹H\Ú[™\ÜÈÈ˜[œÜÜÈÛÛ™šYİ\˜][ÛˆÛİ[\œË‚‹H[™›YÚÈÛÛÛİÛˆÈ™XÙ[\œ›Ü‹‚‹HİXœØÜš\[ÛˆÑÈÈİ[HXYÛ›ÜİXÜË‚‹HX[\İXÚË[[YHØXÚKX[\œÚ\İ[˜ÙKX›XË[Û›HİXœØÜš\[Û‹™Y›YÚ[™™[]YÙ][™ÜË‚‚•ÙXˆTN‚‚˜^‘ÑUØ\KÜ›ŞK\ÛÛÜİ]\Â”ÔÕØ\KÜ›ŞK\ÛÛÜ™[ØY”ÔÕØ\KÜ›ŞK\ÛÛİ\İ”ÔÕØ\KÜ›ŞK\ÛÛÜ™Y›YÚÛ›ÙWÚYO›ÙKZY‚˜‚•[™\ˆH›Ú™Xİ	ÜÈİ\œ™[ØØ[]\ÙH[Ù[HÙX•RKİ]\ÈTK[™™[]YÙÜÈÛÛ[YHÈ\Ü^H[›ŞHY™\ÜÙ\Ë[˜ÛY[™È]][XØ][Ûˆ[™›Ü›X][Û‹‚‚ˆÈÈÛÛ\]Xš[]H›İ[™\B‚•HŒÈ™Z]š[Üˆ\ØÜšX™Y\™H\ÈÛÛ˜Ù[˜]Y[ˆX[˜YÙYÚ[™ÛXÈÛÛ[ÙKˆHY˜][›ŞWÛ[ÙOX]]ØÛÛ[Y\ÈÈ™\Ù\™HHYØXŞHÕRKĞÓKÕÙX•RK[XZ[™\İ[\œÚ\İ[˜ÙK[™[™ËÚÙ[ˆŞ[˜Ë[™›ŞH™Z]š[Ü‹‚‚“Ü™[˜\HÔÓĞÒÔÈÙ\È›İİ\Ú[™ËX›ŞY\™[H™XØ]\ÙHY˜[˜ÙY\›İØÛÛİ\Ü^\İËˆ“TÔËÕ“Y\ÜËÕ›Ú˜[‹Ò\İ\šXL‹ÕRPËÔÚYİÜÛØÚÜÈ™\]Z\™HÚ[™ËX›ŞÛ›HÚ[ˆXİX[HXÜ]Z\™Y›Ø™YÜˆ™Y›YÚY‚
+This avoids replaying a registration through a new IP after a submission may already have reached the server but the local client lost the response, reducing duplicate accounts and duplicate submissions. Only when the flow is still at `code_wait` and no usable verification code has been obtained may recovery switch the email address while keeping the same account Lease. Once `code_submit` begins, an unconfirmed submission result is counted as outcome uncertain and email retries no longer bypass the safe-retry boundary.
+
+The WebUI additionally tracks an `uncertain` count.
+
+## Supported Protocols
+
+Proxy sources may contain any mix of:
+
+```text
+HTTP / HTTPS
+SOCKS / SOCKS4 / SOCKS4A / SOCKS5 / SOCKS5H
+VLESS
+VMess
+Trojan
+Hysteria2 / hy2
+TUIC
+Shadowsocks / ss
+```
+
+Advanced protocols are converted on demand by sing-box into a local HTTP endpoint. If `proxy_singbox_path` is empty, the project looks for `sing-box` in the system `PATH`; it does not automatically download or update it.
+
+Shadowsocks supports common SIP002 / legacy Base64 URIs. The built-in implementation currently supports common AEAD / 2022 methods; unsupported plugins or methods produce explicit errors rather than silently degrading.
+
+## Native URI Normalization
+
+Native HTTP/HTTPS/SOCKS proxies must identify an explicit proxy endpoint:
+
+```text
+scheme://[user:password@]host:port
+```
+
+Rules:
+
+- A port is required.
+- Routing paths or query strings are not accepted.
+- `#fragment` is used only as the display name and is excluded from the canonical URI / node identity.
+- `{account}` may appear at most once and only in the proxy username.
+- `socks://` is normalized to `socks5://`.
+
+## SOCKS DNS Semantics
+
+The shared bridge explicitly distinguishes:
+
+```text
+socks5://
+â†’ resolve DNS locally
+â†’ send the IP address to the SOCKS server
+
+socks5h://
+â†’ do not resolve the hostname locally
+â†’ let the SOCKS server resolve the hostname
+```
+
+SOCKS4 / SOCKS4A likewise preserve local / remote DNS semantics respectively.
+
+## Runtime Idle Cache
+
+Runtimes are still created lazily; a large subscription does not cause a large number of bridge / sing-box runtimes to start all at once.
+
+After the reference count drops to 0, the runtime enters the idle cache by default:
+
+```text
+proxy_runtime_idle_ttl_sec = 120
+proxy_runtime_cache_max = 32
+```
+
+If the same node is acquired again within the TTL, the runtime can be reused directly. Once the TTL expires or the idle-cache limit is exceeded, the least recently used runtime is cleaned up. Set `proxy_runtime_idle_ttl_sec=0` to restore immediate shutdown at zero references. Manager shutdown closes all remaining runtimes.
+
+## Base64, Subscription Refresh, and Last-Known-Good
+
+`proxy_pool_file` and `proxy_pool_subscription_url` support:
+
+- Plain line-by-line URIs.
+- Entire documents encoded with standard Base64.
+- URL-safe Base64.
+- Mixed multi-protocol nodes.
+
+Each source is limited to 2 MiB and 10,000 nodes. Parsing results record total line count, Base64 status, successful node count, skipped count, protocol counts, and errors.
+
+File and subscription sources independently maintain:
+
+```text
+last_success_at
+last_error
+generation
+nodes
+diagnostics
+```
+
+For example, if the file refresh succeeds but the subscription temporarily times out:
+
+```text
+file         â†’ use the latest generation
+subscription â†’ retain the last successful generation and mark it stale
+```
+
+A successful refresh from one source does not clear the most recent successful nodes from another source that temporarily failed.
+
+## Subscription Target Restrictions (Optional)
+
+When `proxy_pool_subscription_public_only=true`, the initial subscription URL and every HTTP redirect are revalidated:
+
+- Only `http` / `https` are allowed.
+- The hostname must resolve.
+- Private / loopback / link-local / multicast / reserved / unspecified addresses are rejected.
+- At most 3 redirects are allowed.
+- The response remains subject to the 2 MiB content limit.
+
+This option is disabled by default so local research environments can continue to use LAN or self-hosted subscription services.
+
+## Probe: IPv4 / IPv6 and False-Positive Protection
+
+Supported settings:
+
+```text
+proxy_pool_probe_provider = cloudflare | ipinfo
+proxy_pool_probe_dual_stack = true | false
+```
+
+With dual-stack enabled, IPv4 and IPv6 are probed independently and store:
+
+```text
+status
+tested_at
+latency_ms
+exit_ip
+error
+```
+
+If one family works and the other fails, the node may still be considered usable while retaining the independent results for both families.
+
+**HTTP 2xx no longer automatically means a healthy probe.** A probe must satisfy all of the following:
+
+```text
+HTTP 2xx
++ successfully parse a valid exit IP
++ IP family matches the current IPv4/IPv6 probe
+```
+
+Otherwise it is marked `unhealthy`, preventing false positives such as "HTTP 200 but malformed response / no IP".
+
+## Probe-Aware Soft Selection
+
+Node scheduling first requires:
+
+```text
+enabled
+not retired
+capacity available
+fixed node not cooling
+```
+
+It then groups nodes by recent probe status:
+
+```text
+Tier 0: recent healthy
+Tier 1: unknown / stale
+Tier 2: recent unhealthy
+```
+
+Affinity / health / inflight selection is performed from the best available tier first. Recent unhealthy status is a **soft deprioritization**, not a permanent hard ban; if it is the only available node, it may still be tried.
+
+## Fixed and Rotating Health Models
+
+### Fixed node
+
+Real registration success:
+
+```text
+registration_successes += 1
+business_samples += 1
+health = min(1.0, health + 0.1)
+failure_count = 0
+cooldown = none
+```
+
+Confirmed transport failure:
+
+```text
+transport_failures += 1
+business_samples += 1
+failure_count += 1
+health = max(0.05, health * 0.7)
+```
+
+Cooldown:
+
+```text
+30s â†’ 60s â†’ 120s â†’ 240s â†’ 480s â†’ max 600s
+```
+
+### Rotating gateway
+
+A rotating gateway does not display fixed-node Health and does not apply a gateway-wide cooldown because of one bad exit. It records:
+
+```text
+exit_successes
+exit_failures
+gateway_success_rate
+```
+
+This prevents a gateway that frequently changes exits from appearing permanently as `Health=1.0` simply because it accumulated successful samples.
+
+### Business sample deduplication
+
+A single account attempt contributes at most one business-health sample. If a suspected failure probe occurs after a successful attempt, that attempt is not counted twice as two business samples.
+
+**Configuration/authentication errors are not business-health samples.** They increment `configuration_failures` and mark the node unavailable, but do not reduce Health, increment `business_samples`, or enter exponential transport cooldown.
+
+## Five Failure Categories
+
+Network feedback is divided into five categories:
+
+1. **compatibility**: an internal component/protocol contract is incompatible; node Health is not penalized.
+2. **configuration**: proxy authentication, credentials, or obvious configuration problems; the node is marked unavailable but the event is not counted as a transport Health sample.
+3. **hard_transport**: explicit exit-transport failures such as proxy connection failure, SOCKS CONNECT, HTTP CONNECT, or network unreachable; fixed-node Health is reduced and cooldown applies.
+4. **suspected_transport**: TLS, EOF, reset, timeout, and similar errors that may come from either the proxy or target path; the node is immediately reprobed and is penalized only if that reprobe also fails.
+5. **application**: application-layer conditions such as 401, 429, normal OAuth states, or business parameters; proxy-node Health is not penalized.
+
+## Structured Bridge Diagnostics
+
+LocalProxyBridge no longer swallows internal exceptions as generic EOFs. It records structured failure kinds such as:
+
+```text
+upstream_connect
+http_proxy_auth
+http_connect
+socks_auth
+socks_connect
+https_proxy_tls
+local_dns
+remote_dns
+remote_reset
+bridge
+```
+
+ProxyPool prioritizes these structured diagnostics for classification; string matching is only a fallback.
+
+## NSFW / CPA Post-Processing
+
+NSFW or CPA failures do not discard or re-register an account that was already registered successfully.
+
+- Explicit proxy transport error â†’ feed back into the corresponding proxy category.
+- TLS/EOF/timeout â†’ treat as suspected and reprobe immediately before deciding whether to penalize.
+- compatibility/config/application â†’ handle according to the corresponding category.
+- Both an explicit CPA `cpa_proxy` and the Registration Lease are first converted to HTTP-compatible endpoints, preventing raw SOCKS URLs from being passed directly to network components that do not support that scheme.
+
+## Registration-Path Preflight (Optional)
+
+A non-destructive node-path preflight is provided for:
+
+```text
+accounts.x.ai
+grok.com
+```
+
+It checks only reachability, HTTP status, latency, and obvious Cloudflare block indications. It does not create mailboxes, create accounts, modify account settings, or count as a Runtime Health sample.
+
+Web API:
+
+```text
+POST /api/proxy-pool/preflight?node_id=<node-id>
+```
+
+Manual preflight is disabled while a task is running. It can be turned off entirely with:
+
+```text
+proxy_pool_preflight_enabled = false
+```
+
+## Health-State Persistence (Optional)
+
+Default:
+
+```text
+proxy_pool_persist_health = false
+```
+
+When enabled, node business-health state is atomically written to:
+
+```text
+proxy_pool_state_file = ./proxy_pool_state.json
+```
+
+After the Manager is rebuilt, nodes with the same stable node ID restore Health, business counters, Failure/Cooldown state, and recent business errors. This file is included in `.gitignore` by default.
+
+## WebUI
+
+The proxy-pool page displays or stores:
+
+- Full node URI.
+- protocol / backend / fixed-or-rotating.
+- IPv4 / IPv6 probe results.
+- fixed Runtime Health or rotating gateway success rate.
+- business / transport / configuration counters.
+- inflight / cooldown / recent error.
+- subscription LKG / stale diagnostics.
+- dual-stack, runtime cache, health persistence, public-only subscription, preflight, and related settings.
+
+Web API:
+
+```text
+GET  /api/proxy-pool/status
+POST /api/proxy-pool/reload
+POST /api/proxy-pool/test
+POST /api/proxy-pool/preflight?node_id=<node-id>
+```
+
+Under the project's current local-use model, the WebUI, status API, and related logs continue to display full proxy addresses, including authentication information.
+
+## Compatibility Boundary
+
+The V3 behavior described here is concentrated in managed `single` / `pool` mode. The default `proxy_mode=auto` continues to preserve the legacy GUI/CLI/WebUI, email, result persistence, pending, token sync, and proxy behavior.
+
+Ordinary HTTP/SOCKS does not start sing-box merely because advanced-protocol support exists. VLESS/VMess/Trojan/Hysteria2/TUIC/Shadowsocks require sing-box only when actually acquired, probed, or preflighted.
