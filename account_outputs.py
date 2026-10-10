@@ -24,21 +24,40 @@ def append_account_line(path, email, password, sso):
         _append_account_line_unlocked(path, email, password, sso)
 
 
+_mail_credential_cache = {}
+_mail_credential_cache_lock = threading.Lock()
+
+
+def _file_stamp(path):
+    if not os.path.exists(path):
+        return None
+    stat = os.stat(path)
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
 def save_mail_credential(base_dir, email, credential):
     if str(credential or "").startswith("outlook:"):
         return True
-    path = os.path.join(base_dir, "mail_credentials.txt")
+    path = os.path.abspath(os.path.join(base_dir, "mail_credentials.txt"))
     record = f"{email}\t{credential}"
-    with FileLock(path + ".lock", timeout=30):
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                for raw_line in handle:
-                    if raw_line.rstrip("\r\n") == record:
-                        return True
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(record + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+    with FileLock(path + ".lock", timeout=30), _mail_credential_cache_lock:
+        stamp = _file_stamp(path)
+        cached = _mail_credential_cache.get(path)
+        if cached is None or cached[0] != stamp:
+            if stamp is None:
+                records = set()
+            else:
+                with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                    records = {line.rstrip("\r\n") for line in handle}
+        else:
+            records = cached[1]
+        if record not in records:
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(record + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            records.add(record)
+        _mail_credential_cache[path] = (_file_stamp(path), records)
     return True
 
 
