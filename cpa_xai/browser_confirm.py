@@ -568,18 +568,22 @@ def mint_with_browser(
     poll_timeout_sec: float = 15.0,
 ):
     from .oauth_device import OAuthDeviceError, poll_device_token, request_device_code
-    from .proxyutil import proxy_log_label, resolve_proxy, set_runtime_proxy
+    from .proxyutil import prepare_http_compatible_proxy, proxy_log_label, resolve_proxy, set_runtime_proxy
 
     logger = poll_log or _noop_log
     own_browser = None
     owned = False
+    http_bridge = None
+    thread = None
+    stop_event = None
     work_page = None if force_standalone else page
     resolved = resolve_proxy(proxy)
     set_runtime_proxy(resolved or None)
     success = False
     try:
+        http_proxy, http_bridge = prepare_http_compatible_proxy(resolved, log=logger)
         session = request_device_code(
-            proxy=resolved or None,
+            proxy=http_proxy or None,
             timeout=float(request_timeout_sec),
             cancel=cancel,
             retries=2,
@@ -622,7 +626,7 @@ def mint_with_browser(
                     expires_in=min(session.expires_in, int(browser_timeout_sec) + 60),
                     log=logger,
                     cancel=combined_cancel,
-                    proxy=resolved or None,
+                    proxy=http_proxy or None,
                     timeout=float(poll_timeout_sec),
                 )
                 token_box["token"] = result
@@ -684,8 +688,16 @@ def mint_with_browser(
             raise error_box["err"]
         raise OAuthDeviceError("token poll thread ended without result")
     finally:
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=max(5.0, float(poll_timeout_sec) + 1.0))
+            if thread.is_alive():
+                logger("OAuth polling thread exceeded shutdown timeout")
         if own_browser is not None:
             if owned:
                 close_standalone(own_browser)
             else:
                 release_mint_browser(owned=False, success=success, log=logger)
+        if http_bridge is not None:
+            http_bridge.stop()
