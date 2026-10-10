@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Optional
 
 from filelock import FileLock
-from proxy_bridge import http_compatible_proxy
 from proxy_pool import current_proxy_url
 
 _ROOT = Path(__file__).resolve().parent
@@ -48,8 +47,10 @@ class CpaExportSettings:
             effective_proxy = explicit_proxy
         elif leased_proxy is not None:
             effective_proxy = str(leased_proxy or "").strip()
-        else:
+        elif str(cfg.get("proxy_mode", "auto") or "auto").lower() == "auto":
             effective_proxy = str(cfg.get("proxy") or "").strip()
+        else:
+            effective_proxy = ""
         return cls(
             enabled=bool(cfg.get("cpa_export_enabled", True)),
             auth_dir=auth_dir,
