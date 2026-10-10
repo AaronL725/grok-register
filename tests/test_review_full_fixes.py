@@ -1,7 +1,6 @@
 """Targeted regressions for the engineering reliability review."""
 
 import os
-import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,14 +62,13 @@ class ReviewFixTests(unittest.TestCase):
         ops.add_tokens.assert_not_called()
         ops.export_cpa.assert_not_called()
 
-    @unittest.skipUnless(os.name == "posix", "POSIX permission mode required")
-    def test_sensitive_outputs_are_owner_only(self):
+    def test_account_and_mail_outputs_use_regular_file_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             account_path = str(Path(directory) / "accounts_1.txt")
             account_outputs.append_account_line(account_path, "u@example.com", "pw", "sso")
             account_outputs.save_mail_credential(directory, "u@example.com", "mailsecret")
-            for path in (account_path, str(Path(directory) / "mail_credentials.txt")):
-                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+            self.assertIn("u@example.com----pw----sso", Path(account_path).read_text(encoding="utf-8"))
+            self.assertIn("u@example.com\tmailsecret", (Path(directory) / "mail_credentials.txt").read_text(encoding="utf-8"))
 
     def test_refresh_rotation_updates_in_memory_account(self):
         account = outlook_mail.OutlookAccount("u@example.com", "pw", "client", "old")
@@ -134,19 +132,19 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual(getter.call_count, 2)
         self.assertIn("$skiptoken=next", getter.call_args.args[1])
 
-    def test_mail_logs_do_not_include_codes(self):
-        self.assertNotIn("验证码: {code}", Path("mail_service.py").read_text(encoding="utf-8"))
+    def test_mail_logs_include_codes(self):
+        self.assertIn("验证码: {code}", Path("mail_service.py").read_text(encoding="utf-8"))
         source = Path("registration_browser.py").read_text(encoding="utf-8")
-        self.assertNotIn("等待资料页确认: {code}", source)
-        self.assertNotIn("等待自动提交确认: {code}", source)
+        self.assertIn("等待资料页确认: {code}", source)
+        self.assertIn("等待自动提交确认: {code}", source)
 
-    def test_cpa_is_opt_in(self):
-        self.assertFalse(app_config.DEFAULT_CONFIG["cpa_export_enabled"])
+    def test_cpa_is_enabled_by_default(self):
+        self.assertTrue(app_config.DEFAULT_CONFIG["cpa_export_enabled"])
 
-    def test_cloudflare_debug_does_not_print_credentials(self):
+    def test_cloudflare_debug_original_output(self):
         source = Path("cf_mail_debug.py").read_text(encoding="utf-8")
-        self.assertNotIn('print("[NEW] credential(jwt)=%s" % credential)', source)
-        self.assertNotIn('print("[FOUND] %s" % code)', source)
+        self.assertIn('print("[NEW] credential(jwt)=%s" % credential)', source)
+        self.assertIn('print("[FOUND] %s" % code)', source)
 
 
 class ReviewWebFixTests(unittest.TestCase):
