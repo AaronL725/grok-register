@@ -143,7 +143,7 @@ def clear_page_session(page: Any, browser: Optional[Any] = None, log: Optional[L
     """Clear each authenticated origin before reusing a browser for another account."""
     for origin in ("https://accounts.x.ai", "https://auth.x.ai", "https://grok.com"):
         page.run_cdp("Storage.clearDataForOrigin", origin=origin,
-                     storageTypes="local_storage,session_storage")
+                     storageTypes="all")
     (browser or page).set.cookies.clear()
     page.get("about:blank")
     (log or _noop_log)("mint browser site storage and cookies cleared")
