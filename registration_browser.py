@@ -421,6 +421,9 @@ def open_signup_page(log_callback=None, cancel_callback=None):
             restart_browser(log_callback=log_callback, use_proxy=False)
             _open_with_current_browser()
         else:
+            from registration_flow import RecoverablePreSubmitError
+            if isinstance(e, (ContextLostError, PageDisconnectedError, TimeoutError)):
+                raise RecoverablePreSubmitError(f"注册页导航暂时失败: {e}") from e
             raise
 
     if browser_started_with_proxy and page_has_proxy_error(page):
@@ -741,6 +744,9 @@ return 'enter';
                 detail = f" ({clicked})" if isinstance(clicked, str) else ""
                 log_callback(f"[*] 已填写邮箱并提交: {email}{detail}")
             return email, dev_token
+        # JS explicitly reported no click/submission, so a later failure is
+        # still safe to restart. An exception during JS remains ambiguous.
+        _mark_registration_stage("page_open")
         sleep_with_cancel(0.5, cancel_callback)
     if last_snapshot:
         inputs = " | ".join(last_snapshot.get("inputs", [])[:6])
