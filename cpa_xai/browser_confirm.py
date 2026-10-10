@@ -583,7 +583,7 @@ def mint_with_browser(
     try:
         http_proxy, http_bridge = prepare_http_compatible_proxy(resolved, log=logger)
         session = request_device_code(
-            proxy=http_proxy or None,
+            proxy=http_proxy,
             timeout=float(request_timeout_sec),
             cancel=cancel,
             retries=2,
@@ -626,7 +626,7 @@ def mint_with_browser(
                     expires_in=min(session.expires_in, int(browser_timeout_sec) + 60),
                     log=logger,
                     cancel=combined_cancel,
-                    proxy=http_proxy or None,
+                    proxy=http_proxy,
                     timeout=float(poll_timeout_sec),
                 )
                 token_box["token"] = result
