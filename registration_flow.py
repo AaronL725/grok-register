@@ -59,6 +59,10 @@ def registration_retry_disposition(stage, error=None):
     return OUTCOME_UNCERTAIN
 
 
+class RecoverablePreSubmitError(RuntimeError):
+    """Transient browser navigation failure before any account data was submitted."""
+
+
 class VerificationCodeUnavailable(RuntimeError):
     """Mailbox polling timed out before any verification-code submission began."""
     pass
@@ -424,6 +428,13 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                         callbacks.log(f"[!] 当前账号代理在安全阶段不可用，释放租约并重试 {retry_count_for_slot}/{settings.max_slot_retry}: {exc}")
                     else:
                         result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 当前账号代理重试达到上限，跳过: {exc}")
+                elif disposition == SAFE_NEW_LEASE and isinstance(exc, RecoverablePreSubmitError):
+                    retry_count_for_slot += 1
+                    if retry_count_for_slot <= settings.max_slot_retry:
+                        callbacks.log(f"[!] 提交前页面暂时不可用，重试 {retry_count_for_slot}/{settings.max_slot_retry}: {exc}")
+                    else:
+                        result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
+                        callbacks.log(f"[-] 提交前页面重试达到上限，跳过: {exc}")
                 elif disposition == SAFE_NEW_LEASE:
                     raise
                 else:
