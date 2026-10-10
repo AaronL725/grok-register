@@ -524,6 +524,9 @@ ss://...
 
 ## CPA / xAI OIDC 导出
 
+> CPA/OIDC 导出默认关闭，以避免注册完成后被独立 OAuth 授权流程同步阻塞；需要时可设置 `cpa_export_enabled=true`。启用后导出仍会占用当前注册 worker。
+
+
 ```json
 {
   "cpa_export_enabled": true,
