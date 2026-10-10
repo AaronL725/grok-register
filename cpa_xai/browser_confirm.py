@@ -591,7 +591,7 @@ def mint_with_browser(
         logger("device user_code=%s expires_in=%s proxy=%s" % (session.user_code, session.expires_in, proxy_log_label(resolved) or "(none)"))
         if work_page is None:
             own_browser, work_page, owned = acquire_mint_browser(
-                proxy=resolved or None,
+                proxy=resolved,
                 headless=headless,
                 reuse=reuse_browser,
                 recycle_every=recycle_every,
