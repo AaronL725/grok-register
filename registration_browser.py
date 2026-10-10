@@ -932,9 +932,9 @@ return 'clicked';
         if clicked == "clicked" or clicked == "no-button":
             if log_callback:
                 if clicked == "clicked":
-                    log_callback("[*] 已填写验证码并触发提交，等待资料页确认")
+                    log_callback(f"[*] 已填写验证码并触发提交，等待资料页确认: {code}")
                 else:
-                    log_callback("[*] 已填写验证码，页面未显示提交按钮，等待自动提交确认")
+                    log_callback(f"[*] 已填写验证码，页面未显示提交按钮，等待自动提交确认: {code}")
             transition_deadline = min(deadline, time.time() + max(1.0, float(transition_timeout)))
             while time.time() < transition_deadline:
                 raise_if_cancelled(cancel_callback)
