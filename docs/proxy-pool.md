@@ -2,7 +2,7 @@
 
 <p><strong>简体中文</strong> | <a href="proxy-pool.en.md">English</a></p>
 
-代理池是主注册流程的可选网络层。默认 `proxy_mode=auto`，继续保持旧配置的历史单代理/直连行为；只有显式选择 `single` 或 `pool` 时才启用账号级 `ProxyLease`、节点调度、探测和健康反馈。
+代理池是注册流程的可选网络层。默认 `proxy_mode=auto`，沿用 `proxy` 指定的单代理（留空则直连）；选择 `single` 或 `pool` 才启用账号级 Proxy Lease、节点调度与健康反馈。
 
 ## 核心原则
 
@@ -93,48 +93,20 @@ Chromium / curl_cffi / Mail / NSFW / CPA OAuth / CPA Browser / Probe / Preflight
 | `direct` | 新 attempt 获取 Lease 失败/超时时允许直连。 |
 | `single` | 新 attempt 获取 Lease 失败/超时时使用 `proxy`。 |
 
-Fallback 只发生在新的账号 attempt 开始前，不会在已经进行中的注册流程里静默换 IP。
+Fallback 只发生在新 attempt 开始前，不会在注册过程中切换 IP。
 
-## Registration safe-retry boundary
+`proxy_pool_endpoint_mode` 可选 `fixed`（固定节点）、`rotating`（旋转入口）和 `auto`（默认）。`auto` 仅将**含 `{account}` 的原生代理 URI** 识别为旋转入口，其余按固定节点处理。
 
-Managed 注册流程跟踪当前阶段：
+## 注册阶段与安全重试
 
-```text
-lease_acquire
-browser_start
-page_open
-email_submit
-code_wait
-code_submit
-profile_submit
-sso_wait
-account_confirmed
-postprocess
-```
+| 阶段 | 处理方式 |
+| --- | --- |
+| `lease_acquire` / `browser_start` / `page_open` | **SAFE_NEW_LEASE**：尚未提交邮箱，可释放租约并有限重试 |
+| `code_wait` | **SAME_LEASE_RECOVERY**：仅在确认未获取验证码时，保留租约并更换邮箱重试 |
+| `email_submit` / `code_submit` / `profile_submit` / `sso_wait` | **OUTCOME_UNCERTAIN**：不自动切换邮箱或代理重放注册 |
+| `account_confirmed` / `postprocess` | **NO_RETRY**：已确认的账号不重新注册 |
 
-重试原则：
-
-```text
-lease_acquire / browser_start / page_open
-→ SAFE_NEW_LEASE
-→ 可以释放旧 Lease 后重新开始
-
-code_wait
-→ SAME_LEASE_RECOVERY
-→ 只允许保持当前 Lease，更换邮箱并重启浏览器后继续尝试
-
-email_submit / code_submit / profile_submit / sso_wait
-→ OUTCOME_UNCERTAIN
-→ 不自动换邮箱或换代理重放整个注册流程
-
-account_confirmed / postprocess
-→ NO_RETRY
-→ 已确认账号不重新注册
-```
-
-这样可以避免“提交已可能被服务端接收，但本地读取响应时断线”后再次换 IP 重放，从而降低重复账号和重复提交风险。只有在 `code_wait` 阶段确认没有取得可用验证码时，才会在同一个账号 Lease 内更换邮箱恢复；一旦进入 `code_submit`，后续提交结果无法确认时会计入结果不确定，不再通过邮箱重试绕过安全边界。
-
-WebUI 状态额外记录 `uncertain` 数量。
+由于提交可能已到达服务端，程序在执行有状态提交前就更新阶段标记；提交结果无法确认时宁可记为 `uncertain`，也不冒险重放。WebUI 会显示该计数。
 
 ## 支持协议
 
@@ -155,7 +127,7 @@ Shadowsocks / ss
 
 Shadowsocks 支持常见 SIP002 / legacy Base64 URI；当前内置支持常见 AEAD / 2022 method，不支持的 plugin 或 method 会明确报错，不会静默降级。
 
-## Native URI 规范化
+## 原生代理 URI 规范化
 
 HTTP/HTTPS/SOCKS 原生代理必须表示明确的 proxy endpoint：
 
@@ -187,18 +159,11 @@ socks5h://
 
 SOCKS4 / SOCKS4A 同样分别保持 local / remote DNS 语义。
 
-## Runtime idle cache
+## 运行时空闲缓存
 
 Runtime 仍然按需创建，不会因为订阅里有大量节点就一次性启动大量 bridge / sing-box。
 
-引用数降到 0 后默认进入 idle cache：
-
-```text
-proxy_runtime_idle_ttl_sec = 120
-proxy_runtime_cache_max = 32
-```
-
-同一节点在 TTL 内再次 acquire 可直接复用；超过 TTL 或空闲缓存上限时清理最久未使用 runtime。设置 `proxy_runtime_idle_ttl_sec=0` 可恢复“零引用立即关闭”。Manager shutdown 会关闭全部残留 runtime。
+引用数降至 0 后，runtime 默认缓存 **120 秒、最多 32 个**（`proxy_runtime_idle_ttl_sec`、`proxy_runtime_cache_max`）。有效期内可复用；超时、缓存淘汰或 Manager 关闭时清理。将 TTL 设为 `0` 则立即关闭。
 
 ## Base64、订阅刷新与 Last-Known-Good
 
@@ -244,22 +209,7 @@ subscription → 保留上一次成功 generation，并标记 stale
 
 ## Probe：IPv4 / IPv6 与 false-positive 防护
 
-支持：
-
-```text
-proxy_pool_probe_provider = cloudflare | ipinfo
-proxy_pool_probe_dual_stack = true | false
-```
-
-启用双栈后，IPv4 和 IPv6 独立探测并保存：
-
-```text
-status
-tested_at
-latency_ms
-exit_ip
-error
-```
+`proxy_pool_probe_provider` 支持 `cloudflare` / `ipinfo`；`proxy_pool_probe_dual_stack=true`（默认）分别探测 IPv4、IPv6，并保留各自的状态、时间、延迟、出口 IP 和错误。
 
 一个 family 正常、另一个 family 失败时，节点整体仍可判定为可用，同时保留两个 family 的独立结果。
 
@@ -273,7 +223,7 @@ HTTP 2xx
 
 否则判定为 `unhealthy`，解决“200 但响应格式异常/没有 IP”造成的 false positive。
 
-## Probe-aware soft selection
+## 根据 Probe 结果选择节点
 
 节点调度先满足：
 
@@ -351,7 +301,7 @@ gateway_success_rate
 4. **suspected_transport**：TLS、EOF、reset、timeout 等可能来自代理也可能来自目标链路的问题；先立即复测，只有复测也失败才处罚。
 5. **application**：401、429、OAuth 正常状态、业务参数等应用层问题；不处罚代理节点。
 
-## Structured bridge diagnostics
+## Bridge 故障诊断
 
 LocalProxyBridge 不再只把内部异常吞成 EOF，而会记录结构化 failure kind，例如：
 
@@ -372,7 +322,7 @@ ProxyPool 优先使用这些 structured diagnostics 分类；字符串匹配只�
 
 ## NSFW / CPA 后处理
 
-NSFW 或 CPA 失败不会让已经注册成功的账号被丢弃或重新注册。
+NSFW 或 CPA 失败不会丢弃或重新注册已确认的账号。**CPA 默认开启且同步执行**；没有显式 `cpa_proxy` 时，它沿用当前注册租约，导出耗时会占用该 worker 和租约。
 
 - 明确代理 transport error → 进入对应代理反馈；
 - TLS/EOF/timeout → suspected，立即复测后决定是否处罚；
@@ -446,6 +396,6 @@ POST /api/proxy-pool/preflight?node_id=<node-id>
 
 ## 兼容性边界
 
-本轮 V3 行为集中在 `single` / `pool` managed 模式。默认 `proxy_mode=auto` 继续保持旧 GUI/CLI/WebUI、邮箱、结果落盘、pending、token sync 与历史代理行为。
+上述 Lease 与健康调度适用于 `single` / `pool`。默认 `auto` 保留原有单代理或直连行为，不改变 GUI/CLI/WebUI、邮箱、结果保存和 pending 流程。
 
 普通 HTTP/SOCKS 不会因为高级协议支持而启动 sing-box；VLESS/VMess/Trojan/Hysteria2/TUIC/Shadowsocks 只有在实际 acquire / probe / preflight 时才需要 sing-box。
