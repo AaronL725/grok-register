@@ -4,7 +4,7 @@
 
 <p><a href="README.md">简体中文</a> | <strong>English</strong></p>
 
-Grok Register is a Python toolkit for automation workflow research, test-environment validation, and personal learning. It provides GUI / CLI / WebUI interfaces, four temporary-email services plus an Outlook mailbox pool, optional 1–8 worker concurrency, and an account-level proxy pool. It also integrates Chromium browser automation, safe account persistence, pending-result recovery, grok2api token-pool synchronization, and optional CPA xAI OIDC credential export.
+Grok Register is a Python-and-Chromium registration automation tool with GUI, CLI, and WebUI interfaces, five email sources, optional concurrency and proxy pools, SSO risk screening, account persistence, pending recovery, grok2api integration, and CPA/OIDC export.
 
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
@@ -90,7 +90,7 @@ Key features:
 - Supports pre-storage SSO risk screening for `botFlagSource` / `policy=deny`; confirmed matches are quarantined and skipped for grok2api / CPA. Risk checks are fail-open: network failures, abnormal HTTP responses, or missing risk fields are logged for diagnostics and the account continues to storage.
 - Supports writing SSO tokens to either a local or remote grok2api pool.
 - Supports optional CPA xAI OIDC credential export and CLIProxyAPI hotload.
-- Successful accounts are persisted immediately. If writing the main account result fails, the result is placed in the corresponding `accounts_*.txt.pending.jsonl` file for later idempotent recovery. Failed risk-quarantine writes use a separate risk pending queue and are not mixed with normal account pending results.
+- Successful accounts are saved immediately. If the main file write fails, the application attempts to queue the result in `accounts_*.txt.pending.jsonl` for idempotent recovery. If both writes fail, downstream publishing stops. Risk-quarantine failures use a separate pending queue.
 - Supports task stopping, browser restarts, email retries, runtime cleanup, and isolation of post-processing errors.
 
 The main flow for a single account is:
@@ -158,7 +158,7 @@ copy config.example.json config.json
 
 ### 3. Start with the minimum configuration
 
-If you are starting with DuckMail, use the following minimal configuration:
+After copying the template, you can **replace** `config.json` with this minimal DuckMail configuration; omitted fields use built-in defaults:
 
 ```json
 {
@@ -172,7 +172,7 @@ If you are starting with DuckMail, use the following minimal configuration:
 }
 ```
 
-Then fill in the fields required by your selected `email_provider` and any post-processing features you enable. See [`config.example.json`](config.example.json) for the complete field list.
+This quick-start example explicitly disables CPA export. **CPA export is enabled by default**; set `cpa_export_enabled=true` to enable it here. See [`config.example.json`](config.example.json) for other settings.
 
 > `config.example.json` is the complete configuration template. Values such as `example.com` and `temp-mail.example.com` are placeholders, not service addresses that can be used directly. If you use Cloudflare / Cloud Mail / YYDS, fill in the corresponding service parameters first.
 
@@ -203,20 +203,11 @@ http://127.0.0.1:8092
 
 ### WebUI (optional)
 
-```bash
-python -m pip install -r requirements-web.txt
-python -m web.server
-```
-
-The WebUI listens on `127.0.0.1:8092` by default and provides bilingual Chinese/English configuration, start/stop controls, batch statistics, real-time logs, proxy-pool node status, subscription parsing statistics, reload, and manual testing.
+See [Quick Start](#quick-start) for launch commands. The WebUI listens on `127.0.0.1:8092` by default and provides bilingual Chinese/English configuration, start/stop controls, batch statistics, real-time logs, proxy-pool node status, subscription parsing statistics, reload, and manual testing.
 
 ### GUI
 
-```bash
-python grok_register_ttk.py
-```
-
-The GUI lets you configure the main email, proxy, proxy-pool, multi-worker, and registration settings, then click "Start Registration".
+See [Quick Start](#quick-start) for the launch command. The GUI lets you configure the main email, proxy, proxy-pool, multi-worker, and registration settings, then click "Start Registration".
 
 ### CLI
 
@@ -299,14 +290,14 @@ email----password----clientId----refreshToken----auto
 
 The final column is optional and supports `auto` / `imap` / `graph`; if omitted, it defaults to `auto`. The same fields separated by `|` are also supported. The `password` field is retained in the pool record, but verification-code retrieval uses `clientId + refreshToken` to obtain an OAuth2 access token.
 
-- `auto`: Before the email is submitted, independent pre-send cursors are established for IMAP and Microsoft Graph. Polling uses only the channels that actually passed preflight; if both are available, both are polled concurrently.
+- `auto`: Before email submission, establishes independent IMAP and Graph pre-send cursors. Each polling cycle **checks the available channels sequentially**, not in parallel.
 - `imap`: Reads Inbox, Junk, Archive, and other common folders through `outlook.office365.com:993` + XOAUTH2. It uses `UIDVALIDITY + UID` as a stable incremental cursor instead of message counts or sequence numbers that can shift when messages are deleted or moved. Folder LIST results plus the IMAP connection/access token established during preflight are reused during the short verification-code window, and reconnected/refreshed only after disconnects or authentication expiry.
 - `graph`: Monitors both `Inbox` and `JunkEmail` through Microsoft Graph. It uses immutable message ID + `receivedDateTime` as the pre-send cursor, polls only lightweight message-frontier data during normal operation, and reads the message body only after a new message is confirmed.
 - Microsoft OAuth/Graph performs limited retries for timeouts, connection errors, `429`, and `5xx`. `429` responses honor `Retry-After` where possible; other retries use exponential backoff with jitter, and Microsoft HTTP concurrency is limited.
 - Verification codes are extracted only in explicit verification-code contexts, or when the sender is confirmed to belong to an official xAI/Grok domain, preventing ordinary ticket IDs such as `ABC-123` from being misidentified as OTPs.
 - Each mailbox can be allocated at most once per registration task. Multi-worker registration shares a task-level allocator. Mailbox sessions use one-time opaque handles that expire when verification-code retrieval begins; mailbox state/access tokens are released from memory immediately after retrieval ends.
 - A mailbox without a safe pre-send cursor is not submitted for registration. If the requested registration count exceeds the number of valid mailboxes in the pool, the task is automatically capped at the pool capacity.
-- Outlook refresh tokens / access tokens are not written to `mail_credentials.txt`, ordinary logs, or `config.json`. The mailbox-pool file is atomically written with `0600` permissions where possible and is included in `.gitignore`.
+- Outlook access/refresh tokens are not saved in `mail_credentials.txt` or `config.json`. When OAuth returns a rotated refresh token, the app attempts to update the mailbox-pool file. Pool writes are atomic, use `0600` permissions where possible, and the path is covered by `.gitignore`.
 
 The GUI's "Manage Outlook Mailbox Pool" and the WebUI mailbox-pool editor both provide health checks that can verify each mailbox's IMAP/Graph availability without triggering xAI registration. Results return only safe metadata such as email address, mode, channel status, and folders. The Web interface listens only on localhost and sets `no-store` on mailbox-pool-related responses.
 
@@ -402,14 +393,7 @@ Native proxy:
   "proxy_mode": "pool",
   "proxy_fallback": "none",
   "proxy_pool_file": "./proxies.txt",
-  "proxy_pool_subscription_url": "",
-  "proxy_pool_endpoint_mode": "auto",
-  "proxy_pool_max_concurrent_per_node": 1,
-  "proxy_protocol_backend": "auto",
-  "proxy_singbox_path": "",
-  "proxy_protocol_start_timeout_sec": 10,
-  "proxy_runtime_idle_ttl_sec": 120,
-  "proxy_runtime_cache_max": 32
+  "proxy_pool_subscription_url": ""
 }
 ```
 
@@ -426,18 +410,9 @@ tuic://...
 ss://...
 ```
 
-Currently supported:
+Supported sources include HTTP(S), SOCKS4/5, VLESS, VMess, Trojan, Hysteria2, TUIC, and Shadowsocks, from local files or HTTP(S) subscriptions (including Base64). Fixed/rotating endpoints, `{account}`, probes, cooldowns, and concurrency limits are available.
 
-- HTTP / HTTPS / SOCKS / SOCKS4 / SOCKS4A / SOCKS5 / SOCKS5H
-- VLESS / VMess / Trojan / Hysteria2 (`hy2`) / TUIC / Shadowsocks (`ss`)
-- Local files and HTTP/HTTPS subscriptions
-- Standard Base64 and URL-safe Base64 subscriptions
-- Common VLESS/VMess/Trojan TCP/WS/gRPC/HTTP/HTTPUpgrade/QUIC transports
-- Common VLESS TLS / uTLS / Reality parameters
-- Node parsing statistics, health probes, failure cooldowns, and automatic recovery
-- Fixed/rotating endpoints, `{account}`, concurrency limits, and stable account-level Proxy Leases
-
-The proxy runtime uses a lazy + idle-cache design: a local runtime is created only when a node is actually selected, probed, or preflighted. Native proxies that need a unified HTTP exit use `LocalProxyBridge`; VLESS / VMess / Trojan / Hysteria2 / TUIC / Shadowsocks use sing-box. When the Lease reference count drops to 0, the runtime does not exit immediately by default; it moves into the idle cache. Defaults are `proxy_runtime_idle_ttl_sec=120` and `proxy_runtime_cache_max=32`. The runtime closes when TTL expires, the cache evicts it, or the Manager shuts down. Set `proxy_runtime_idle_ttl_sec=0` to restore immediate shutdown at zero references.
+Runtimes start on demand. HTTP/SOCKS use native endpoints or `LocalProxyBridge`, while advanced protocols use sing-box. Idle runtimes are cached for 120 seconds by default, up to 32 entries; both limits are configurable.
 
 Within a single account attempt, the browser, email, NSFW, and default CPA all stay on the same Lease. While waiting for a verification code, if no usable code has been obtained, the program may retry with a different email address while staying on the same Lease. Once verification-code entry/submission begins, later exceptions do not replay the registration by switching email or proxy; they are treated as an "outcome uncertain" state.
 
@@ -445,16 +420,7 @@ For complete parameters, protocol mappings, runtime behavior, and health rules, 
 
 ## Optional Multi-Worker Registration
 
-Disabled by default:
-
-```json
-{
-  "multi_thread_enabled": false,
-  "multi_thread_workers": 4
-}
-```
-
-To enable concurrency:
+Concurrency is disabled by default. To enable it:
 
 ```json
 {
@@ -505,6 +471,8 @@ The two remote credential methods cannot be configured at the same time. The new
 
 ## CPA / xAI OIDC Export
 
+**Enabled by default.** This is a separate OAuth post-processing step after registration that can extend the worker's runtime. Set `cpa_export_enabled=false` if you do not need it.
+
 ```json
 {
   "cpa_export_enabled": true,
@@ -535,7 +503,7 @@ The two remote credential methods cannot be configured at the same time. The new
 | `accounts_*.txt` | Successfully saved accounts, passwords, and SSO tokens |
 | `<sso_risk_rejected_file>` | SSO records quarantined due to `botFlagSource=1/2` or `policy=deny`; default `./sso_risk_rejected.txt` |
 | `mail_credentials.txt` | Temporary email addresses and email credentials created during registration. Email credentials are persisted before registration submission immediately after mailbox creation, so this file may include attempts that later failed, were retried, or ended with an uncertain outcome |
-| `accounts_*.txt.pending.jsonl` | Normal account pending results for registrations that succeeded but could not be written to the main account result file; recover with `retry-pending` |
+| `accounts_*.txt.pending.jsonl` | Recovery queue attempted when saving the main account file fails; successfully queued results can be recovered with `retry-pending` |
 | `<sso_risk_rejected_file>.pending.jsonl` | Separate risk pending queue used when a quarantined account cannot be written to the main quarantine file; do not recover with the normal `retry-pending` command |
 | `<grok2api_local_token_file>` | Optional local grok2api token pool; defaults to `token.json` in the project directory when left empty |
 | `<cpa_auth_dir>/xai-*.json` | Optional CPA xAI OIDC credentials; default directory `./cpa_auths` |
@@ -566,15 +534,18 @@ Recovery uses file locks, deduplication, and atomic replacement. Repeating the o
 ├── proxy_bridge.py            # HTTP/HTTPS/SOCKS → localhost HTTP proxy bridge and Chromium compatibility
 ├── proxy_protocols.py         # HTTP/SOCKS/VLESS/VMess/Trojan/HY2/TUIC/SS subscription parsing
 ├── proxy_protocol_runtime.py  # Native bridge / sing-box lazy runtime and idle cache
-├── mail_service.py            # Four email services
+├── mail_service.py            # Four temporary email services
 ├── app_config.py              # Default configuration, validation, loading, and saving
 ├── account_outputs.py         # Account, pending, and token outputs
-├── sso_risk.py                # SSO botFlag / policy early stop
+├── sso_risk.py                # SSO risk screening and quarantine
+├── outlook_mail.py            # Outlook IMAP / Graph verification-code retrieval
+├── outlook_mailbox_pool.py    # Outlook pool and OAuth refresh-token updates
 ├── cpa_export.py              # CPA/OIDC export entry point
 ├── cpa_xai/                   # CPA browser, OAuth, proxy helpers, and credential writing
 ├── web/
 │   ├── server.py              # FastAPI WebUI control layer
 │   ├── index.html             # WebUI page
+│   ├── outlook-mailbox.js     # Outlook mailbox-pool WebUI interactions
 │   ├── proxy-pool.js          # Proxy-pool WebUI interactions
 │   └── proxy-pool.css         # Proxy-pool WebUI styles
 ├── docs/proxy-pool.en.md      # Detailed proxy-pool documentation
@@ -624,7 +595,7 @@ See [`docs/proxy-pool.en.md`](docs/proxy-pool.en.md).
 
 ### Why does an account go into pending?
 
-A normal `accounts_*.txt.pending.jsonl` file means registration completed, but the main account-result file could not be written. Use `retry-pending` to recover it; there is no need to register the account again.
+A normal `accounts_*.txt.pending.jsonl` file records registered accounts whose main result could not be saved. Use `retry-pending` to recover them without re-registering. If the pending write also fails, an error is logged and downstream publishing stops; this command cannot recover a result that was never queued.
 
 If the file is `<sso_risk_rejected_file>.pending.jsonl`, the account was explicitly identified by risk screening but could not be written to the main quarantine file. This is a separate risk pending queue and cannot be recovered with the normal `retry-pending`.
 
