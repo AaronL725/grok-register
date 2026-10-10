@@ -114,15 +114,19 @@ def test_session_storage_is_cleared_for_all_authenticated_origins():
     class Cookies:
         def clear(self):
             calls.append(("cookies",))
+    new_page = object()
     page = SimpleNamespace(
         run_cdp=lambda *args, **kwargs: calls.append(("cdp", args[0], kwargs["origin"])),
-        get=lambda url: calls.append(("get", url)),
+        close=lambda: calls.append(("close-old-tab",)),
     )
-    browser = SimpleNamespace(set=SimpleNamespace(cookies=Cookies()))
-    browser_session.clear_page_session(page, browser)
+    browser = SimpleNamespace(
+        set=SimpleNamespace(cookies=Cookies()),
+        new_tab=lambda: calls.append(("new-tab",)) or new_page,
+    )
+    assert browser_session.clear_page_session(page, browser) is new_page
     origins = [entry[2] for entry in calls if entry[0] == "cdp"]
     assert origins == ["https://accounts.x.ai", "https://auth.x.ai", "https://grok.com"]
-    assert calls[-2:] == [("cookies",), ("get", "about:blank")]
+    assert calls[-3:] == [("cookies",), ("new-tab",), ("close-old-tab",)]
 
 
 def test_session_cleanup_failure_recreates_cached_browser():
@@ -151,7 +155,7 @@ def test_browser_reuse_keys_on_stable_upstream_not_ephemeral_bridge():
         "proxy": "socks5://proxy:1080", "headless": False,
     }
     try:
-        with patch.object(browser_session, "clear_page_session") as clear, \
+        with patch.object(browser_session, "clear_page_session", return_value=page) as clear, \
              patch.object(browser_session, "create_standalone_page") as create:
             result = browser_session.acquire_mint_browser(proxy="socks5://proxy:1080")
         assert result == (browser, page, False)
