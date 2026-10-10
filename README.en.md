@@ -191,7 +191,7 @@ After copying the template, you can **replace** `config.json` with this minimal 
 }
 ```
 
-This quick-start example explicitly disables CPA export. **CPA export is enabled by default**; set `cpa_export_enabled=true` to enable it here. See [`config.example.json`](config.example.json) for other settings.
+This example explicitly sets `cpa_export_enabled=false` to simplify the first run. **CPA export is enabled by default**; change it to `true` to enable exporting. See [`config.example.json`](config.example.json) for other settings.
 
 > `config.example.json` is the complete configuration template. Values such as `example.com` and `temp-mail.example.com` are placeholders, not service addresses that can be used directly. If you use Cloudflare / Cloud Mail / YYDS, fill in the corresponding service parameters first.
 
