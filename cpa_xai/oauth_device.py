@@ -52,8 +52,8 @@ class TokenResult(object):
 
 
 def _build_opener(proxy=None):
-    handlers = []
     resolved = resolve_proxy(proxy)
+    handlers = [urllib.request.ProxyHandler({})]
     if resolved:
         parsed = urllib.parse.urlparse(resolved)
         if parsed.scheme not in ("http", "https"):
