@@ -289,7 +289,7 @@ def cloudflare_get_oai_code(
             code = extract_verification_code(combined, subject)
             if code:
                 if log_callback:
-                    log_callback("[*] Cloudflare 从邮件中提取到验证码")
+                    log_callback(f"[*] Cloudflare 从邮件中提取到验证码: {code}")
                 return code
             if log_callback:
                 attempts = int(detail_retries.get(str(msg_id), {}).get("attempts") or 0)
@@ -646,7 +646,7 @@ def cloudmail_get_oai_code(
                 code = extract_verification_code(f"verification code: {code_value}")
             if code:
                 if log_callback:
-                    log_callback("[*] Cloud Mail 从邮件中提取到验证码")
+                    log_callback(f"[*] Cloud Mail 从邮件中提取到验证码: {code}")
                 return code
             if log_callback:
                 log_callback(
@@ -715,7 +715,7 @@ def duckmail_get_oai_code(
             code = extract_verification_code(combined, subject)
             if code:
                 if log_callback:
-                    log_callback("[*] 从邮件列表中提取到验证码")
+                    log_callback(f"[*] 从邮件列表中提取到验证码: {code}")
                 return code
 
             detail_attempt = _detail_retry_attempt(detail_retries, msg_id)
@@ -734,7 +734,7 @@ def duckmail_get_oai_code(
             code = extract_verification_code(combined, subject)
             if code:
                 if log_callback:
-                    log_callback("[*] 从邮件中提取到验证码")
+                    log_callback(f"[*] 从邮件中提取到验证码: {code}")
                 return code
         sleep_with_cancel(poll_interval, cancel_callback)
     raise VerificationCodeUnavailable(f"在 {timeout}s 内未收到验证码邮件")
@@ -1108,7 +1108,7 @@ def yyds_get_oai_code(
             code = extract_verification_code(combined, subject)
             if code:
                 if log_callback:
-                    log_callback("[*] YYDS 从邮件列表中提取到验证码")
+                    log_callback(f"[*] YYDS 从邮件列表中提取到验证码: {code}")
                 return code
 
             detail_attempt = _detail_retry_attempt(detail_retries, msg_id)
@@ -1127,7 +1127,7 @@ def yyds_get_oai_code(
             code = extract_verification_code(combined, subject)
             if code:
                 if log_callback:
-                    log_callback("[*] YYDS 从邮件中提取到验证码")
+                    log_callback(f"[*] YYDS 从邮件中提取到验证码: {code}")
                 return code
         sleep_with_cancel(poll_interval, cancel_callback)
     raise VerificationCodeUnavailable(f"YYDS 在 {timeout}s 内未收到验证码邮件")

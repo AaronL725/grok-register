@@ -59,7 +59,7 @@ DEFAULT_CONFIG = {
     "grok2api_remote_admin_username": "",
     "grok2api_remote_admin_password": "",
     "api_reverse_tools": "",
-    "cpa_export_enabled": False,
+    "cpa_export_enabled": True,
     "cpa_auth_dir": "./cpa_auths",
     "cpa_copy_to_hotload": False,
     "cpa_hotload_dir": "",

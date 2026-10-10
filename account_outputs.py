@@ -12,18 +12,11 @@ from datetime import datetime, timedelta, timezone
 from filelock import FileLock
 
 
-def _append_private_line(path, line):
-    """Append credentials with owner-only access on POSIX."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as handle:
-        os.chmod(path, 0o600)
-        handle.write(line)
+def _append_account_line_unlocked(path, email, password, sso):
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"{email}----{password}----{sso}\n")
         handle.flush()
         os.fsync(handle.fileno())
-
-
-def _append_account_line_unlocked(path, email, password, sso):
-    _append_private_line(path, f"{email}----{password}----{sso}\n")
 
 
 def append_account_line(path, email, password, sso):
@@ -59,7 +52,10 @@ def save_mail_credential(base_dir, email, credential):
         else:
             records = cached[1]
         if record not in records:
-            _append_private_line(path, record + "\n")
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(record + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             records.add(record)
         _mail_credential_cache[path] = (_file_stamp(path), records)
     return True

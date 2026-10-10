@@ -505,9 +505,6 @@ The two remote credential methods cannot be configured at the same time. The new
 
 ## CPA / xAI OIDC Export
 
-> CPA/OIDC export is disabled by default to keep the registration path responsive. Enable it with `cpa_export_enabled=true` when needed; enabled export still runs synchronously on the current worker.
-
-
 ```json
 {
   "cpa_export_enabled": true,
