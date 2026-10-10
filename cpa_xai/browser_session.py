@@ -144,9 +144,12 @@ def clear_page_session(page: Any, browser: Optional[Any] = None, log: Optional[L
     for origin in ("https://accounts.x.ai", "https://auth.x.ai", "https://grok.com"):
         page.run_cdp("Storage.clearDataForOrigin", origin=origin,
                      storageTypes="all")
-    (browser or page).set.cookies.clear()
-    page.get("about:blank")
+    browser.set.cookies.clear()
+    # A fresh tab gives the next account a fresh sessionStorage namespace.
+    new_page = browser.new_tab()
+    page.close()
     (log or _noop_log)("mint browser site storage and cookies cleared")
+    return new_page
 
 def normalize_cookies(cookies: Any):
     output = []
