@@ -255,7 +255,12 @@ def persist_account_result(result, callbacks, ops):
         except Exception as pending_exc:
             pending_saved = False; callbacks.log(f"[!] pending 队列写入异常: {pending_exc}")
         callbacks.log(f"[!] 账号已注册但主结果文件保存失败: {save_error}")
-        callbacks.log("[!] 未保存账号已写入 pending 队列，等待人工重试" if pending_saved else "[!] pending 队列也写入失败，请立即复制当前账号信息")
+        callbacks.log("[!] 未保存账号已写入 pending 队列，等待人工重试" if pending_saved else "[!] pending 队列也写入失败；已停止向下游发布此账号")
+        if not pending_saved:
+            return OutputResult(
+                registered=True, saved=False, pending_saved=False, save_error=save_error,
+                cpa={"ok": False, "skipped": True, "reason": "account_not_persisted"},
+            )
     try:
         pools = ops.add_tokens(result.sso, result.email)
         if not isinstance(pools, dict):

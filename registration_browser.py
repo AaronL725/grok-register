@@ -464,9 +464,15 @@ return !!(givenInput && familyInput && passwordInput);
 
 def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None, on_mail_created=None):
     raise_if_cancelled(cancel_callback)
-    email, dev_token = get_email_and_token()
-    if not email or not dev_token:
-        raise Exception("获取邮箱失败")
+    try:
+        email, dev_token = get_email_and_token()
+        if not email or not dev_token:
+            raise RuntimeError("邮箱服务未返回完整凭据")
+    except Exception as exc:
+        # No browser form was submitted: this slot can be retried safely.
+        raise_if_cancelled(cancel_callback)
+        from registration_flow import RecoverablePreSubmitError
+        raise RecoverablePreSubmitError(f"提交前创建邮箱失败: {exc}") from exc
     if log_callback:
         log_callback(f"[*] 已创建邮箱: {email}")
     if on_mail_created is not None:
@@ -926,9 +932,9 @@ return 'clicked';
         if clicked == "clicked" or clicked == "no-button":
             if log_callback:
                 if clicked == "clicked":
-                    log_callback(f"[*] 已填写验证码并触发提交，等待资料页确认: {code}")
+                    log_callback("[*] 已填写验证码并触发提交，等待资料页确认")
                 else:
-                    log_callback(f"[*] 已填写验证码，页面未显示提交按钮，等待自动提交确认: {code}")
+                    log_callback("[*] 已填写验证码，页面未显示提交按钮，等待自动提交确认")
             transition_deadline = min(deadline, time.time() + max(1.0, float(transition_timeout)))
             while time.time() < transition_deadline:
                 raise_if_cancelled(cancel_callback)
