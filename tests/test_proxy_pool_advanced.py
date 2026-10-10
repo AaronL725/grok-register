@@ -101,7 +101,8 @@ class AdvancedProxyPoolIntegrationTests(unittest.TestCase):
                 lease = manager.acquire("pick-vless", "worker", 1, 1, "session", timeout=1)
             self.assertEqual(lease.protocol, "http")
             state = {node["protocol"]: node for node in manager.snapshot()["nodes"]}
-            self.assertFalse(state["vless"]["enabled"])
+            self.assertTrue(state["vless"]["enabled"])
+            self.assertGreater(state["vless"]["cooldown_sec"], 0)
             self.assertIn("backend:", state["vless"]["last_error"])
             manager.release(lease)
 
