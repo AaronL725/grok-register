@@ -108,7 +108,7 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
 - 支持注册后尝试开启 NSFW；失败不会丢失已经注册成功的账号。
 - 支持 SSO 入库前筛查 `botFlagSource` / `policy=deny`；明确命中后隔离并跳过 grok2api / CPA。风控检查采用 fail-open：网络请求失败、HTTP 异常或未解析到风控字段时会记录诊断并继续入库。
 - 支持把 SSO token 写入 grok2api 本地池或远端池。
-- 支持可选 CPA xAI OIDC 凭证导出与 CLIProxyAPI hotload。
+- CPA xAI OIDC 凭证导出**默认开启**，可手动关闭；CLIProxyAPI hotload 为可选功能。
 - 成功账号实时保存；主文件写入失败时会尝试写入 `accounts_*.txt.pending.jsonl`，可稍后幂等恢复。若主文件与 pending 都写入失败，将停止下游发布，并提示保存失败。风控隔离使用独立的 risk pending。
 - 支持停止任务、浏览器重启、邮箱重试、运行时清理和后处理错误隔离。
 
@@ -124,10 +124,10 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
   → SSO 风控筛查（botFlagSource / policy）
   → 保存账号
   → 可选写入 grok2api
-  → 可选导出 CPA/OIDC
+  → 默认导出 CPA/OIDC（可关闭）
 ```
 
-> grok2api 入池和 CPA/OIDC 都属于注册后的附加后处理。后处理失败会记录警告，但不会把已经保存成功的账号重新算作注册失败。SSO 风控命中时不会写入主账号文件，也不会进入 grok2api / CPA。
+> grok2api 入池为可选后处理，CPA/OIDC 导出**默认开启**、也可手动关闭。后处理失败会记录警告，但不会把已经保存成功的账号重新算作注册失败。SSO 风控命中时不会写入主账号文件，也不会进入 grok2api / CPA。
 
 ## 快速开始
 
@@ -187,11 +187,11 @@ copy config.example.json config.json
   "proxy_mode": "auto",
   "proxy": "",
   "multi_thread_enabled": false,
-  "cpa_export_enabled": false
+  "cpa_export_enabled": true
 }
 ```
 
-这里显式设置 `cpa_export_enabled=false`，仅用于简化首次运行；**项目默认开启 CPA 导出**。需要导出时改为 `true`。其他字段见 [`config.example.json`](config.example.json)。
+此示例与程序默认值一致：**CPA 导出默认开启**（`cpa_export_enabled=true`）。如果不需要 CPA/OIDC，可设置为 `false`；开启时会执行额外的 OAuth 后处理，可能延长运行时间。其他字段见 [`config.example.json`](config.example.json)。
 
 > `config.example.json` 是完整字段模板，其中的 `example.com`、`temp-mail.example.com` 等均为占位值，并不是可直接使用的服务地址。若使用 Cloudflare / Cloud Mail / YYDS，请先填写对应服务参数。
 
