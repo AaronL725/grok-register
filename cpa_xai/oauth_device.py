@@ -61,8 +61,8 @@ def _build_opener(proxy=None):
                 "OAuth HTTP transport requires an HTTP-compatible proxy endpoint; received %s://" %
                 (parsed.scheme or "unknown")
             )
-        handlers.append(urllib.request.ProxyHandler({"http": resolved, "https": resolved}))
-    return urllib.request.build_opener(*handlers) if handlers else urllib.request.build_opener()
+        handlers[0] = urllib.request.ProxyHandler({"http": resolved, "https": resolved})
+    return urllib.request.build_opener(*handlers)
 
 
 def _validate_endpoint(raw_url, field_name):
