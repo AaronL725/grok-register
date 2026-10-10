@@ -189,7 +189,8 @@ def _write_private_file(path: Path, data: str) -> None:
 def save_outlook_mailbox_pool(path: Union[str, os.PathLike], data: str) -> dict:
     normalized, accounts = _validate_pool_data(data)
     target = _canonical_path(path)
-    _write_private_file(target, normalized)
+    with FileLock(str(target) + ".lock", timeout=30):
+        _write_private_file(target, normalized)
     return {
         "path": str(target),
         "count": len(accounts),

@@ -77,7 +77,7 @@ def main():
                 detail = client.get_detail(credential, mail_id)
                 subject, text = client.flatten_mail_text(item, detail)
                 code = extract_verification_code(text, subject)
-                print("[MAIL] id=%s subject=%r code_found=%s" % (mail_id, subject, bool(code)))
+                print("[MAIL] id=%s code_found=%s" % (mail_id, bool(code)))
                 if code:
                     print("[FOUND] 已获取验证码（内容已隐藏）")
                     return
