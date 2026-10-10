@@ -108,7 +108,7 @@ Key features:
 - Can optionally attempt to enable NSFW after registration; failure does not discard an account that was already registered successfully.
 - Supports pre-storage SSO risk screening for `botFlagSource` / `policy=deny`; confirmed matches are quarantined and skipped for grok2api / CPA. Risk checks are fail-open: network failures, abnormal HTTP responses, or missing risk fields are logged for diagnostics and the account continues to storage.
 - Supports writing SSO tokens to either a local or remote grok2api pool.
-- Supports optional CPA xAI OIDC credential export and CLIProxyAPI hotload.
+- **CPA xAI OIDC credential export is enabled by default** and can be disabled; CLIProxyAPI hotload is optional.
 - Successful accounts are saved immediately. If the main file write fails, the application attempts to queue the result in `accounts_*.txt.pending.jsonl` for idempotent recovery. If both writes fail, downstream publishing stops. Risk-quarantine failures use a separate pending queue.
 - Supports task stopping, browser restarts, email retries, runtime cleanup, and isolation of post-processing errors.
 
@@ -124,10 +124,10 @@ Open registration page
   → SSO risk screening (botFlagSource / policy)
   → Save account
   → Optionally add to grok2api
-  → Optionally export CPA/OIDC
+  → Export CPA/OIDC by default (can be disabled)
 ```
 
-> grok2api pool insertion and CPA/OIDC are optional post-processing steps after registration. Post-processing failures are recorded as warnings and do not reclassify an already saved account as a registration failure. When SSO risk screening matches, the account is not written to the main account file and is not sent to grok2api / CPA.
+> grok2api pool insertion is optional, while CPA/OIDC export is **enabled by default** and can be disabled. Post-processing failures are recorded as warnings and do not reclassify an already saved account as a registration failure. When SSO risk screening matches, the account is not written to the main account file and is not sent to grok2api / CPA.
 
 ## Quick Start
 
@@ -187,11 +187,11 @@ After copying the template, you can **replace** `config.json` with this minimal 
   "proxy_mode": "auto",
   "proxy": "",
   "multi_thread_enabled": false,
-  "cpa_export_enabled": false
+  "cpa_export_enabled": true
 }
 ```
 
-This example explicitly sets `cpa_export_enabled=false` to simplify the first run. **CPA export is enabled by default**; change it to `true` to enable exporting. See [`config.example.json`](config.example.json) for other settings.
+This example matches the application's default: **CPA export is enabled** (`cpa_export_enabled=true`). Set it to `false` if you do not need CPA/OIDC; when enabled, the additional OAuth post-processing step may extend runtime. See [`config.example.json`](config.example.json) for other settings.
 
 > `config.example.json` is the complete configuration template. Values such as `example.com` and `temp-mail.example.com` are placeholders, not service addresses that can be used directly. If you use Cloudflare / Cloud Mail / YYDS, fill in the corresponding service parameters first.
 
