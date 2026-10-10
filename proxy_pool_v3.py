@@ -603,11 +603,17 @@ class ProxyPoolManager:
             node = self._nodes.get(node_id)
             if node is not None:
                 node.inflight = max(0, node.inflight - 1)
-                node.enabled = False
+                permanent = kind in ("configuration", "compatibility")
+                node.enabled = not permanent
                 node.probe_status = "unavailable"
                 node.probe_error = safe_proxy_error_text(error)[:300]
-                node.configuration_failures += 1 if kind in ("configuration", "compatibility") else 0
-                node.last_error = "%s: %s" % ("configuration" if kind in ("configuration", "compatibility") else "backend", safe_proxy_error_text(error)[:260])
+                node.last_failure_at = time.time()
+                if permanent:
+                    node.configuration_failures += 1
+                else:
+                    node.failure_count += 1
+                    node.cooldown_until = time.time() + min(60, 5 * (2 ** min(node.failure_count - 1, 4)))
+                node.last_error = "%s: %s" % ("configuration" if permanent else "backend", safe_proxy_error_text(error)[:260])
             self._condition.notify_all()
         self._save_state_file()
 
