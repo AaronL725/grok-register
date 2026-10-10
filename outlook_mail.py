@@ -54,13 +54,14 @@ _VERIFICATION_PATTERNS = (
 
 
 
-@dataclass(frozen=True)
+@dataclass
 class OutlookAccount:
     email: str
     password: str
     client_id: str
     refresh_token: str
     mode: str = "auto"
+    on_refresh: Optional[Callable[[str, str], None]] = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -284,6 +285,12 @@ def _refresh_access_token(
             continue
         token = str(data.get("access_token") or "").strip()
         if token:
+            rotated = str(data.get("refresh_token") or "").strip()
+            if rotated and rotated != account.refresh_token:
+                previous = account.refresh_token
+                account.refresh_token = rotated
+                if account.on_refresh:
+                    account.on_refresh(previous, rotated)
             return token
         last_error = f"{label} token 响应缺少 access_token"
     raise RuntimeError(last_error or f"{label} token 刷新失败")
@@ -603,21 +610,32 @@ def _graph_messages(
     folder_name: str,
     cancel_callback=None,
     include_content: bool = False,
+    after_epoch: Optional[float] = None,
 ) -> list[dict]:
     select = "id,receivedDateTime"
     if include_content:
         select += ",subject,bodyPreview,body,from"
-    data = _graph_get(
-        access_token,
-        f"/me/mailFolders/{folder_name}/messages",
-        {
-            "$top": str(OUTLOOK_GRAPH_SCAN_DEPTH),
-            "$orderby": "receivedDateTime desc",
-            "$select": select,
-        },
-        cancel_callback=cancel_callback,
-    )
-    return [item for item in (data.get("value") or []) if isinstance(item, dict)]
+    params = {
+        "$top": str(OUTLOOK_GRAPH_SCAN_DEPTH),
+        "$orderby": "receivedDateTime desc",
+        "$select": select,
+    }
+    path = f"/me/mailFolders/{folder_name}/messages"
+    result = []
+    while True:
+        data = _graph_get(access_token, path, params, cancel_callback=cancel_callback)
+        batch = [item for item in (data.get("value") or []) if isinstance(item, dict)]
+        result.extend(batch)
+        next_link = str(data.get("@odata.nextLink") or "")
+        if not next_link or after_epoch is None:
+            break
+        if any(_received_epoch(item.get("receivedDateTime")) < after_epoch for item in batch):
+            break
+        if not next_link.startswith(OUTLOOK_GRAPH_BASE_URL + "/"):
+            raise RuntimeError("Outlook Graph returned an unexpected pagination URL")
+        path = next_link[len(OUTLOOK_GRAPH_BASE_URL):]
+        params = None
+    return result
 
 
 def _graph_message_detail(access_token: str, message_id: str, cancel_callback=None) -> dict:
@@ -787,7 +805,7 @@ def _scan_imap_once(
             if not new_uids:
                 continue
             newest_uid = max(new_uids)
-            candidates = sorted(new_uids, reverse=True)[:OUTLOOK_SCAN_DEPTH]
+            candidates = sorted(new_uids, reverse=True)
             _log(
                 log_callback,
                 f"[*] Outlook IMAP 新邮件: {cursor.folder.name} UID {cursor.last_uid} -> {newest_uid}",
@@ -863,7 +881,10 @@ def _scan_graph_once(
     cancel_callback=None,
 ) -> Optional[str]:
     for cursor in state.graph.values():
-        frontier = _graph_messages(token, cursor.folder_name, cancel_callback=cancel_callback)
+        frontier = _graph_messages(
+            token, cursor.folder_name, cancel_callback=cancel_callback,
+            after_epoch=max(cursor.baseline_epoch, _received_epoch(cursor.newest_received)),
+        )
         new_messages = [
             message
             for message in frontier

@@ -11,6 +11,8 @@ import tempfile
 import threading
 from typing import Optional, Union
 
+from filelock import FileLock
+
 from outlook_mail import (
     OutlookAccount,
     OutlookMailbox,
@@ -388,10 +390,36 @@ class OutlookTaskRuntime:
                 pass
 
 
+def rotate_outlook_refresh_token(path, email, previous, rotated):
+    """Persist a replacement token without overwriting another refresh."""
+    target = _canonical_path(path)
+    with FileLock(str(target) + ".lock", timeout=30):
+        _target, data = _read_pool_text(target)
+        lines = data.splitlines()
+        for index, line in enumerate(lines):
+            fields = _split_account_fields(line)
+            if len(fields) >= 4 and fields[0].lower() == email.lower():
+                if fields[3] != previous:
+                    raise RuntimeError("Outlook refresh token changed concurrently")
+                fields[3] = rotated
+                lines[index] = "----".join(fields)
+                _write_private_file(target, "\n".join(lines) + "\n")
+                return
+        raise RuntimeError("Outlook mailbox was not found when rotating token")
+
+
 def create_outlook_task_runtime(
     path: Union[str, os.PathLike], log_callback=None, cancelled_exception=None
 ) -> OutlookTaskRuntime:
-    _target, _normalized, accounts = _read_validated_pool(path)
+    target, _normalized, accounts = _read_validated_pool(path)
+    for account in accounts:
+        def on_refresh(previous, rotated, email=account.email):
+            try:
+                rotate_outlook_refresh_token(target, email, previous, rotated)
+            except Exception as exc:
+                if log_callback:
+                    log_callback("[!] Outlook refresh token 已更新到内存，但保存到邮箱池失败: %s" % exc)
+        account.on_refresh = on_refresh
     return OutlookTaskRuntime(
         accounts, log_callback=log_callback, cancelled_exception=cancelled_exception
     )

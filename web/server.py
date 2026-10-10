@@ -250,10 +250,23 @@ async def put_outlook_mailboxes(request: Request):
         if _maintenance_state is not None:
             raise HTTPException(status_code=409, detail="维护操作期间不能修改 Outlook 邮箱池")
         engine.load_config()
-        path = engine.config.get("outlook_accounts_file", "")
+        previous = dict(engine.config)
+        path = payload.get("path", previous.get("outlook_accounts_file", ""))
         try:
-            summary = save_outlook_mailbox_pool(path, payload["data"])
-        except (ValueError, RuntimeError, OSError) as exc:
+            candidate = engine.validate_config_structure({
+                **previous, "outlook_accounts_file": path,
+            })
+            summary = save_outlook_mailbox_pool(candidate["outlook_accounts_file"], payload["data"])
+            if candidate["outlook_accounts_file"] != previous["outlook_accounts_file"]:
+                engine.config.clear()
+                engine.config.update(candidate)
+                try:
+                    engine.save_config()
+                except Exception:
+                    engine.config.clear()
+                    engine.config.update(previous)
+                    raise
+        except (ValueError, RuntimeError, OSError, engine.ConfigError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     _append_log("[*] Outlook 邮箱池已保存: %s 个账号" % summary["count"])
     return JSONResponse({"ok": True, **summary})

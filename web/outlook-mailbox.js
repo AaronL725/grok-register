@@ -81,20 +81,18 @@
 
   async function savePool() {
     setStatus('Saving…', false);
-    const configResponse = await fetch('/api/config', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({outlook_accounts_file: pathInput.value || './output/mailboxes/outlook-accounts.txt'})
-    });
-    const configData = await configResponse.json();
-    if (!configResponse.ok) throw new Error(configData.detail || 'Failed to save Outlook pool path');
     const response = await fetch('/api/mailboxes/outlook', {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({data: editor.value})
+      body: JSON.stringify({
+        path: pathInput.value || './output/mailboxes/outlook-accounts.txt',
+        data: editor.value
+      })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Failed to save Outlook mailbox pool');
+    pathInput.value = data.path;
+    dirty.delete('outlook_accounts_file');
     setStatus('Saved · Valid: ' + data.count, false);
   }
 
