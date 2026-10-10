@@ -22,14 +22,15 @@ class ReviewFixTests(unittest.TestCase):
         return registration_flow.RegistrationCallbacks(log=lambda message: None, cancelled=lambda: False)
 
     def test_mail_creation_failure_is_retryable_before_submit(self):
-        with patch.object(registration_browser, "get_email_and_token", side_effect=TimeoutError("temporary mail timeout")), \
-             patch.object(registration_browser, "raise_if_cancelled"):
+        with patch.object(registration_browser, "get_email_and_token", side_effect=TimeoutError("temporary mail timeout"), create=True), \
+             patch.object(registration_browser, "raise_if_cancelled", create=True):
             with self.assertRaises(registration_flow.RecoverablePreSubmitError):
                 registration_browser.fill_email_and_submit()
 
     def test_transient_mail_failure_does_not_abort_batch(self):
         fake = FakeOps()
         ops = fake.operations()
+        ops.internal_stage_markers = True
         calls = {"count": 0}
 
         def create_mail():
