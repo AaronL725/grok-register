@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,12 +23,8 @@ class ProxyNetworkUnificationTests(unittest.TestCase):
         self.assertEqual(endpoint, "http://127.0.0.1:8080")
         self.assertIsNone(bridge)
 
-    def test_cpa_explicit_socks_is_normalized_before_mint(self):
+    def test_cpa_explicit_socks_keeps_stable_upstream_for_browser(self):
         captured = {}
-
-        @contextmanager
-        def compatible(_proxy, log=None):
-            yield "http://127.0.0.1:32123"
 
         def mint(**kwargs):
             captured.update(kwargs)
@@ -38,7 +33,6 @@ class ProxyNetworkUnificationTests(unittest.TestCase):
             return {"ok": True, "email": kwargs["email"], "path": str(path)}
 
         with tempfile.TemporaryDirectory() as tmp, \
-                patch.object(cpa_export, "http_compatible_proxy", compatible), \
                 patch.object(cpa_export, "_load_mint_and_export", return_value=mint):
             result = cpa_export.export_cpa_xai_for_account(
                 "user@example.com", "password", sso="token",
@@ -50,7 +44,7 @@ class ProxyNetworkUnificationTests(unittest.TestCase):
                 },
             )
         self.assertTrue(result["ok"])
-        self.assertEqual(captured["proxy"], "http://127.0.0.1:32123")
+        self.assertEqual(captured["proxy"], "socks5://user:pass@127.0.0.1:1080")
 
     def test_cpa_compatibility_error_does_not_become_proxy_failure_feedback(self):
         account = RegistrationResult(ok=True)
