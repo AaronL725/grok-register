@@ -29,8 +29,10 @@ def get_runtime_proxy():
 
 
 def resolve_proxy(explicit=None):
+    # An explicit empty string means direct; None means inherit the runtime.
+    if explicit is not None:
+        return str(explicit).strip()
     for candidate in (
-        str(explicit or "").strip(),
         str(get_runtime_proxy() or "").strip(),
         str(os.environ.get("https_proxy") or "").strip(),
         str(os.environ.get("HTTPS_PROXY") or "").strip(),
