@@ -701,3 +701,4 @@ def mint_with_browser(
                 release_mint_browser(owned=False, success=success, log=logger)
         if http_bridge is not None:
             http_bridge.stop()
+        set_runtime_proxy(None)
