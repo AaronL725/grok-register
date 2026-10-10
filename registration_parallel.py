@@ -111,11 +111,11 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
         mail_module.bind_runtime(mail_runtime)
 
         worker_namespace = dict(mail_runtime)
-        for name in getattr(mail_module, "_OWN_NAMES", set()):
-            if hasattr(mail_module, name):
-                worker_namespace[name] = getattr(mail_module, name)
-        if hasattr(mail_module, "normalize_mail_body"):
-            worker_namespace["normalize_mail_body"] = mail_module.normalize_mail_body
+        worker_namespace.update({
+            "get_email_and_token": mail_module.get_email_and_token,
+            "get_oai_code": mail_module.get_oai_code,
+            "get_user_agent": mail_module.get_user_agent,
+        })
 
         browser_module = load_isolated_module(
             _ROOT / "registration_browser.py",
