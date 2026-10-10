@@ -4,7 +4,7 @@
 
 <p><strong>简体中文</strong> | <a href="README.en.md">English</a></p>
 
-Grok Register 是一个面向自动化流程研究、测试环境验证和个人学习的 Python 工具。项目提供 GUI / CLI / WebUI、四种临时邮箱与 Outlook 邮箱池、可选 1–8 线程并发与账号级代理池，并集成 Chromium 页面自动化、账号安全落盘、pending 恢复、grok2api token 入池和可选 CPA xAI OIDC 凭证导出。
+Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GUI、CLI、WebUI、五种邮箱来源、可选并发与代理池，并支持 SSO 风控、账号持久化、pending 恢复、grok2api 入池和 CPA/OIDC 导出。
 
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
@@ -109,7 +109,7 @@ Grok Register 使用真实 Chromium / Chrome 完成注册流程，并把 GUI、C
 - 支持 SSO 入库前筛查 `botFlagSource` / `policy=deny`；明确命中后隔离并跳过 grok2api / CPA。风控检查采用 fail-open：网络请求失败、HTTP 异常或未解析到风控字段时会记录诊断并继续入库。
 - 支持把 SSO token 写入 grok2api 本地池或远端池。
 - 支持可选 CPA xAI OIDC 凭证导出与 CLIProxyAPI hotload。
-- 成功账号实时落盘；主账号结果写入失败时会进入对应的 `accounts_*.txt.pending.jsonl`，可稍后幂等恢复。风控隔离写入失败使用独立的 risk pending，不与普通账号 pending 混用。
+- 成功账号实时保存；主文件写入失败时会尝试写入 `accounts_*.txt.pending.jsonl`，可稍后幂等恢复。若主文件与 pending 都写入失败，将停止下游发布，并提示保存失败。风控隔离使用独立的 risk pending。
 - 支持停止任务、浏览器重启、邮箱重试、运行时清理和后处理错误隔离。
 
 单个账号的主要流程：
@@ -177,7 +177,7 @@ copy config.example.json config.json
 
 ### 3. 先完成最小配置
 
-如果先使用 DuckMail，可以从下面这组最小运行配置开始：
+复制模板后，可以将 `config.json` **替换为**以下 DuckMail 最小配置；未列出的字段采用程序默认值：
 
 ```json
 {
@@ -191,7 +191,7 @@ copy config.example.json config.json
 }
 ```
 
-然后根据 `email_provider` 和需要启用的后处理功能继续填写对应配置。完整字段见 [`config.example.json`](config.example.json)。
+这里显式设置 `cpa_export_enabled=false`，仅用于简化首次运行；**项目默认开启 CPA 导出**。需要导出时改为 `true`。其他字段见 [`config.example.json`](config.example.json)。
 
 > `config.example.json` 是完整字段模板，其中的 `example.com`、`temp-mail.example.com` 等均为占位值，并不是可直接使用的服务地址。若使用 Cloudflare / Cloud Mail / YYDS，请先填写对应服务参数。
 
@@ -222,20 +222,11 @@ http://127.0.0.1:8092
 
 ### WebUI（可选）
 
-```bash
-python -m pip install -r requirements-web.txt
-python -m web.server
-```
-
-WebUI 默认监听 `127.0.0.1:8092`，提供中英双语配置、开始/停止、批次统计、实时日志、代理池节点状态、订阅解析统计、重新加载和手动测试。
+启动命令见[快速开始](#快速开始)。WebUI 默认监听 `127.0.0.1:8092`，提供中英双语配置、开始/停止、批次统计、实时日志、代理池节点状态、订阅解析统计、重新加载和手动测试。
 
 ### GUI
 
-```bash
-python grok_register_ttk.py
-```
-
-GUI 可以直接配置主要邮箱、代理、代理池、多线程和注册参数，然后点击“开始注册”。
+启动命令见[快速开始](#快速开始)。GUI 可以直接配置主要邮箱、代理、代理池、多线程和注册参数，然后点击“开始注册”。
 
 ### CLI
 
@@ -318,14 +309,14 @@ email----password----clientId----refreshToken----auto
 
 最后一列可选，支持 `auto` / `imap` / `graph`；省略时默认 `auto`。也兼容用 `|` 分隔的相同字段。`password` 字段会保留在池记录中，但验证码读取使用 `clientId + refreshToken` 获取 OAuth2 access token。
 
-- `auto`：提交邮箱前分别为 IMAP 与 Microsoft Graph 建立独立的发送前游标；轮询时只启用真正完成预检的通道，两者均可用时同时轮询。
+- `auto`：提交邮箱前分别建立 IMAP 与 Graph 的发送前游标；每轮**依次检查**通过预检的通道，并非并行执行。
 - `imap`：通过 `outlook.office365.com:993` + XOAUTH2 读取收件箱、垃圾邮件、归档等常见文件夹；使用 `UIDVALIDITY + UID` 作为稳定增量游标，而不是易受删除/移动邮件影响的邮件数量或 sequence number。文件夹 LIST 结果和预检阶段的 IMAP 连接/access token 会在短暂验证码窗口内复用，断线或认证失效时再重连/刷新。
 - `graph`：通过 Microsoft Graph 同时监控 `Inbox` 与 `JunkEmail`；使用 immutable message ID + `receivedDateTime` 的发送前游标，日常轮询只拉取轻量消息前沿，确认有新邮件后才读取正文。
 - Microsoft OAuth/Graph 对超时、连接错误、`429` 和 `5xx` 做有限重试；`429` 优先遵守 `Retry-After`，其余使用带 jitter 的指数退避，并限制 Microsoft HTTP 并发。
 - 验证码仅在明确验证码语境，或发件人确认为 xAI/Grok 官方域名时提取，避免把普通工单号等 `ABC-123` 文本误识别成 OTP。
 - 每个邮箱在单次注册任务中最多领取一次；多线程 worker 共用同一个任务级分配器。邮箱会话使用一次性 opaque handle，开始取码后即失效，取码结束立即释放内存中的邮箱状态/access token。
 - 无法建立安全发送前游标的邮箱不会提交注册；若请求注册数量大于邮箱池有效账号数，本次任务会自动限制为邮箱池容量。
-- Outlook refresh token / access token 不会写入 `mail_credentials.txt`、普通日志或 `config.json`。邮箱池文件会尽量以 `0600` 权限原子写入，并已加入 `.gitignore`。
+- Outlook 的 access token / refresh token 不会写入 `mail_credentials.txt` 或 `config.json`；OAuth 刷新返回新 refresh token 时，会尝试更新邮箱池文件。邮箱池原子写入并尽量设为 `0600`，且已加入 `.gitignore`。
 
 GUI 的“管理 Outlook 邮箱池”和 WebUI 邮箱池编辑区都提供健康检查，可在不触发 xAI 注册的情况下验证各邮箱的 IMAP/Graph 可用性；检查结果只返回邮箱、模式、通道状态和文件夹等安全元数据。Web 接口仅监听本机，并对邮箱池相关响应设置 `no-store`。
 
@@ -421,14 +412,7 @@ Cloud Mail 的 Public Token 直接放在 `Authorization` 请求头中，不需�
   "proxy_mode": "pool",
   "proxy_fallback": "none",
   "proxy_pool_file": "./proxies.txt",
-  "proxy_pool_subscription_url": "",
-  "proxy_pool_endpoint_mode": "auto",
-  "proxy_pool_max_concurrent_per_node": 1,
-  "proxy_protocol_backend": "auto",
-  "proxy_singbox_path": "",
-  "proxy_protocol_start_timeout_sec": 10,
-  "proxy_runtime_idle_ttl_sec": 120,
-  "proxy_runtime_cache_max": 32
+  "proxy_pool_subscription_url": ""
 }
 ```
 
@@ -445,18 +429,9 @@ tuic://...
 ss://...
 ```
 
-当前支持：
+支持 HTTP(S)、SOCKS4/5、VLESS、VMess、Trojan、Hysteria2、TUIC 和 Shadowsocks，可使用本地文件或 HTTP(S) 订阅（含 Base64）。支持固定/旋转入口、`{account}`、节点探测、冷却与并发限制。
 
-- HTTP / HTTPS / SOCKS / SOCKS4 / SOCKS4A / SOCKS5 / SOCKS5H
-- VLESS / VMess / Trojan / Hysteria2 (`hy2`) / TUIC / Shadowsocks (`ss`)
-- 本地文件与 HTTP/HTTPS 订阅
-- 标准 Base64 与 URL-safe Base64 订阅
-- VLESS/VMess/Trojan 常见 TCP/WS/gRPC/HTTP/HTTPUpgrade/QUIC transport
-- VLESS TLS / uTLS / Reality 常见参数
-- 节点解析统计、健康探测、失败冷却和自动恢复
-- 固定/旋转入口、`{account}`、并发限制和账号级稳定 Proxy Lease
-
-代理 runtime 采用 lazy + idle cache 机制：节点只有在实际被选中、probe 或 preflight 时才建立本地 runtime。需要统一 HTTP 出口的原生代理会使用 `LocalProxyBridge`；VLESS / VMess / Trojan / Hysteria2 / TUIC / Shadowsocks 使用 sing-box。Lease 引用数降为 0 后 runtime 默认不会立即退出，而是进入空闲缓存；默认 `proxy_runtime_idle_ttl_sec=120`、`proxy_runtime_cache_max=32`，TTL 到期、缓存淘汰或 Manager shutdown 时才会关闭。设置 `proxy_runtime_idle_ttl_sec=0` 可恢复零引用立即关闭。
+代理按需启动：HTTP/SOCKS 通过原生出口或 `LocalProxyBridge`，高级协议使用 sing-box；空闲 runtime 默认缓存 120 秒、最多 32 个（可在配置中调整）。
 
 同一个账号 attempt 内，浏览器、邮箱、NSFW 和默认 CPA 保持同一个 Lease。等待验证码期间若确认尚未取得可用验证码，会在同一个 Lease 内更换邮箱重试；一旦进入验证码填写/提交阶段，后续异常不会再通过换邮箱或换代理重放注册，而会按“结果不确定”处理。
 
@@ -464,16 +439,7 @@ ss://...
 
 ## 可选多线程注册
 
-默认关闭：
-
-```json
-{
-  "multi_thread_enabled": false,
-  "multi_thread_workers": 4
-}
-```
-
-需要并发时：
+默认关闭；需要并发时：
 
 ```json
 {
@@ -524,6 +490,8 @@ ss://...
 
 ## CPA / xAI OIDC 导出
 
+**默认开启**，但属于注册成功后的独立 OAuth 后处理，可能延长单个 worker 的运行时间。不需要时设置 `cpa_export_enabled=false`。
+
 ```json
 {
   "cpa_export_enabled": true,
@@ -554,7 +522,7 @@ ss://...
 | `accounts_*.txt` | 已成功保存的账号、密码和 SSO token |
 | `<sso_risk_rejected_file>` | 被 `botFlagSource=1/2` 或 `policy=deny` 隔离的 SSO；默认 `./sso_risk_rejected.txt` |
 | `mail_credentials.txt` | 注册过程中创建的临时邮箱地址与邮箱凭据；邮箱创建后会在提交注册前提前持久化，因此可能包含后续失败、重试或结果不确定 attempt 的记录 |
-| `accounts_*.txt.pending.jsonl` | 已注册成功但主账号结果文件未成功写入的普通账号 pending；可使用 `retry-pending` 恢复 |
+| `accounts_*.txt.pending.jsonl` | 主账号结果保存失败后尝试写入的恢复队列；成功入队后可用 `retry-pending` 恢复 |
 | `<sso_risk_rejected_file>.pending.jsonl` | 风控账号写入主隔离文件失败后的独立 risk pending；不要使用普通 `retry-pending` 恢复 |
 | `<grok2api_local_token_file>` | 可选 grok2api 本地 token 池；留空时默认项目目录下 `token.json` |
 | `<cpa_auth_dir>/xai-*.json` | 可选 CPA xAI OIDC 凭证；默认目录 `./cpa_auths` |
@@ -585,15 +553,18 @@ python grok_register_ttk.py retry-pending <pending文件> [输出文件]
 ├── proxy_bridge.py            # HTTP/HTTPS/SOCKS → localhost HTTP 代理桥与 Chromium 兼容
 ├── proxy_protocols.py         # HTTP/SOCKS/VLESS/VMess/Trojan/HY2/TUIC/SS 订阅解析
 ├── proxy_protocol_runtime.py  # Native bridge / sing-box lazy runtime 与 idle cache
-├── mail_service.py            # 四种邮箱服务
+├── mail_service.py            # 四种临时邮箱服务
 ├── app_config.py              # 默认配置、校验、加载与保存
 ├── account_outputs.py         # 账号、pending 与 token 输出
-├── sso_risk.py                # SSO botFlag / policy 早停
+├── sso_risk.py                # SSO 风控筛查与隔离
+├── outlook_mail.py            # Outlook IMAP / Graph 验证码读取
+├── outlook_mailbox_pool.py    # Outlook 邮箱池管理与 OAuth token 更新
 ├── cpa_export.py              # CPA/OIDC 导出入口
 ├── cpa_xai/                   # CPA 浏览器、OAuth、代理辅助与凭证写入
 ├── web/
 │   ├── server.py              # FastAPI WebUI 控制层
 │   ├── index.html             # WebUI 页面
+│   ├── outlook-mailbox.js     # Outlook 邮箱池 WebUI 交互
 │   ├── proxy-pool.js          # 代理池 WebUI 交互
 │   └── proxy-pool.css         # 代理池 WebUI 样式
 ├── docs/proxy-pool.md         # 代理池详细说明
@@ -643,7 +614,7 @@ WebUI 会显示订阅协议数量和解析错误。无法映射的 transport 或
 
 ### 为什么账号会进入 pending？
 
-普通 `accounts_*.txt.pending.jsonl` 表示注册已经完成，但主账号结果文件没有成功写入；使用 `retry-pending` 恢复即可，不需要重新注册。
+普通 `accounts_*.txt.pending.jsonl` 记录的是已注册但主结果文件写入失败的账号，可用 `retry-pending` 恢复，不需要重新注册。如果该文件也无法写入，程序会记录错误并停止下游发布，无法通过此命令恢复。
 
 如果是 `<sso_risk_rejected_file>.pending.jsonl`，则表示账号已经明确命中风控，但主隔离文件写入失败。这是独立 risk pending，不能使用普通 `retry-pending`。
 
