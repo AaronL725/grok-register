@@ -290,7 +290,7 @@ def acquire_mint_browser(proxy: Optional[str] = None, headless: bool = False, re
         state.update({"browser": browser, "page": page, "served": 0, "proxy": proxy_key, "headless": bool(headless)})
         return browser, page, False
     try:
-        clear_page_session(state["page"], browser=state["browser"], log=logger)
+        state["page"] = clear_page_session(state["page"], browser=state["browser"], log=logger)
     except Exception as exc:
         # A failed cleanup must never hand a previous account's session to the next.
         logger("mint session cleanup failed, recreating browser: %s" % exc)
