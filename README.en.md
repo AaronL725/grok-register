@@ -51,7 +51,7 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
 - [Acknowledgments](#acknowledgments)
 - [Star History](#star-history)
 
-## Sponsor
+## Sponsors
 
 <table width="100%">
   <tr>
