@@ -53,26 +53,45 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
 
 ## Sponsor
 
-<div align="center">
-
-<a href="https://www.ipwo.net/?ref=githubgrokregister">
-  <img alt="IPWO Residential Proxies" src="./assets/ipwo-banner.png" />
-</a>
-
-</div>
-
-<p><sub>Need stable residential IPs? Try <a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a> residential proxies.</sub></p>
-
-<p><sub>
-Coverage across 195+ countries and regions<br>
-Real residential IP resources<br>
-Flexible IP rotation<br>
-HTTP / HTTPS / SOCKS5 support
-</sub></p>
-
-<p><sub>Suitable for automation registration, account management, data collection, and cross-border business scenarios, with flexible integration into browser automation tools and proxy pools. Free trial available. Discount code: <strong><code>0205</code></strong></sub></p>
-
-<p><sub>For advertising partnerships, contact me at: 2309501984</sub></p>
+<table width="100%">
+  <tr>
+    <td width="50%" align="center" valign="middle">
+      <a href="https://www.ipwo.net/?ref=githubgrokregister">
+        <img alt="IPWO Residential Proxies" src="./assets/ipwo-banner.png" width="100%" />
+      </a>
+    </td>
+    <td width="50%" align="center" valign="middle">
+      <a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">
+        <img alt="ProxyLane Residential Proxies" src="./assets/proxylane-banner.png" width="100%" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <p><sub>Need stable residential IPs? Try <a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a> residential proxies.</sub></p>
+      <p><sub>
+        Coverage across 195+ countries and regions<br>
+        Genuine residential IP resources<br>
+        Flexible IP rotation<br>
+        HTTP / HTTPS / SOCKS5 support
+      </sub></p>
+      <p><sub>Suitable for automated registration, account management, data collection, and cross-border operations. Integrates with browser automation tools and proxy pools. Free trial available. Discount code: <strong><code>0205</code></strong></sub></p>
+    </td>
+    <td valign="top">
+      <p><sub>Need one dedicated residential IP per account? Try <a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">ProxyLane</a> residential proxies.</sub></p>
+      <p><sub>
+        Coverage in 195 countries, with city, ISP, and ASN targeting<br>
+        95%+ of IPs rated low risk by Scamalytics<br>
+        Supports the <strong><code>{account}</code></strong> placeholder to assign a dedicated residential IP to each registration:<br>
+        <code>http://&#8203;USER_c_US_s_&#8203;{account}&#8203;:PASS@&#8203;us.gw.&#8203;proxylane.&#8203;dev:10000</code><br>
+        Chinese-language interface and USDT payments; use <strong><code>GROKREG30</code></strong> for 30% off your first purchase
+      </sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2"><sub>For advertising partnerships, contact me: <strong><code>2309501984</code></strong></sub></td>
+  </tr>
+</table>
 
 ## Features
 
