@@ -140,41 +140,13 @@ def _mint_tls_get():
     return state
 
 def clear_page_session(page: Any, browser: Optional[Any] = None, log: Optional[LogFn] = None) -> None:
-    logger = log or _noop_log
-    try:
-        if page is not None:
-            try:
-                page.get("about:blank")
-            except Exception:
-                pass
-            for javascript in (
-                "try{localStorage.clear()}catch(e){}",
-                "try{sessionStorage.clear()}catch(e){}",
-            ):
-                try:
-                    page.run_js(javascript)
-                except Exception:
-                    pass
-        for target in (page, browser):
-            if target is None:
-                continue
-            try:
-                target.set.cookies.clear()  # type: ignore[attr-defined]
-                logger("mint session cookies cleared")
-                break
-            except Exception:
-                try:
-                    cookies = target.cookies()
-                    if isinstance(cookies, list):
-                        for cookie in cookies:
-                            try:
-                                target.set.cookies.remove(cookie)  # type: ignore[attr-defined]
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-    except Exception as exc:
-        logger("clear_page_session: %s" % exc)
+    """Clear each authenticated origin before reusing a browser for another account."""
+    for origin in ("https://accounts.x.ai", "https://auth.x.ai", "https://grok.com"):
+        page.run_cdp("Storage.clearDataForOrigin", origin=origin,
+                     storageTypes="local_storage,session_storage")
+    (browser or page).set.cookies.clear()
+    page.get("about:blank")
+    (log or _noop_log)("mint browser site storage and cookies cleared")
 
 def normalize_cookies(cookies: Any):
     output = []
@@ -314,7 +286,15 @@ def acquire_mint_browser(proxy: Optional[str] = None, headless: bool = False, re
         browser, page = create_standalone_page(proxy=proxy, headless=headless, log=logger)
         state.update({"browser": browser, "page": page, "served": 0, "proxy": proxy_key, "headless": bool(headless)})
         return browser, page, False
-    clear_page_session(state["page"], browser=state["browser"], log=logger)
+    try:
+        clear_page_session(state["page"], browser=state["browser"], log=logger)
+    except Exception as exc:
+        # A failed cleanup must never hand a previous account's session to the next.
+        logger("mint session cleanup failed, recreating browser: %s" % exc)
+        close_standalone(state["browser"])
+        browser, page = create_standalone_page(proxy=proxy, headless=headless, log=logger)
+        state.update({"browser": browser, "page": page, "served": 0, "proxy": proxy_key, "headless": bool(headless)})
+        return browser, page, False
     return state["browser"], state["page"], False
 
 def release_mint_browser(owned: bool, success: bool, log: Optional[LogFn] = None) -> None:
