@@ -102,10 +102,11 @@ def test_cpa_default_direct_mode_ignores_configured_proxy():
 def test_cpa_explicit_empty_proxy_ignores_ambient_environment():
     with patch.dict(os.environ, {"HTTPS_PROXY": "http://environment:9000"}):
         assert proxyutil.resolve_proxy("") == ""
-        opener = oauth_device._build_opener("")
-        handlers = [x for x in opener.handlers if isinstance(x, oauth_device.urllib.request.ProxyHandler)]
-        assert len(handlers) == 1
-        assert handlers[0].proxies == {}
+        with patch.object(oauth_device.urllib.request, "build_opener") as build:
+            oauth_device._build_opener("")
+        handler = build.call_args.args[0]
+        assert isinstance(handler, oauth_device.urllib.request.ProxyHandler)
+        assert handler.proxies == {}
 
 
 def test_session_storage_is_cleared_for_all_authenticated_origins():
