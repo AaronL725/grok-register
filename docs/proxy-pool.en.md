@@ -2,7 +2,7 @@
 
 <p><a href="proxy-pool.md">简体中文</a> | <strong>English</strong></p>
 
-The proxy pool is an optional network layer for the main registration flow. By default, `proxy_mode=auto` preserves the legacy single-proxy/direct behavior from older configurations. Account-level `ProxyLease`, node scheduling, probing, and health feedback are enabled only when `single` or `pool` is explicitly selected.
+The proxy pool is an optional network layer. By default, `proxy_mode=auto` uses the configured `proxy` or a direct connection when empty. Selecting `single` or `pool` enables account-level Proxy Leases, node scheduling, and health feedback.
 
 ## Core Principles
 
@@ -93,48 +93,20 @@ Chromium / curl_cffi / Mail / NSFW / CPA OAuth / CPA Browser / Probe / Preflight
 | `direct` | A new attempt may fall back to a direct connection if Lease acquisition fails or times out. |
 | `single` | A new attempt may fall back to `proxy` if Lease acquisition fails or times out. |
 
-Fallback occurs only before a new account attempt begins. It never silently changes IP during an in-progress registration flow.
+Fallback is applied only before a new attempt, never in the middle of a registration.
 
-## Registration Safe-Retry Boundary
+`proxy_pool_endpoint_mode` supports `fixed`, `rotating`, and `auto` (default). In `auto`, **only native proxy URIs containing `{account}`** are classified as rotating gateways; other nodes are treated as fixed.
 
-The managed registration flow tracks the current stage:
+## Registration Stages and Safe Retries
 
-```text
-lease_acquire
-browser_start
-page_open
-email_submit
-code_wait
-code_submit
-profile_submit
-sso_wait
-account_confirmed
-postprocess
-```
+| Stage | Handling |
+| --- | --- |
+| `lease_acquire` / `browser_start` / `page_open` | **SAFE_NEW_LEASE**: before email submission, the Lease may be released and the attempt retried within limits |
+| `code_wait` | **SAME_LEASE_RECOVERY**: only if no code was obtained, retry with a new email while retaining the Lease |
+| `email_submit` / `code_submit` / `profile_submit` / `sso_wait` | **OUTCOME_UNCERTAIN**: do not replay registration through another email or proxy |
+| `account_confirmed` / `postprocess` | **NO_RETRY**: do not re-register an already confirmed account |
 
-Retry rules:
-
-```text
-lease_acquire / browser_start / page_open
-→ SAFE_NEW_LEASE
-→ release the old Lease and restart is allowed
-
-code_wait
-→ SAME_LEASE_RECOVERY
-→ keep the current Lease, switch email, restart the browser, and continue
-
-email_submit / code_submit / profile_submit / sso_wait
-→ OUTCOME_UNCERTAIN
-→ do not replay the full registration by switching email or proxy
-
-account_confirmed / postprocess
-→ NO_RETRY
-→ a confirmed account is not registered again
-```
-
-This avoids replaying a registration through a new IP after a submission may already have reached the server but the local client lost the response, reducing duplicate accounts and duplicate submissions. Only when the flow is still at `code_wait` and no usable verification code has been obtained may recovery switch the email address while keeping the same account Lease. Once `code_submit` begins, an unconfirmed submission result is counted as outcome uncertain and email retries no longer bypass the safe-retry boundary.
-
-The WebUI additionally tracks an `uncertain` count.
+A stateful stage is marked **before** the submission attempt: if the server may have received it, an unconfirmed result is counted as `uncertain` instead of being replayed. The WebUI displays this count.
 
 ## Supported Protocols
 
@@ -191,14 +163,7 @@ SOCKS4 / SOCKS4A likewise preserve local / remote DNS semantics respectively.
 
 Runtimes are still created lazily; a large subscription does not cause a large number of bridge / sing-box runtimes to start all at once.
 
-After the reference count drops to 0, the runtime enters the idle cache by default:
-
-```text
-proxy_runtime_idle_ttl_sec = 120
-proxy_runtime_cache_max = 32
-```
-
-If the same node is acquired again within the TTL, the runtime can be reused directly. Once the TTL expires or the idle-cache limit is exceeded, the least recently used runtime is cleaned up. Set `proxy_runtime_idle_ttl_sec=0` to restore immediate shutdown at zero references. Manager shutdown closes all remaining runtimes.
+After its reference count reaches 0, a runtime is cached for **120 seconds, up to 32 entries** by default (`proxy_runtime_idle_ttl_sec`, `proxy_runtime_cache_max`). It can be reused until expiry, eviction, or Manager shutdown. Set the TTL to `0` for immediate shutdown.
 
 ## Base64, Subscription Refresh, and Last-Known-Good
 
@@ -244,22 +209,7 @@ This option is disabled by default so local research environments can continue t
 
 ## Probe: IPv4 / IPv6 and False-Positive Protection
 
-Supported settings:
-
-```text
-proxy_pool_probe_provider = cloudflare | ipinfo
-proxy_pool_probe_dual_stack = true | false
-```
-
-With dual-stack enabled, IPv4 and IPv6 are probed independently and store:
-
-```text
-status
-tested_at
-latency_ms
-exit_ip
-error
-```
+`proxy_pool_probe_provider` supports `cloudflare` and `ipinfo`. With `proxy_pool_probe_dual_stack=true` (default), IPv4 and IPv6 are probed independently, retaining status, timestamp, latency, exit IP, and error per family.
 
 If one family works and the other fails, the node may still be considered usable while retaining the independent results for both families.
 
@@ -372,7 +322,7 @@ ProxyPool prioritizes these structured diagnostics for classification; string ma
 
 ## NSFW / CPA Post-Processing
 
-NSFW or CPA failures do not discard or re-register an account that was already registered successfully.
+NSFW or CPA failures do not discard or re-register confirmed accounts. **CPA export is enabled by default and runs synchronously**; unless an explicit `cpa_proxy` is set, it holds the registration worker and Proxy Lease until export finishes.
 
 - Explicit proxy transport error → feed back into the corresponding proxy category.
 - TLS/EOF/timeout → treat as suspected and reprobe immediately before deciding whether to penalize.
@@ -444,6 +394,6 @@ Under the project's current local-use model, the WebUI, status API, and related 
 
 ## Compatibility Boundary
 
-The V3 behavior described here is concentrated in managed `single` / `pool` mode. The default `proxy_mode=auto` continues to preserve the legacy GUI/CLI/WebUI, email, result persistence, pending, token sync, and proxy behavior.
+Lease management and health scheduling apply to `single` / `pool`. Default `auto` preserves the existing single-proxy/direct path without changing GUI/CLI/WebUI, mailbox, output, or pending behavior.
 
 Ordinary HTTP/SOCKS does not start sing-box merely because advanced-protocol support exists. VLESS/VMess/Trojan/Hysteria2/TUIC/Shadowsocks require sing-box only when actually acquired, probed, or preflighted.
