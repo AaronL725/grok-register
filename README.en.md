@@ -89,6 +89,30 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
     </td>
   </tr>
   <tr>
+    <td width="50%" align="center" valign="middle">
+      <a href="https://www.rapidproxy.io/?ref=grok">
+        <img alt="RapidProxy Residential Proxies" src="./assets/rapidproxy-banner.png" width="100%" />
+      </a>
+    </td>
+    <td width="50%" align="center" valign="middle">
+      <p><sub>Advertising space available</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <p><sub><a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a> | Stable network connectivity for automation</sub></p>
+      <p><sub>From browser automation to multi-account environments, <a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a> provides flexible, reliable global residential proxies for network access across regions.</sub></p>
+      <p><sub>
+        70M+ real residential IPs · Smart rotation · Sticky sessions<br>
+        HTTP(S) / SOCKS5 support, non-expiring traffic, and easy integration with Python, Playwright, and other automation tools.
+      </sub></p>
+      <p><sub>From $0.55/GB | Free trial | 10% off with <strong><code>RAPID10</code></strong><br>
+        <a href="https://www.rapidproxy.io/?ref=grok">Try RapidProxy now</a>
+      </sub></p>
+    </td>
+    <td valign="top"></td>
+  </tr>
+  <tr>
     <td colspan="2"><sub>For advertising partnerships, contact me: <strong><code>2309501984</code></strong></sub></td>
   </tr>
 </table>
