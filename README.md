@@ -94,9 +94,7 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
         <img alt="RapidProxy住宅代理" src="./assets/rapidproxy-banner.png" width="100%" />
       </a>
     </td>
-    <td width="50%" align="center" valign="middle">
-      <p><sub>广告位招募中</sub></p>
-    </td>
+    <td width="50%" align="center" valign="middle"></td>
   </tr>
   <tr>
     <td valign="top">
@@ -110,7 +108,9 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
         立即体验RapidProxy
       </sub></p>
     </td>
-    <td valign="top"></td>
+    <td width="50%" align="center" valign="top">
+      <img alt="Grok Register 项目横幅" src="./assets/banner.png" width="100%" />
+    </td>
   </tr>
   <tr>
     <td colspan="2"><sub>广告合作请联系我：<strong><code>2309501984</code></strong></sub></td>
