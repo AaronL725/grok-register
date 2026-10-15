@@ -94,9 +94,7 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
         <img alt="RapidProxy Residential Proxies" src="./assets/rapidproxy-banner.png" width="100%" />
       </a>
     </td>
-    <td width="50%" align="center" valign="middle">
-      <p><sub>Advertising space available</sub></p>
-    </td>
+    <td width="50%" align="center" valign="middle"></td>
   </tr>
   <tr>
     <td valign="top">
@@ -110,7 +108,9 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
         Try RapidProxy now
       </sub></p>
     </td>
-    <td valign="top"></td>
+    <td width="50%" align="center" valign="top">
+      <img alt="Grok Register project banner" src="./assets/banner.png" width="100%" />
+    </td>
   </tr>
   <tr>
     <td colspan="2"><sub>For advertising partnerships, contact me: <strong><code>2309501984</code></strong></sub></td>
