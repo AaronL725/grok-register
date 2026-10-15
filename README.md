@@ -89,6 +89,30 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
     </td>
   </tr>
   <tr>
+    <td width="50%" align="center" valign="middle">
+      <a href="https://www.rapidproxy.io/?ref=grok">
+        <img alt="RapidProxy住宅代理" src="./assets/rapidproxy-banner.png" width="100%" />
+      </a>
+    </td>
+    <td width="50%" align="center" valign="middle">
+      <p><sub>广告位招募中</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <p><sub><a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a>｜为自动化任务提供稳定的网络连接</sub></p>
+      <p><sub>从浏览器自动化到多账号环境管理，<a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a>提供灵活可靠的全球住宅代理资源，满足不同地区的网络访问需求。</sub></p>
+      <p><sub>
+        7000万+真实住宅IP · 智能轮换 · 粘性会话<br>
+        支持HTTP(S) / SOCKS5，流量不过期，轻松适配Python、Playwright等自动化工具。
+      </sub></p>
+      <p><sub>$0.55/GB 起｜免费试用｜<strong><code>RAPID10</code></strong> 专享9折<br>
+        <a href="https://www.rapidproxy.io/?ref=grok">立即体验RapidProxy</a>
+      </sub></p>
+    </td>
+    <td valign="top"></td>
+  </tr>
+  <tr>
     <td colspan="2"><sub>广告合作请联系我：<strong><code>2309501984</code></strong></sub></td>
   </tr>
 </table>
