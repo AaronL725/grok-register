@@ -101,13 +101,13 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
   <tr>
     <td valign="top">
       <p><sub><a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a> | Stable network connectivity for automation</sub></p>
-      <p><sub>From browser automation to multi-account environments, <a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a> provides flexible, reliable global residential proxies for network access across regions.</sub></p>
+      <p><sub>From browser automation to multi-account environments, RapidProxy provides flexible, reliable global residential proxies for network access across regions.</sub></p>
       <p><sub>
         70M+ real residential IPs · Smart rotation · Sticky sessions<br>
         HTTP(S) / SOCKS5 support, non-expiring traffic, and easy integration with Python, Playwright, and other automation tools.
       </sub></p>
       <p><sub>From $0.55/GB | Free trial | 10% off with <strong><code>RAPID10</code></strong><br>
-        <a href="https://www.rapidproxy.io/?ref=grok">Try RapidProxy now</a>
+        Try RapidProxy now
       </sub></p>
     </td>
     <td valign="top"></td>
