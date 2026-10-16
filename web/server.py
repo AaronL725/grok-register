@@ -169,12 +169,14 @@ async def protect_outlook_mailbox_api(request: Request, call_next):
 
 def _require_local_origin(request: Request) -> None:
     origin = str(request.headers.get("origin") or "").strip()
-    if not origin:
-        return
-    from urllib.parse import urlsplit
-    host = (urlsplit(origin).hostname or "").lower()
-    if host not in {"127.0.0.1", "localhost", "::1"}:
-        raise HTTPException(status_code=403, detail="Outlook 邮箱池只允许本地 WebUI 访问")
+    site = str(request.headers.get("sec-fetch-site") or "").lower()
+    if site and site not in {"none", "same-origin"}:
+        raise HTTPException(status_code=403, detail="仅允许同源 WebUI 请求")
+    if origin and (
+        request.url.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or origin != "%s://%s" % (request.url.scheme, request.url.netloc)
+    ):
+        raise HTTPException(status_code=403, detail="仅允许同源 WebUI 请求")
 
 
 @app.get("/health")
@@ -189,6 +191,7 @@ def get_config():
 
 @app.put("/api/config")
 async def put_config(request: Request):
+    _require_local_origin(request)
     updates = await request.json()
     if not isinstance(updates, dict):
         raise HTTPException(status_code=400, detail="配置更新必须是 JSON 对象")
@@ -304,7 +307,8 @@ def proxy_pool_status():
 
 
 @app.post("/api/proxy-pool/reload")
-def proxy_pool_reload():
+def proxy_pool_reload(request: Request):
+    _require_local_origin(request)
     from proxy_pool import get_manager
     kind = "proxy_reload"
     _begin_maintenance(kind)
@@ -323,7 +327,8 @@ def proxy_pool_reload():
 
 
 @app.post("/api/proxy-pool/test")
-def proxy_pool_test():
+def proxy_pool_test(request: Request):
+    _require_local_origin(request)
     from proxy_pool import get_manager
     kind = "proxy_test"
     _begin_maintenance(kind)
@@ -343,7 +348,8 @@ def proxy_pool_test():
 
 
 @app.post("/api/proxy-pool/preflight")
-def proxy_pool_preflight(node_id: str = Query(..., min_length=1)):
+def proxy_pool_preflight(request: Request, node_id: str = Query(..., min_length=1)):
+    _require_local_origin(request)
     from proxy_pool import get_manager
     kind = "proxy_preflight"
     _begin_maintenance(kind)
@@ -379,7 +385,8 @@ def logs(after: int = Query(default=0, ge=0)):
 
 
 @app.post("/api/start")
-def start():
+def start(request: Request):
+    _require_local_origin(request)
     global _job_thread, _controller
 
     with _job_lock:
@@ -438,7 +445,8 @@ def start():
 
 
 @app.post("/api/stop")
-def stop():
+def stop(request: Request):
+    _require_local_origin(request)
     with _job_lock:
         controller = _controller
         running = bool(_job_state["running"])
