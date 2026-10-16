@@ -78,15 +78,15 @@ class ProxyPoolV3Tests(unittest.TestCase):
         with patch.object(manager, "_start_bridge_entry", return_value=entry) as starter:
             endpoint, key = manager.acquire(descriptor)
             manager.release(key)
-            self.assertIn(key, manager._entries)
+            self.assertIn(descriptor.node_id, manager._entries)
             endpoint2, key2 = manager.acquire(descriptor)
             self.assertEqual(endpoint2, endpoint)
-            self.assertEqual(key2, key)
+            self.assertIs(key2, key)
             self.assertEqual(starter.call_count, 1)
             manager.release(key)
-            manager._entries[key].idle_since = time.time() - 121
+            manager._entries[descriptor.node_id].idle_since = time.time() - 121
             manager.cleanup_idle()
-            self.assertNotIn(key, manager._entries)
+            self.assertNotIn(descriptor.node_id, manager._entries)
         fake_bridge.stop.assert_called()
 
     def test_health_state_persistence_round_trip(self):
