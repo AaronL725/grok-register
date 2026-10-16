@@ -265,7 +265,7 @@ class ProtocolRuntimeManager:
                     current.idle_since = None
                     current.last_used = time.time()
                     endpoint = current.proxy_url
-                    runtime_key = descriptor.node_id
+                    runtime_key = current
                     self._condition.notify_all()
                     break
                 if descriptor.node_id not in self._starting:
@@ -287,7 +287,7 @@ class ProtocolRuntimeManager:
             entry.last_used = time.time()
             with self._condition:
                 self._entries[descriptor.node_id] = entry
-                return entry.proxy_url, descriptor.node_id
+                return entry.proxy_url, entry
         finally:
             with self._condition:
                 self._starting.discard(descriptor.node_id)
@@ -303,29 +303,29 @@ class ProtocolRuntimeManager:
         return self._acquire_runtime_entry(descriptor, self._start_entry)
 
     def release(self, runtime_key):
-        if not runtime_key:
+        if runtime_key is None:
             return
         stop_now = None
         with self._condition:
-            current = self._entries.get(runtime_key)
-            if current is None:
+            current = self._entries.get(runtime_key.node_id)
+            if current is not runtime_key:
                 return
             current.refcount = max(0, current.refcount - 1)
             current.last_used = time.time()
             if current.refcount == 0:
                 current.idle_since = current.last_used
                 if self.idle_ttl == 0:
-                    stop_now = self._entries.pop(runtime_key, None)
+                    stop_now = self._entries.pop(runtime_key.node_id, None)
             self._condition.notify_all()
         if stop_now is not None:
             self._stop_entry(stop_now)
 
     def diagnostic_for(self, runtime_key, max_age=15):
-        if not runtime_key:
+        if runtime_key is None:
             return None
         with self._condition:
-            entry = self._entries.get(runtime_key)
-            diagnostic = None if entry is None else entry.diagnostic()
+            entry = self._entries.get(runtime_key.node_id)
+            diagnostic = entry.diagnostic() if entry is runtime_key else None
         if not diagnostic:
             return None
         if time.time() - float(diagnostic.get("at") or 0) > float(max_age):
