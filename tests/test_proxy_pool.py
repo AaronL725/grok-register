@@ -82,7 +82,7 @@ class ProxyPoolTests(unittest.TestCase):
             proxy_mode="single", proxy="http://user-{account}:pass@127.0.0.1:8001",
             proxy_pool_endpoint_mode="auto", proxy_pool_probe_interval_sec=0,
         ))
-        with patch.object(manager._runtime, "acquire", return_value=("http://127.0.0.1:32100", "bridge-key")), patch.object(manager._runtime, "release"):
+        with patch.object(manager._runtime, "acquire", return_value=("http://127.0.0.1:32100", "bridge-key")), patch.object(manager._runtime, "release"), patch.object(manager._runtime, "diagnostic_for", return_value=None):
             lease = manager.acquire("a", "worker", 1, 1, "abc123", timeout=1)
             manager.report_transport_failure(lease, RuntimeError("proxy connect failed"))
             state = manager.snapshot()["nodes"][0]
