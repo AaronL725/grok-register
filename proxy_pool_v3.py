@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 
 from curl_cffi import requests
 
-from proxy_protocol_runtime import ProtocolRuntimeManager
+from proxy_protocol_runtime import ProtocolRuntimeManager, RuntimeEntry
 from proxy_protocols import ProxyDescriptor, ProxyProtocolError, parse_proxy_line, parse_subscription_source
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -102,7 +102,7 @@ class ProxyLease:
     session_key: str
     source_uri: str = ""
     protocol: str = ""
-    runtime_key: Optional[str] = None
+    runtime_key: Optional[RuntimeEntry] = None
     released: bool = False
     feedback_sampled: bool = False
     suspected_feedback: bool = False
