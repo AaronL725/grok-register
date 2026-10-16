@@ -43,13 +43,13 @@ class ProtocolRuntimeTests(unittest.TestCase):
         node = parse_proxy_line("socks5://user:pass@127.0.0.1:1080")
         endpoint, key = manager.acquire(node)
         self.assertTrue(endpoint.startswith("http://127.0.0.1:"))
-        self.assertEqual(key, node.node_id)
-        state = manager.active_snapshot()[key]
+        self.assertIs(key, manager._entries[node.node_id])
+        state = manager.active_snapshot()[node.node_id]
         self.assertEqual(state["kind"], "bridge")
         self.assertTrue(state["alive"])
         self.assertEqual(state["refcount"], 1)
         manager.release(key)
-        self.assertEqual(manager.active_snapshot()[key]["refcount"], 0)
+        self.assertEqual(manager.active_snapshot()[node.node_id]["refcount"], 0)
         manager.shutdown()
         self.assertEqual(manager.active_snapshot(), {})
 
@@ -85,8 +85,8 @@ class ProtocolRuntimeTests(unittest.TestCase):
             second, second_key = manager.acquire(node)
             self.assertEqual(first, "http://127.0.0.1:32001")
             self.assertEqual(second, first)
-            self.assertEqual(first_key, node.node_id)
-            self.assertEqual(second_key, node.node_id)
+            self.assertIs(first_key, entry)
+            self.assertIs(second_key, entry)
             self.assertEqual(start.call_count, 1)
             self.assertEqual(manager.active_snapshot()[node.node_id]["refcount"], 2)
             manager.release(first_key)
