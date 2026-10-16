@@ -293,8 +293,9 @@ class ProxyPoolManager:
         with self._lock:
             return sum(node.inflight for node in self._nodes.values())
 
-    def shutdown(self):
-        self._save_state_file()
+    def shutdown(self, persist=True):
+        if persist:
+            self._save_state_file()
         self._runtime.shutdown()
 
     def _load_state_file(self):
@@ -583,7 +584,7 @@ class ProxyPoolManager:
         try: return parse_proxy_line(_expand_account_placeholder(descriptor.canonical_uri, session_key))
         except ProxyProtocolError as exc: raise ProxyPoolError(str(exc)) from exc
 
-    def _fallback_lease_locked(self, worker_key, slot_index, attempt_index, affinity, session_key):
+    def _fallback_lease(self, worker_key, slot_index, attempt_index, affinity, session_key):
         if self.fallback == "direct":
             return ProxyLease("direct", "", worker_key, slot_index, attempt_index, affinity, session_key, protocol="direct")
         if self.fallback == "single":
@@ -625,8 +626,9 @@ class ProxyPoolManager:
         last_runtime_error = None
         while True:
             selected = None
+            fallback_reason = None
             with self._condition:
-                while selected is None:
+                while selected is None and fallback_reason is None:
                     if cancel_callback and cancel_callback():
                         raise ProxyAcquireCancelled("代理租约等待已取消")
                     now = time.time(); eligible = self._eligible_locked(now)
@@ -634,19 +636,24 @@ class ProxyPoolManager:
                         selected = self._select_locked(eligible, affinity); selected.inflight += 1; break
                     active_nodes = [node for node in self._nodes.values() if node.enabled and not node.retired]
                     if not active_nodes:
-                        fallback = self._fallback_lease_locked(worker_key, slot_index, attempt_index, affinity, session_key)
-                        if fallback is not None: return fallback
-                        detail = ": %s" % last_runtime_error if last_runtime_error else ""
-                        raise ProxyPoolError("代理池当前没有可用节点%s" % detail)
+                        fallback_reason = "empty"
+                        break
                     remaining = deadline - now
                     if remaining <= 0:
-                        fallback = self._fallback_lease_locked(worker_key, slot_index, attempt_index, affinity, session_key)
-                        if fallback is not None: return fallback
-                        raise ProxyAcquireTimeout("等待可用代理超时")
+                        fallback_reason = "timeout"
+                        break
                     wake_after = min(remaining, 1.0)
                     cooldowns = [node.cooldown_until for node in active_nodes if node.cooldown_until and node.cooldown_until > now]
                     if cooldowns: wake_after = min(wake_after, max(0.05, min(cooldowns) - now))
                     self._condition.wait(timeout=wake_after)
+            if fallback_reason is not None:
+                fallback = self._fallback_lease(worker_key, slot_index, attempt_index, affinity, session_key)
+                if fallback is not None:
+                    return fallback
+                if fallback_reason == "empty":
+                    detail = ": %s" % last_runtime_error if last_runtime_error else ""
+                    raise ProxyPoolError("代理池当前没有可用节点%s" % detail)
+                raise ProxyAcquireTimeout("等待可用代理超时")
             try:
                 endpoint, runtime_key = self._resolve_node_endpoint(selected, session_key)
                 return ProxyLease(selected.id, endpoint, worker_key, slot_index, attempt_index, affinity, session_key, source_uri=selected.descriptor.raw_uri, protocol=selected.protocol, runtime_key=runtime_key)
@@ -924,7 +931,7 @@ def get_manager(config=None, log=None):
         if _MANAGER is None:
             _MANAGER = ProxyPoolManager(config, log=log)
         elif _MANAGER.signature != signature and _MANAGER.total_inflight() == 0:
-            old = _MANAGER; _MANAGER = ProxyPoolManager(config, log=log); old.shutdown()
+            old = _MANAGER; _MANAGER = ProxyPoolManager(config, log=log); old.shutdown(persist=False)
         elif log is not None:
             _MANAGER.log = log; _MANAGER._runtime.log = log
         return _MANAGER
