@@ -153,3 +153,17 @@ def test_mousewheel_handler_scrolls_configuration_when_pointer_is_inside(root, m
     root.update_idletasks()
     after = gui.config_canvas.yview()
     assert after[0] > before[0]
+
+
+def test_gui_log_retention_and_batched_queue_processing(root):
+    gui = app.GrokRegisterGUI(root)
+    for i in range(3200):
+        gui.ui_queue.put(("log", f"log-entry-{i}"))
+    gui.process_ui_queue()
+    # Only a bounded number of events are handled per UI tick.
+    assert gui.ui_queue.qsize() >= 3000
+    for _ in range(16):
+        gui.process_ui_queue()
+    assert gui.ui_queue.empty()
+    assert int(gui.log_text.index("end-1c").split(".")[0]) <= 3002
+    assert "log-entry-3199" in gui.log_text.get("end-3l", "end")
