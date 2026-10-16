@@ -1223,15 +1223,15 @@ class GrokRegisterGUI:
         self.log(f"[*] 当前邮箱服务商: {self.email_provider_var.get()} | 注册数量: {self.count_var.get()}")
 
     def process_ui_queue(self):
+        log_lines = []
         try:
-            while True:
+            for _ in range(200):
                 event = self.ui_queue.get_nowait()
                 kind = event[0]
                 if kind == "log":
-                    line = event[1]
-                    self.log_text.insert(tk.END, f"{line}\n")
-                    self.log_text.see(tk.END)
+                    log_lines.append(event[1] + "\n")
                 elif kind == "clear_log":
+                    log_lines.clear()
                     self.log_text.delete(1.0, tk.END)
                 elif kind == "stats":
                     self.stats_var.set(
@@ -1263,6 +1263,12 @@ class GrokRegisterGUI:
         except Exception as exc:
             print(f"[!] UI 队列处理失败: {exc}", file=sys.stderr)
         finally:
+            if log_lines:
+                self.log_text.insert(tk.END, "".join(log_lines))
+                last_line = int(self.log_text.index("end-1c").split(".")[0])
+                if last_line > 3000:
+                    self.log_text.delete("1.0", f"{last_line - 3000}.0")
+                self.log_text.see(tk.END)
             try:
                 self.root.after(50, self.process_ui_queue)
             except Exception:
