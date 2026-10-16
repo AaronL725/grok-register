@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import time
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -186,7 +187,14 @@ def export_cpa_xai_for_account(email, password, page=None, cookies=None, sso=Non
             settings.hotload_dir.mkdir(parents=True, exist_ok=True)
             source = Path(result["path"])
             target = settings.hotload_dir / source.name
-            shutil.copy2(str(source), str(target))
+            fd, temporary = tempfile.mkstemp(prefix=".cpa-hotload-", suffix=".tmp", dir=str(settings.hotload_dir))
+            os.close(fd)
+            try:
+                shutil.copy2(str(source), temporary)
+                os.replace(temporary, target)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
             try:
                 os.chmod(str(target), 0o600)
             except Exception:
