@@ -12,6 +12,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import grok_register_ttk as engine
 
@@ -23,6 +24,12 @@ OUTLOOK_MAILBOX_JS = Path(__file__).resolve().parent / "outlook-mailbox.js"
 LOG_LIMIT = 2000
 
 app = FastAPI(title="grok-register WebUI", version="1.2")
+# TestClient uses "testserver"; production entrypoints bind to 127.0.0.1.
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["127.0.0.1", "localhost", "testserver"],
+    www_redirect=False,
+)
 
 _job_lock = threading.Lock()
 _job_thread: Optional[threading.Thread] = None
