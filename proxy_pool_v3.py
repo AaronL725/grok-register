@@ -274,6 +274,7 @@ class ProxyPoolManager:
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._refresh_lock = threading.Lock()
+        self._save_lock = threading.Lock()
         self._nodes = {}
         self._probe_events = {}
         self._last_refresh = 0.0
@@ -314,38 +315,39 @@ class ProxyPoolManager:
     def _save_state_file(self):
         if not self.persist_health:
             return
-        with self._lock:
-            nodes = {}
-            for node in self._nodes.values():
-                if node.retired:
-                    continue
-                nodes[node.id] = {
-                    "health": node.health, "business_samples": node.business_samples,
-                    "registration_successes": node.registration_successes, "transport_failures": node.transport_failures,
-                    "suspected_failures": node.suspected_failures, "configuration_failures": node.configuration_failures,
-                    "exit_successes": node.exit_successes, "exit_failures": node.exit_failures,
-                    "failure_count": node.failure_count, "cooldown_until": node.cooldown_until,
-                    "last_error": node.last_error, "last_success_at": node.last_success_at, "last_failure_at": node.last_failure_at,
-                }
-        directory = os.path.dirname(os.path.abspath(self.state_path))
-        os.makedirs(directory, exist_ok=True)
-        fd = path = None
-        try:
-            fd, path = tempfile.mkstemp(prefix=".proxy-state-", suffix=".json.tmp", dir=directory)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                fd = None
-                json.dump({"version": 1, "saved_at": time.time(), "nodes": nodes}, handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-                handle.flush(); os.fsync(handle.fileno())
-            os.replace(path, self.state_path)
-            path = None
-        finally:
-            if fd is not None:
-                try: os.close(fd)
-                except Exception: pass
-            if path:
-                try: os.unlink(path)
-                except Exception: pass
+        with self._save_lock:
+            with self._lock:
+                nodes = {}
+                for node in self._nodes.values():
+                    if node.retired:
+                        continue
+                    nodes[node.id] = {
+                        "health": node.health, "business_samples": node.business_samples,
+                        "registration_successes": node.registration_successes, "transport_failures": node.transport_failures,
+                        "suspected_failures": node.suspected_failures, "configuration_failures": node.configuration_failures,
+                        "exit_successes": node.exit_successes, "exit_failures": node.exit_failures,
+                        "failure_count": node.failure_count, "cooldown_until": node.cooldown_until,
+                        "last_error": node.last_error, "last_success_at": node.last_success_at, "last_failure_at": node.last_failure_at,
+                    }
+            directory = os.path.dirname(os.path.abspath(self.state_path))
+            os.makedirs(directory, exist_ok=True)
+            fd = path = None
+            try:
+                fd, path = tempfile.mkstemp(prefix=".proxy-state-", suffix=".json.tmp", dir=directory)
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    fd = None
+                    json.dump({"version": 1, "saved_at": time.time(), "nodes": nodes}, handle, ensure_ascii=False, indent=2)
+                    handle.write("\n")
+                    handle.flush(); os.fsync(handle.fileno())
+                os.replace(path, self.state_path)
+                path = None
+            finally:
+                if fd is not None:
+                    try: os.close(fd)
+                    except Exception: pass
+                if path:
+                    try: os.unlink(path)
+                    except Exception: pass
 
     def _restore_node_state(self, node):
         saved = self._persisted_state.get(node.id)
