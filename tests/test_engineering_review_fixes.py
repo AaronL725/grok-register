@@ -2,6 +2,7 @@
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -65,6 +66,56 @@ class ProxyManagerRegressionTests(unittest.TestCase):
             self.assertEqual(saved_ids, current_ids)
             self.assertNotIn(next(iter(old._nodes)), saved_ids)
             reset_manager()
+
+    def test_concurrent_saves_cannot_overwrite_newer_health_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            cfg = dict(DEFAULT_CONFIG, proxy_mode="single",
+                       proxy="http://127.0.0.1:8011",
+                       proxy_pool_state_file=str(path), proxy_pool_persist_health=True,
+                       proxy_pool_probe_interval_sec=0)
+            manager = ProxyPoolManager(cfg)
+            node = next(iter(manager._nodes.values()))
+            first_at_replace = threading.Event()
+            release_first = threading.Event()
+            second_at_replace = threading.Event()
+            original_replace = os.replace
+            replace_count = 0
+
+            def staged_replace(source, target):
+                nonlocal replace_count
+                replace_count += 1
+                if replace_count == 1:
+                    first_at_replace.set()
+                    if not release_first.wait(5):
+                        raise AssertionError("first save remained blocked")
+                else:
+                    second_at_replace.set()
+                return original_replace(source, target)
+
+            with patch("proxy_pool_v3.os.replace", side_effect=staged_replace):
+                with manager._lock:
+                    node.health = 0.2
+                first = threading.Thread(target=manager._save_state_file)
+                first.start()
+                try:
+                    self.assertTrue(first_at_replace.wait(3))
+                    with manager._lock:
+                        node.health = 0.9
+                    second = threading.Thread(target=manager._save_state_file)
+                    second.start()
+                    # Without a write lock, the newer save overtakes the first.
+                    second_at_replace.wait(0.5)
+                finally:
+                    release_first.set()
+                    first.join(5)
+                    if "second" in locals():
+                        second.join(5)
+                self.assertFalse(first.is_alive())
+                self.assertFalse(second.is_alive())
+
+            saved = json.loads(path.read_text(encoding="utf-8"))["nodes"]
+            self.assertEqual(saved[node.id]["health"], 0.9)
 
     def test_fallback_runtime_initializes_outside_pool_lock(self):
         with tempfile.TemporaryDirectory() as directory:
