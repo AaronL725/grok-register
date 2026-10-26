@@ -9,6 +9,11 @@ from cpa_xai.proxyutil import (
     prepare_chromium_proxy,
     proxy_for_chromium,
 )
+from proxy_bridge import (
+    parse_proxy_url as _parse_proxy_url,
+    proxy_has_auth as _proxy_has_auth,
+    safe_proxy_port as _safe_proxy_port,
+)
 from proxy_pool import (
     ProxyTransportError,
     current_proxy_lease,
@@ -54,30 +59,6 @@ def get_configured_proxy():
 def get_proxies():
     proxy = get_configured_proxy()
     return {"http": proxy, "https": proxy} if proxy else {}
-
-
-def _parse_proxy_url(proxy):
-    raw = str(proxy or "").strip()
-    if not raw:
-        return None
-    if "://" not in raw:
-        raw = "http://" + raw
-    try:
-        return urllib.parse.urlsplit(raw)
-    except Exception:
-        return None
-
-
-def _safe_proxy_port(parsed):
-    try:
-        return parsed.port
-    except Exception:
-        return None
-
-
-def _proxy_has_auth(proxy):
-    parsed = _parse_proxy_url(proxy)
-    return bool(parsed and parsed.hostname and (parsed.username is not None or parsed.password is not None))
 
 
 def _strip_proxy_auth(proxy):
