@@ -102,15 +102,13 @@ def _require_int(cfg, key, minimum, maximum):
     return value
 
 
-def _require_string(cfg, key, path=False):
+def _require_string(cfg, key):
     value = cfg.get(key)
     if not isinstance(value, str):
         raise ConfigError(f"配置项 {key} 必须是字符串")
     value = value.strip() if key not in ("user_agent",) else value
     if "\x00" in value:
         raise ConfigError(f"配置项 {key} 包含非法空字符")
-    if path and value:
-        os.path.expanduser(value)
     return value
 
 
@@ -151,7 +149,7 @@ def validate_config_structure(raw):
         "sso_risk_rejected_file", "outlook_accounts_file",
     }
     for key in string_keys:
-        cfg[key] = _require_string(cfg, key, path=key in path_keys)
+        cfg[key] = _require_string(cfg, key)
     enums = {
         "email_provider": {"duckmail", "yyds", "cloudflare", "cloudmail", "outlook"},
         "cloudflare_auth_mode": {"query-key", "bearer", "x-api-key", "x-admin-auth", "none"},
