@@ -295,19 +295,6 @@ def _run_cleanup_safely(ops, callbacks, reason):
         callbacks.log(f"[!] 清理失败，已忽略且不影响账号统计: {reason}: {exc}"); return False
 
 
-def _prepare_next_account(result, settings, callbacks, ops):
-    if result.processed_count >= settings.count:
-        return False
-    if callbacks.cancelled():
-        result.cancelled = True; return False
-    try:
-        if ops.browser_missing(): ops.start_browser()
-        else: ops.restart_browser()
-        ops.sleep(1); return True
-    except ops.cancelled_exception:
-        result.cancelled = True; callbacks.log("[!] 已在账号间准备阶段停止"); return False
-
-
 def _record_success(result, settings, callbacks, ops, account, output, last_cleanup_success_count):
     result.results.append({"registration": account, "output": output}); result.processed_count += 1
     if output.saved:
@@ -326,36 +313,6 @@ def _record_success(result, settings, callbacks, ops, account, output, last_clea
 def _record_uncertain(result, callbacks, stage, exc):
     result.fail_count += 1; result.processed_count += 1; result.uncertain_count += 1
     callbacks.log(f"[-] 当前账号在 {stage} 阶段出现结果不确定的失败；为避免重复提交，不自动更换代理重放整个注册流程: {exc}")
-
-
-def _run_batch_legacy(settings, callbacks, observer, ops):
-    result = BatchResult(); retry_count_for_slot = 0; last_cleanup_success_count = 0
-    try:
-        ops.start_browser(); callbacks.log("[*] 浏览器已启动")
-        while result.processed_count < settings.count:
-            if callbacks.cancelled(): result.cancelled = True; break
-            callbacks.log(f"--- 开始第 {result.processed_count + 1}/{settings.count} 个账号 ---")
-            account = None; output = None; continue_batch = True
-            try:
-                account = register_one_account(callbacks, ops, enable_nsfw=settings.enable_nsfw, max_mail_retry=settings.max_mail_retry)
-                output = persist_account_result(account, callbacks, ops); retry_count_for_slot = 0
-                last_cleanup_success_count = _record_success(result, settings, callbacks, ops, account, output, last_cleanup_success_count)
-            except ops.cancelled_exception:
-                result.cancelled = True; callbacks.log("[!] 注册被停止"); continue_batch = False
-            except ops.retry_exception as exc:
-                retry_count_for_slot += 1
-                if retry_count_for_slot <= settings.max_slot_retry: callbacks.log(f"[!] 当前账号流程卡住，重试第 {retry_count_for_slot}/{settings.max_slot_retry} 次: {exc}")
-                else:
-                    result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 当前账号已达到最大重试次数，跳过: {exc}")
-            except Exception as exc:
-                result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 注册失败: {exc}")
-            finally:
-                _notify_observer(observer, result, account, output, callbacks)
-            if not continue_batch or result.cancelled: break
-            if not _prepare_next_account(result, settings, callbacks, ops): break
-    finally:
-        _run_cleanup_safely(ops, callbacks, "任务结束")
-    return result
 
 
 def _preflight_mail_after_lease(callbacks, ops):
