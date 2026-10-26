@@ -27,6 +27,15 @@ class ProxyRuntimeTests(unittest.TestCase):
         self.assertEqual(browser_runtime.get_configured_proxy(), "")
         self.assertEqual(browser_runtime.get_proxies(), {})
 
+    def test_proxy_url_helpers_share_existing_bridge_behavior(self):
+        self.assertTrue(browser_runtime._proxy_has_auth("socks5://user:pass@[::1]:1080"))
+        self.assertEqual(browser_runtime._strip_proxy_auth("socks5://user:pass@[::1]:1080"), "socks5://[::1]:1080")
+        self.assertEqual(browser_runtime._safe_proxy_port(browser_runtime._parse_proxy_url("host:bad")), None)
+        self.assertEqual(
+            browser_runtime._proxy_endpoint_terms("http://user:pass@127.0.0.1:7890"),
+            ["127.0.0.1", "127.0.0.1:7890", "port 7890"],
+        )
+
     def test_explicit_empty_proxies_bypasses_active_lease(self):
         proxy_pool._TLS.lease = ProxyLease("node", "http://lease:pass@127.0.0.2:7890", "w", 1, 1, "a", "s")
         response = object()
