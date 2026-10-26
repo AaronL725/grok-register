@@ -197,6 +197,19 @@ class WebOriginRegressionTests(unittest.TestCase):
         from web.server import app
         self.client = TestClient(app)
 
+    def test_host_header_blocks_dns_rebinding_on_sensitive_reads(self):
+        for path in ("/api/config", "/api/proxy-pool/status",
+                     "/api/mailboxes/outlook"):
+            with self.subTest(path=path):
+                response = self.client.get(path, headers={"Host": "attacker.example"})
+                self.assertEqual(response.status_code, 400)
+
+    def test_local_host_headers_continue_to_work(self):
+        for host in ("127.0.0.1:8092", "localhost:8092"):
+            with self.subTest(host=host):
+                response = self.client.get("/health", headers={"Host": host})
+                self.assertEqual(response.status_code, 200)
+
     def test_cross_origin_control_requests_do_not_run(self):
         for path, method in (
             ("/api/config", "put"),
