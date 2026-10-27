@@ -331,7 +331,11 @@ def refresh_active_page():
 
 def _raise_if_email_signup_unavailable():
     """Stop only when the visible xAI signup page explicitly refuses email registration."""
-    text = page.run_js("return document.body ? document.body.innerText : '';")
+    try:
+        text = page.run_js("return document.body ? document.body.innerText : '';")
+    except (ContextLostError, JavaScriptError, PageDisconnectedError):
+        # A page transition can briefly invalidate this read-only diagnostic.
+        return
     visible = " ".join(str(text or "").lower().replace("’", "'").split())
     if "email sign-up isn't available right now" in visible:
         from registration_flow import EmailSignupUnavailable
