@@ -63,7 +63,6 @@ _RUNTIME_DEPENDENCIES = (
     "create_browser_options", "page_has_proxy_error", "is_proxy_connection_error",
     "sleep_with_cancel", "raise_if_cancelled", "AccountRetryNeeded",
     "get_email_and_token", "get_oai_code", "get_user_agent",
-    "VerificationCodeUnavailable",
 )
 
 
@@ -786,6 +785,8 @@ return 'enter';
     raise Exception("未找到邮箱输入框或注册按钮")
 
 def fill_code_and_submit(email, dev_token, timeout=180, transition_timeout=15, log_callback=None, cancel_callback=None):
+    from registration_flow import VerificationCodeUnavailable
+
     def _resend_code():
         page.run_js(
             r"""
