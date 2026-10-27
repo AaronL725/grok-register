@@ -63,6 +63,7 @@ _RUNTIME_DEPENDENCIES = (
     "create_browser_options", "page_has_proxy_error", "is_proxy_connection_error",
     "sleep_with_cancel", "raise_if_cancelled", "AccountRetryNeeded",
     "get_email_and_token", "get_oai_code", "get_user_agent",
+    "VerificationCodeUnavailable",
 )
 
 
@@ -329,11 +330,23 @@ def refresh_active_page():
         restart_browser()
     return page
 
+def _raise_if_email_signup_unavailable():
+    """Stop only when the visible xAI signup page explicitly refuses email registration."""
+    text = page.run_js("return document.body ? document.body.innerText : '';")
+    visible = " ".join(str(text or "").lower().replace("’", "'").split())
+    if "email sign-up isn't available right now" in visible:
+        from registration_flow import EmailSignupUnavailable
+        raise EmailSignupUnavailable(
+            "xAI 页面提示: Email sign-up isn’t available right now. Sign up another way."
+        )
+
+
 def click_email_signup_button(timeout=10, log_callback=None, cancel_callback=None):
     global page
     deadline = time.time() + timeout
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
+        _raise_if_email_signup_unavailable()
         if log_callback:
             log_callback("[Debug] 尝试查找“使用邮箱注册”按钮...")
 
@@ -382,6 +395,7 @@ return candidates[0].text || true;
                 detail = f": {clicked}" if isinstance(clicked, str) else ""
                 log_callback(f"[*] 已点击「使用邮箱注册」按钮{detail}")
             sleep_with_cancel(2, cancel_callback)
+            _raise_if_email_signup_unavailable()
             return True
 
         if log_callback:
@@ -590,6 +604,7 @@ return JSON.stringify({
         state = filled.get("state")
         last_snapshot = filled
         if state == "not-ready":
+            _raise_if_email_signup_unavailable()
             now = time.time()
             if now - last_reclick_time >= 3:
                 reclicked = _run_pre_submit_js(r"""
@@ -753,7 +768,9 @@ return 'enter';
         if clicked:
             if log_callback:
                 detail = f" ({clicked})" if isinstance(clicked, str) else ""
-                log_callback(f"[*] 已填写邮箱并提交: {email}{detail}")
+                log_callback(f"[*] 已触发邮箱提交，尚未确认服务端接受: {email}{detail}")
+            sleep_with_cancel(1, cancel_callback)
+            _raise_if_email_signup_unavailable()
             return email, dev_token
         # JS explicitly reported no click/submission, so a later failure is
         # still safe to restart. An exception during JS remains ambiguous.
@@ -783,13 +800,17 @@ return false;
         )
 
     _mark_registration_stage("code_wait")
-    code = get_oai_code(
-        dev_token,
-        email,
-        log_callback=log_callback,
-        cancel_callback=cancel_callback,
-        resend_callback=_resend_code,
-    )
+    try:
+        code = get_oai_code(
+            dev_token,
+            email,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
+            resend_callback=_resend_code,
+        )
+    except VerificationCodeUnavailable:
+        _raise_if_email_signup_unavailable()
+        raise
     if not code:
         raise Exception("获取验证码失败")
     clean_code = str(code).replace("-", "").strip()
