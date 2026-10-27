@@ -81,6 +81,7 @@ class VerificationSubmissionUnconfirmed(RuntimeError):
 class RegistrationCallbacks:
     log: Callable[[str], None]
     cancelled: Callable[[], bool]
+    stop_all: Optional[Callable[[], None]] = None
 
 
 @dataclass
@@ -381,6 +382,8 @@ def _run_batch_managed(settings, callbacks, observer, ops):
             except EmailSignupUnavailable as exc:
                 result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
                 callbacks.log(f"[-] 邮箱注册被 xAI 页面明确拒绝，停止本批次以免反复提交: {exc}")
+                if callbacks.stop_all is not None:
+                    callbacks.stop_all()
                 continue_batch = False
             except RegistrationRiskDenied as exc:
                 result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
