@@ -59,6 +59,10 @@ def registration_retry_disposition(stage, error=None):
     return OUTCOME_UNCERTAIN
 
 
+class EmailSignupUnavailable(RuntimeError):
+    """The xAI signup page explicitly declined the email signup flow."""
+
+
 class RecoverablePreSubmitError(RuntimeError):
     """Transient browser navigation failure before any account data was submitted."""
 
@@ -374,6 +378,10 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                     if retry_count_for_slot <= settings.max_slot_retry: callbacks.log(f"[!] 当前账号流程卡住，安全重试第 {retry_count_for_slot}/{settings.max_slot_retry} 次: {exc}")
                     else:
                         result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 当前账号已达到最大重试次数，跳过: {exc}")
+            except EmailSignupUnavailable as exc:
+                result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
+                callbacks.log(f"[-] 邮箱注册被 xAI 页面明确拒绝，停止本批次以免反复提交: {exc}")
+                continue_batch = False
             except RegistrationRiskDenied as exc:
                 result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
                 callbacks.log(f"[-] 注册风控拒绝，已跳过入库: {exc}")
