@@ -24,6 +24,12 @@ class EmailSignupRejectionTests(unittest.TestCase):
                 page.run_js.return_value = message
                 registration_browser._raise_if_email_signup_unavailable()
 
+    def test_navigation_context_loss_does_not_change_diagnostic_outcome(self):
+        page = Mock()
+        page.run_js.side_effect = registration_browser.ContextLostError("navigating")
+        with patch.object(registration_browser, "page", page):
+            registration_browser._raise_if_email_signup_unavailable()
+
     def test_entry_refusal_stops_before_mailbox_creation(self):
         page = Mock()
         page.run_js.side_effect = ["Sign up with email", REJECTION]
@@ -117,8 +123,9 @@ class EmailSignupRejectionTests(unittest.TestCase):
             ops = fake.operations()
             setattr(ops, stage, Mock(side_effect=EmailSignupUnavailable(REJECTION)))
             logs, observations = [], []
+            signal = Mock()
             callbacks = registration_flow.RegistrationCallbacks(
-                log=logs.append, cancelled=lambda: False
+                log=logs.append, cancelled=lambda: False, stop_all=signal
             )
             with self.subTest(stage=stage), \
                  patch.object(registration_flow, "begin_registration_slot"), \
@@ -133,6 +140,7 @@ class EmailSignupRejectionTests(unittest.TestCase):
             self.assertEqual(len(observations), 1)
             self.assertNotIn("restart", fake.events)
             self.assertTrue(any("停止本批次" in entry for entry in logs))
+            signal.assert_called_once_with()
             release.assert_called_once_with(success=False, transport_error=None)
 
 
