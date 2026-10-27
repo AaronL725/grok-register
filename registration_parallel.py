@@ -121,7 +121,9 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
         )
         browser_module.bind_runtime(worker_namespace)
 
-        worker_callbacks = RegistrationCallbacks(log=worker_log, cancelled=combined_cancelled)
+        worker_callbacks = RegistrationCallbacks(
+            log=worker_log, cancelled=combined_cancelled, stop_all=abort_event.set
+        )
 
         def preflight_mail():
             if str(mail_module.get_email_provider() or "").strip().lower() != "cloudmail":
