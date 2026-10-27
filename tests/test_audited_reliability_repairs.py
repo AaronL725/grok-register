@@ -115,6 +115,8 @@ class AuditedReliabilityRepairTests(unittest.TestCase):
             url = "https://accounts.x.ai/sign-up"
 
             def run_js(self, script, *args):
+                if "document.body ? document.body.innerText" in script:
+                    return ""
                 if "const email = arguments[0]" in script:
                     events.append("fill-email")
                     return json.dumps({"state": "filled", "url": self.url})
