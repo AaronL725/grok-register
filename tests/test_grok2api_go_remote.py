@@ -62,6 +62,20 @@ class Grok2ApiGoRemoteTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "初始同步失败"):
             account_outputs.add_token_to_grok2api_remote_pool("abc")
 
+    def test_web_import_document_carries_name_and_email(self):
+        document = account_outputs.build_grok2api_web_import_document(
+            "abc", "user@example.com"
+        )
+        self.assertEqual(document["provider"], "grok_web")
+        self.assertEqual(
+            document["accounts"],
+            [{"name": "user@example.com", "sso_token": "abc", "email": "user@example.com"}],
+        )
+
+    def test_web_import_document_without_email_omits_email_field(self):
+        document = account_outputs.build_grok2api_web_import_document("abc")
+        self.assertEqual(document["accounts"], [{"name": "", "sso_token": "abc"}])
+
     def test_mixed_credentials_are_rejected(self):
         cfg = dict(app_config.DEFAULT_CONFIG)
         cfg.update({

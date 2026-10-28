@@ -11,6 +11,10 @@ from datetime import datetime, timedelta, timezone
 
 from filelock import FileLock
 
+# 新版 grok2api 导入要等服务端串完多个 Cloudflare 解（每次约 18 秒），
+# 实测单次导入可达 59 秒；留足余量避免服务端已 200 而客户端先超时报假失败。
+GROK2API_GO_IMPORT_TIMEOUT_SEC = 180
+
 
 def _append_account_line_unlocked(path, email, password, sso):
     with open(path, "a", encoding="utf-8") as handle:
@@ -538,6 +542,18 @@ def _parse_grok2api_go_import(response, secrets=()):
     return completed
 
 
+def build_grok2api_web_import_document(token, email=""):
+    """构造新版 grok2api 的 Grok Web JSON 导入文档。
+
+    纯文本导入会被服务端硬编码成 ``Grok Web <token哈希>`` 名称且不带邮箱，
+    只有 JSON 文档才能让服务端采用我们给定的 name / email。
+    """
+    entry = {"name": email or "", "sso_token": token}
+    if email:
+        entry["email"] = email
+    return {"provider": "grok_web", "accounts": [entry]}
+
+
 def _add_token_to_grok2api_go_remote_pool(token, email="", log_callback=None):
     base = str(config.get("grok2api_remote_base", "") or "").strip()
     username = str(config.get("grok2api_remote_admin_username", "") or "").strip()
@@ -548,21 +564,22 @@ def _add_token_to_grok2api_go_remote_pool(token, email="", log_callback=None):
         from curl_cffi import CurlMime
     except Exception as exc:
         raise RemoteTokenRequestError(f"无法创建新版 grok2api 导入表单: {exc}") from exc
+    document = build_grok2api_web_import_document(token, email)
     for attempt in range(2):
         access_token = _get_grok2api_admin_token(api_base, username, password, force=attempt > 0)
         multipart = CurlMime()
         multipart.addpart(
             name="file",
-            filename="grok-web-sso.txt",
-            content_type="text/plain; charset=utf-8",
-            data=(token + "\n").encode("utf-8"),
+            filename="grok-web-sso.json",
+            content_type="application/json; charset=utf-8",
+            data=json.dumps(document, ensure_ascii=False).encode("utf-8"),
         )
         try:
             response = http_post(
                 endpoint,
                 headers={"Authorization": f"Bearer {access_token}", "Accept": "text/event-stream"},
                 multipart=multipart,
-                timeout=60,
+                timeout=GROK2API_GO_IMPORT_TIMEOUT_SEC,
                 proxies={},
                 verify=True,
             )
