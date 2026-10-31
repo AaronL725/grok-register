@@ -172,9 +172,11 @@ function ConfigControl({ field, value, language, disabled, onChange }: {
   </label>
 }
 
-function SettingsPage({ config, dirty, language, disabled, saving, onChange, onSave, onDiscard }: {
+function SettingsPage({ config, dirty, language, disabled, saving, loading, loaded, onChange, onSave, onDiscard, onReload }: {
   config: Config; dirty: Set<string>; language: Language; disabled: boolean; saving: boolean
-  onChange: (key: string, value: ConfigValue) => void; onSave: () => void; onDiscard: () => void
+  loading: boolean; loaded: boolean
+  onChange: (key: string, value: ConfigValue) => void
+  onSave: () => void; onDiscard: () => void; onReload: () => void
 }) {
   const invalidNumbers = invalidNumericFields(config)
   return <div className="page-stack">
@@ -183,6 +185,7 @@ function SettingsPage({ config, dirty, language, disabled, saving, onChange, onS
         {invalidNumbers.length > 0 && <p className="validation-error">{t(language, 'invalidNumbers')} · {invalidNumbers.map(field => language === 'zh' ? field.zh : field.en).join(', ')}</p>}
       </div>
       <div className="toolbar-actions">
+        {!loaded && <button className="button button-quiet" type="button" onClick={onReload} disabled={loading}>{loading ? t(language, 'loading') : t(language, 'reload')}</button>}
         <span className="dirty-count">{dirty.size ? dirty.size + ' ' + t(language, 'dirty') : ''}</span>
         <button className="button button-quiet" type="button" onClick={onDiscard} disabled={!dirty.size || disabled}>{t(language, 'discard')}</button>
         <button className="button button-primary" type="button" onClick={onSave} disabled={!dirty.size || disabled || saving || invalidNumbers.length > 0}>{saving ? t(language, 'saving') : t(language, 'save')}</button>
@@ -429,6 +432,8 @@ export function App() {
   const [language, setLanguage] = useState<Language>(() => localStorage.getItem('grok_register_lang') === 'en' ? 'en' : 'zh')
   const [page, setPage] = useState<Page>('overview')
   const [config, setConfig] = useState<Config>({})
+  const [configLoaded, setConfigLoaded] = useState(false)
+  const [configLoading, setConfigLoading] = useState(false)
   const [dirty, setDirty] = useState<Set<string>>(new Set())
   const [status, setStatus] = useState<TaskStatus>(initialStatus)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -483,9 +488,15 @@ export function App() {
   }, [])
 
   const refreshConfig = useCallback(async () => {
-    const data = await api<ConfigResponse>('/api/config')
-    setConfig(data.config)
-    setDirty(new Set())
+    setConfigLoading(true)
+    try {
+      const data = await api<ConfigResponse>('/api/config')
+      setConfig(data.config)
+      setDirty(new Set())
+      setConfigLoaded(true)
+    } finally {
+      setConfigLoading(false)
+    }
   }, [])
 
   const refreshProxy = useCallback(async () => {
@@ -745,9 +756,11 @@ export function App() {
 
       <div className="page-content">
         {page === 'overview' && <OverviewPage status={status} logs={logs} health={health} language={language} onNavigate={setPage} />}
-        {page === 'settings' && <SettingsPage config={config} dirty={dirty} language={language} disabled={isBusy || saving} saving={saving}
+        {page === 'settings' && <SettingsPage config={config} dirty={dirty} language={language} disabled={isBusy || saving || configLoading || !configLoaded} saving={saving}
+          loading={configLoading} loaded={configLoaded}
           onChange={changeConfig} onSave={() => void saveConfig()}
-          onDiscard={() => { void refreshConfig().catch(error => setNotice({ text: errorMessage(error), error: true })) }} />}
+          onDiscard={() => { void refreshConfig().catch(error => setNotice({ text: errorMessage(error), error: true })) }}
+          onReload={() => { void refreshConfig().catch(error => setNotice({ text: errorMessage(error), error: true })) }} />}
         {page === 'proxy' && <ProxyPage snapshot={proxy} preflight={proxyPreflight} busy={proxyBusy || isBusy || saving} language={language} onAction={(action, nodeId) => void proxyAction(action, nodeId)} />}
         {page === 'mailbox' && <MailboxPage pool={mailbox} test={mailboxTest} language={language} busy={mailboxBusy || isBusy || saving} dirty={mailboxDirty}
           onReload={() => void mailboxAction('reload')} onSave={() => void mailboxAction('save')} onTest={() => void mailboxAction('test')}
