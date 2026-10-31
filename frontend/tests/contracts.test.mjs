@@ -35,7 +35,15 @@ test('numeric configuration inputs preserve empty values and validate ranges', a
 
 test('settings cannot be edited while a configuration save is in flight', async () => {
   const app = await read('../src/app/App.tsx')
-  assert.ok(app.includes('disabled={isBusy || saving}'))
+  assert.ok(app.includes('disabled={isBusy || saving || configLoading || !configLoaded}'))
+})
+
+test('settings remain locked until config loads and can retry a failed load', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.ok(app.includes('const [configLoaded, setConfigLoaded] = useState(false)'))
+  assert.ok(app.includes('setConfigLoaded(true)'))
+  assert.ok(app.includes('!loaded && <button'))
+  assert.ok(app.includes('onReload={() => { void refreshConfig()'))
 })
 
 test('mailbox drafts survive navigation until the user explicitly reloads', async () => {
