@@ -55,3 +55,29 @@ jobs:
             sudo apt-get install -y xvfb
           fi
           xvfb-run -a python -m pytest -q tests/test_gui_layout.py
+
+  frontend:
+    name: React frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Run frontend contract tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Type-check and build frontend
+        working-directory: frontend
+        run: npm run build
