@@ -227,9 +227,13 @@ GUI:
 python grok_register_ttk.py
 ```
 
-WebUI:
+WebUI (the React frontend requires Node.js 22.12 or newer):
 
 ```bash
+cd frontend
+npm install
+npm run build
+cd ..
 python -m pip install -r requirements-web.txt
 python -m web.server
 ```
@@ -246,7 +250,7 @@ http://127.0.0.1:8092
 
 ### WebUI (optional)
 
-See [Quick Start](#quick-start) for launch commands. The WebUI listens on `127.0.0.1:8092` by default and provides bilingual Chinese/English configuration, start/stop controls, batch statistics, real-time logs, proxy-pool node status, subscription parsing statistics, reload, and manual testing.
+See [Quick Start](#quick-start) for launch commands. The WebUI listens on `127.0.0.1:8092` by default and uses a React 19 + TypeScript frontend with a local FastAPI API. It provides bilingual configuration, start/stop controls, batch statistics, real-time logs, proxy-pool node status, subscription parsing statistics, reload, and manual testing. If `frontend/dist` has not been built, the server temporarily falls back to the legacy static interface.
 
 ### GUI
 
@@ -611,6 +615,10 @@ Recovery uses file locks, deduplication, and atomic replacement. Repeating the o
 ├── outlook_mailbox_pool.py    # Outlook pool and OAuth refresh-token updates
 ├── cpa_export.py              # CPA/OIDC export entry point
 ├── cpa_xai/                   # CPA browser, OAuth, proxy helpers, and credential writing
+├── frontend/
+│   ├── src/app/               # React pages and configuration fields
+│   ├── src/lib/               # TypeScript API contracts
+│   └── package.json           # React / TypeScript / Vite
 ├── web/
 │   ├── server.py              # FastAPI WebUI control layer
 │   ├── index.html             # WebUI page

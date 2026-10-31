@@ -79,6 +79,31 @@ class WebControlPlaneTests(unittest.TestCase):
         self.assertIn("/proxy-pool.css", response.text)
         self.assertEqual(self.client.get("/health").json(), {"ok": True})
 
+    def test_react_build_and_hashed_assets_are_served_when_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dist = Path(directory)
+            assets = dist / "assets"
+            assets.mkdir()
+            (dist / "index.html").write_text(
+                '<html><script type="module" src="/assets/app-abc123.js"></script></html>',
+                encoding="utf-8",
+            )
+            (assets / "app-abc123.js").write_text("console.log('react');", encoding="utf-8")
+            with patch.object(self.server, "FRONTEND_DIST", dist), patch.object(
+                self.server, "FRONTEND_ASSETS", assets
+            ):
+                index = self.client.get("/")
+                asset = self.client.get("/assets/app-abc123.js")
+                missing = self.client.get("/assets/missing.js")
+
+        self.assertEqual(index.status_code, 200)
+        self.assertEqual(index.headers["cache-control"], "no-store")
+        self.assertIn("/assets/app-abc123.js", index.text)
+        self.assertEqual(asset.status_code, 200)
+        self.assertEqual(asset.headers["cache-control"], "public, max-age=31536000, immutable")
+        self.assertEqual(asset.text, "console.log('react');")
+        self.assertEqual(missing.status_code, 404)
+
     def test_get_config_reads_existing_engine_config(self):
         cfg = self._base_config()
         cfg["register_count"] = 7
