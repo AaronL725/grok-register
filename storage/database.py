@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import sqlite3
 
+from filelock import FileLock
+
 
 SCHEMA_VERSION = 1
 
@@ -142,24 +144,27 @@ class Database:
             connection.close()
 
     def initialize(self):
-        with self.connection() as connection:
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version > SCHEMA_VERSION:
-                    raise RuntimeError(
-                        "Database schema version %s is newer than supported version %s"
-                        % (version, SCHEMA_VERSION)
-                    )
-                for target_version in range(version + 1, SCHEMA_VERSION + 1):
-                    for statement in _MIGRATIONS[target_version]:
-                        connection.execute(statement)
-                    connection.execute("PRAGMA user_version = %s" % target_version)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
+        with FileLock(self.path + ".init.lock", timeout=30):
+            with self.connection() as connection:
+                journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+                if journal_mode.lower() != "wal":
+                    connection.execute("PRAGMA journal_mode = WAL")
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    version = connection.execute("PRAGMA user_version").fetchone()[0]
+                    if version > SCHEMA_VERSION:
+                        raise RuntimeError(
+                            "Database schema version %s is newer than supported version %s"
+                            % (version, SCHEMA_VERSION)
+                        )
+                    for target_version in range(version + 1, SCHEMA_VERSION + 1):
+                        for statement in _MIGRATIONS[target_version]:
+                            connection.execute(statement)
+                        connection.execute("PRAGMA user_version = %s" % target_version)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
 
     @staticmethod
     def _insert_account(connection, record):
@@ -171,6 +176,7 @@ class Database:
         created_at = str(record.get("created_at") or utc_now())
         updated_at = str(record.get("updated_at") or created_at)
         profile = record.get("profile")
+        source = str(record.get("source") or "native")
         existing = connection.execute(
             "SELECT id, registration_status FROM accounts WHERE email = ? COLLATE NOCASE AND sso = ?",
             (email, sso),
@@ -179,10 +185,9 @@ class Database:
             if record.get("registration_status") == "registered" and existing["registration_status"] == "pending_recovery":
                 connection.execute(
                     """UPDATE accounts
-                       SET registration_status = 'registered', source = 'legacy_txt',
-                           updated_at = ?
+                       SET registration_status = 'registered', source = ?, updated_at = ?
                        WHERE id = ?""",
-                    (updated_at, existing["id"]),
+                    (source, updated_at, existing["id"]),
                 )
             return existing["id"], False
 
@@ -199,7 +204,7 @@ class Database:
                 str(record.get("email_provider") or ""),
                 str(record.get("registration_status") or "registered"),
                 str(record.get("authorization_status") or "unknown"),
-                str(record.get("source") or "native"),
+                source,
                 _json_text(profile),
                 record.get("registration_run_id"),
                 created_at,
