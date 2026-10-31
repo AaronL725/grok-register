@@ -56,6 +56,14 @@ test('proxy preflight displays each target result and reports failures', async (
   assert.ok(app.includes("result.result.ok ? 'preflightPassed' : 'preflightFailed'"))
 })
 
+test('proxy preflight and mailbox edits remain observable', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.match(app, /preflight\.targets\.map/)
+  assert.match(app, /snapshot\?\.error/)
+  assert.match(app, /mailboxDirty/)
+  assert.match(app, /test\.unhealthy/)
+})
+
 test('layout includes responsive mobile breakpoints', async () => {
   const css = await read('../src/styles.css')
   assert.match(css, /max-width: 980px/)
