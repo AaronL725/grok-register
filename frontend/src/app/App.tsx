@@ -570,6 +570,7 @@ export function App() {
           ...previous, path: result.path, count: result.count, invalid: 0, duplicates: [],
           accounts: result.accounts,
         } : previous)
+        setConfig(previous => ({ ...previous, outlook_accounts_file: result.path }))
         setMailboxTest(null)
         setNotice({ text: t(language, 'mailboxSaved') })
       } else {
@@ -630,7 +631,7 @@ export function App() {
           <button className="button button-quiet" type="button" onClick={() => runHealthCheck(true)} disabled={isBusy || healthBusy}>{t(language, 'onlineCheck')}</button>
           {status.running
             ? <button className="button button-danger" type="button" onClick={stopTask}>{t(language, 'stop')}</button>
-            : <button className="button button-primary" type="button" onClick={startTask} disabled={Boolean(status.maintenance) || saving}>{t(language, 'start')}</button>}
+            : <button className="button button-primary" type="button" onClick={startTask} disabled={Boolean(status.maintenance) || saving || healthBusy}>{t(language, 'start')}</button>}
         </div>
       </div>
 
