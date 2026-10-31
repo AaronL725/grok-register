@@ -227,9 +227,13 @@ GUI：
 python grok_register_ttk.py
 ```
 
-WebUI：
+WebUI（React 前端需要 Node.js 22 或更高版本）：
 
 ```bash
+cd frontend
+npm install
+npm run build
+cd ..
 python -m pip install -r requirements-web.txt
 python -m web.server
 ```
@@ -246,7 +250,7 @@ http://127.0.0.1:8092
 
 ### WebUI（可选）
 
-启动命令见[快速开始](#快速开始)。WebUI 默认监听 `127.0.0.1:8092`，提供中英双语配置、开始/停止、批次统计、实时日志、代理池节点状态、订阅解析统计、重新加载和手动测试。
+启动命令见[快速开始](#快速开始)。WebUI 默认监听 `127.0.0.1:8092`，使用 React 19 + TypeScript 前端和 FastAPI 本地 API，提供中英双语配置、开始/停止、批次统计、实时日志、代理池节点状态、订阅解析统计、重新加载和手动测试。若尚未构建 `frontend/dist`，服务会暂时回退到旧版静态界面。
 
 ### GUI
 
@@ -607,6 +611,10 @@ python grok_register_ttk.py retry-pending <pending文件> [输出文件]
 ├── outlook_mailbox_pool.py    # Outlook 邮箱池管理与 OAuth token 更新
 ├── cpa_export.py              # CPA/OIDC 导出入口
 ├── cpa_xai/                   # CPA 浏览器、OAuth、代理辅助与凭证写入
+├── frontend/
+│   ├── src/app/               # React 页面与配置字段
+│   ├── src/lib/               # TypeScript API contracts
+│   └── package.json           # React / TypeScript / Vite
 ├── web/
 │   ├── server.py              # FastAPI WebUI 控制层
 │   ├── index.html             # WebUI 页面
