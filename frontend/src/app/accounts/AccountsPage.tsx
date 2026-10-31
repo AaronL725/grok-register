@@ -204,6 +204,7 @@ export function AccountsPage({ language, busy, onNotice }: {
   const accountRequestVersion = useRef(0)
   const detailRequestVersion = useRef(0)
   const reauthRequestVersion = useRef(0)
+  const previousBusy = useRef(busy)
 
   const refreshAccounts = useCallback(async () => {
     const requestVersion = ++accountRequestVersion.current
@@ -241,6 +242,10 @@ export function AccountsPage({ language, busy, onNotice }: {
   }, [])
 
   useEffect(() => { void refreshAccounts() }, [refreshAccounts])
+  useEffect(() => {
+    if (previousBusy.current && !busy) void refreshAccounts()
+    previousBusy.current = busy
+  }, [busy, refreshAccounts])
   useEffect(() => {
     void refreshReauth()
     const timer = window.setInterval(() => { void refreshReauth() }, 1500)
