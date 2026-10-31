@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   api, post, postText,
-  type AccountDetail, type AccountListItem, type Language, type ReauthStatus,
+  type AccountDetail, type AccountListItem, type ReauthStatus,
 } from '../../lib/api'
-import { type Language as AppLanguage } from '../configFields'
+import { type Language } from '../configFields'
 
 type Notice = { text: string; error?: boolean }
 type Filters = {
@@ -98,6 +98,10 @@ function stateLabel(value: string | null | undefined, language: Language): strin
     : value === 'failed' ? 'failed_state'
       : value as keyof typeof words.zh
   return key in words[language] ? words[language][key as keyof typeof words.zh] : value
+}
+
+function Metric({ label: title, value, tone = '' }: { label: string; value: number; tone?: string }) {
+  return <div className="metric-card"><span className="metric-label">{title}</span><strong className={'metric-value ' + tone}>{value.toLocaleString()}</strong></div>
 }
 
 function StatePill({ value, language }: { value: string; language: Language }) {
