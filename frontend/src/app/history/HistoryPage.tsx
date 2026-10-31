@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   api,
-  type Language, type RegistrationAttempt, type RegistrationRun,
-  type ReauthJob,
+  type RegistrationAttempt, type RegistrationRun, type ReauthJob,
 } from '../../lib/api'
+import { type Language } from '../configFields'
 
 type Notice = { text: string; error?: boolean }
 const PAGE_SIZE = 50
@@ -165,6 +165,7 @@ export function HistoryPage({ language, onNotice }: {
   const openRun = async (run: RegistrationRun) => {
     setSelectedRun(run)
     setSelectedJob(null)
+    setAttempts([])
     setAttemptLoading(true)
     try {
       const result = await api<{ items: RegistrationAttempt[] }>(
