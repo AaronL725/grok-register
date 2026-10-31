@@ -18,6 +18,8 @@ import grok_register_ttk as engine
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX_HTML = Path(__file__).resolve().parent / "index.html"
+FRONTEND_DIST = ROOT / "frontend" / "dist"
+FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 PROXY_POOL_JS = Path(__file__).resolve().parent / "proxy-pool.js"
 PROXY_POOL_CSS = Path(__file__).resolve().parent / "proxy-pool.css"
 OUTLOOK_MAILBOX_JS = Path(__file__).resolve().parent / "outlook-mailbox.js"
@@ -185,6 +187,10 @@ def _run_job(count: int, controller: Any, accounts_file: str) -> None:
 
 @app.get("/", include_in_schema=False)
 def index():
+    react_index = FRONTEND_DIST / "index.html"
+    if react_index.is_file():
+        return FileResponse(react_index, headers={"Cache-Control": "no-store"})
+
     html = INDEX_HTML.read_text(encoding="utf-8")
     if PROXY_POOL_CSS.is_file():
         html = html.replace("</head>", '<link rel="stylesheet" href="/proxy-pool.css">\n</head>', 1)
@@ -193,6 +199,19 @@ def index():
     if OUTLOOK_MAILBOX_JS.is_file():
         html = html.replace("</body>", '<script src="/outlook-mailbox.js"></script>\n</body>', 1)
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/assets/{asset_name}", include_in_schema=False)
+def frontend_asset(asset_name: str):
+    if Path(asset_name).name != asset_name:
+        raise HTTPException(status_code=404, detail="资源不存在")
+    asset = FRONTEND_ASSETS / asset_name
+    if not asset.is_file():
+        raise HTTPException(status_code=404, detail="资源不存在")
+    return FileResponse(
+        asset,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/proxy-pool.js", include_in_schema=False)
