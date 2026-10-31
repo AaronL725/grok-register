@@ -609,6 +609,7 @@ export function App() {
 
   const proxyAction = async (action: 'reload' | 'test' | 'preflight', nodeId?: string) => {
     if (dirty.size && !(await saveConfig())) return
+    setProxyPreflight(null)
     setProxyBusy(true)
     try {
       const paths = {
@@ -639,6 +640,7 @@ export function App() {
 
   const mailboxAction = async (action: 'reload' | 'save' | 'test') => {
     if (!mailbox) return
+    if (action === 'test') setMailboxTest(null)
     setMailboxBusy(true)
     try {
       if (action === 'reload') {
