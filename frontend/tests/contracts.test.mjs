@@ -62,7 +62,8 @@ test('mailbox inputs and actions stay disabled until pool data is loaded', async
 test('mailbox reload remains available when the initial pool request fails', async () => {
   const app = await read('../src/app/App.tsx')
   const action = app.slice(app.indexOf('const mailboxAction = async'), app.indexOf('const clearLogs = async'))
-  assert.ok(action.indexOf("if (action === 'reload')") < action.indexOf('if (!mailbox) return'))
+  assert.match(action, /if \(action !== 'reload' && !mailbox\) return/)
+  assert.ok(action.includes("if (action === 'reload')"))
 })
 
 test('proxy preflight displays each target result and reports failures', async () => {
