@@ -439,6 +439,43 @@ class WebControlPlaneTests(unittest.TestCase):
             response = self.client.get("/api/accounts?date_from=not-a-date")
         self.assertEqual(response.status_code, 400)
 
+    def test_registration_screenshot_api_serves_only_database_diagnostics_files(self):
+        database = self._new_database()
+        run_id = database.create_registration_run(1)
+        diagnostics = Path(database.path).resolve().parent / "diagnostics" / "registration"
+        diagnostics.mkdir(parents=True)
+        screenshot = diagnostics / "failure.png"
+        screenshot.write_bytes(b"fake-png")
+        attempt_id = database.create_registration_attempt(
+            run_id, 1, 1, "worker-1", "browser_start", "failed",
+            error_type="TimeoutError", screenshot_path=str(screenshot),
+        )
+        outside = Path(database.path).resolve().parent / "outside.png"
+        outside.write_bytes(b"not-a-screenshot")
+        outside_attempt = database.create_registration_attempt(
+            run_id, 2, 1, "worker-2", "browser_start", "failed",
+            error_type="TimeoutError", screenshot_path=str(outside),
+        )
+
+        with patch.object(self.server, "_get_database", return_value=database):
+            response = self.client.get(
+                "/api/jobs/history/%s/attempts/%s/screenshot" % (run_id, attempt_id)
+            )
+            outside_response = self.client.get(
+                "/api/jobs/history/%s/attempts/%s/screenshot" % (run_id, outside_attempt)
+            )
+            wrong_run = self.client.get(
+                "/api/jobs/history/999/attempts/%s/screenshot" % attempt_id
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.headers["content-type"], "image/png")
+        self.assertEqual(response.content, b"fake-png")
+        self.assertEqual(outside_response.status_code, 404)
+        self.assertEqual(wrong_run.status_code, 404)
+
     def test_account_api_requires_same_origin_for_sensitive_detail(self):
         database = self._new_database()
         account_id, _ = database.insert_account({"email": "one@example.com", "sso": "token"})
