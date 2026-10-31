@@ -126,10 +126,14 @@ function invalidNumericFields(config: Config): ConfigField[] {
   })
 }
 
+function taskStatusLabel(status: TaskStatus, language: Language): string {
+  if (status.running) return t(language, 'running')
+  if (status.maintenance) return t(language, 'maintenance')
+  return status.cancelled ? t(language, 'stopped') : t(language, 'idle')
+}
+
 function StatusBadge({ status, language }: { status: TaskStatus; language: Language }) {
-  const label = status.running ? t(language, 'running')
-    : status.maintenance ? t(language, 'maintenance')
-      : status.cancelled ? t(language, 'stopped') : t(language, 'idle')
+  const label = taskStatusLabel(status, language)
   return <span className={'status-badge ' + (status.running ? 'is-running' : status.maintenance ? 'is-maintenance' : '')}>
     <span className="status-dot" />{label}
   </span>
@@ -237,7 +241,7 @@ function OverviewPage({ status, logs, health, language, onNavigate }: {
       <section className="surface progress-surface">
         <div className="surface-heading"><div><h2>{t(language, 'progress')}</h2><p>{t(language, 'quickActions')}</p></div><strong className="progress-percent">{Math.round(percent)}%</strong></div>
         <div className="progress-track"><span style={{ width: percent + '%' }} /></div>
-        <div className="progress-foot"><span>{completed} / {status.target || 0}</span><span>{status.running ? t(language, 'running') : status.maintenance ? t(language, 'maintenance') : t(language, 'idle')}</span></div>
+        <div className="progress-foot"><span>{completed} / {status.target || 0}</span><span>{taskStatusLabel(status, language)}</span></div>
         <div className="shortcut-grid">
           {actions.map(action => <button className="shortcut-card" key={action.page} type="button" onClick={() => onNavigate(action.page)}>
             <span className="shortcut-mark">{action.mark}</span><strong>{action.title}</strong><small>{action.description}</small><span className="shortcut-arrow">↗</span>
@@ -587,6 +591,7 @@ export function App() {
 
   const runHealthCheck = async (connectivity: boolean) => {
     if (dirty.size && !(await saveConfig())) return
+    setHealth(null)
     setHealthBusy(true)
     try {
       const result = await post<HealthReport>('/api/health-check', { connectivity })
@@ -714,7 +719,7 @@ export function App() {
   }
 
   const pageInfo = pageMeta[page]
-  const statusText = status.running ? t(language, 'running') : status.maintenance ? t(language, 'maintenance') : t(language, 'idle')
+  const statusText = taskStatusLabel(status, language)
 
   return <div className="app-shell">
     <aside className="sidebar">
