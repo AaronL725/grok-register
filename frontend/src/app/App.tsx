@@ -6,8 +6,10 @@ import {
   type ProxySnapshot, type TaskStatus,
 } from '../lib/api'
 import { configGroups, type ConfigField, type Language } from './configFields'
+import { AccountsPage } from './accounts/AccountsPage'
+import { HistoryPage } from './history/HistoryPage'
 
-type Page = 'overview' | 'settings' | 'proxy' | 'mailbox' | 'console'
+type Page = 'overview' | 'settings' | 'proxy' | 'mailbox' | 'console' | 'accounts' | 'history'
 type Notice = { text: string; error?: boolean }
 type ConfigResponse = { ok: boolean; config: Config }
 type StatusResponse = TaskStatus & { ok: boolean }
@@ -25,12 +27,16 @@ const copy = {
   zh: {
     product: 'GROK REGISTER', subtitle: '本地自动化工作台',
     overview: '总览', settings: '配置中心', proxy: '代理池', mailbox: '邮箱池', console: '运行日志',
+    accounts: '账号管理', history: '任务历史',
     overviewTitle: '工作台总览', settingsTitle: '配置中心', proxyTitle: '代理网络', mailboxTitle: 'Outlook 邮箱池', consoleTitle: '运行日志',
+    accountsTitle: '账号管理', historyTitle: '任务历史',
     overviewDesc: '查看任务状态、执行进度与系统检查结果。',
     settingsDesc: '管理注册参数、邮箱服务、代理网络和后处理集成。',
     proxyDesc: '查看节点探测、运行健康与出口状态，并执行注册路径预检。',
     mailboxDesc: '维护 Outlook 邮箱凭据池，并在保存前测试 IMAP / Microsoft Graph。',
     consoleDesc: '查看实时任务日志，支持搜索与复制。',
+    accountsDesc: '筛选账号、管理凭据记录，并执行重新登录与授权恢复。',
+    historyDesc: '查看注册批次、失败诊断、截图和重新登录历史。',
     local: '仅本机控制台', idle: '待机', running: '运行中', maintenance: '维护操作中', stopped: '已停止',
     target: '目标数量', success: '成功', failed: '失败', pending: '待恢复', uncertain: '结果不确定', warnings: '警告',
     progress: '执行进度', quickActions: '快捷入口', latestActivity: '最新活动', activityDesc: '最近的注册活动记录', systemHealth: '依赖健康检查',
@@ -63,12 +69,16 @@ const copy = {
   en: {
     product: 'GROK REGISTER', subtitle: 'Local automation workspace',
     overview: 'Overview', settings: 'Configuration', proxy: 'Proxy pool', mailbox: 'Mailbox pool', console: 'Activity log',
+    accounts: 'Accounts', history: 'Task history',
     overviewTitle: 'Workspace overview', settingsTitle: 'Configuration', proxyTitle: 'Proxy network', mailboxTitle: 'Outlook mailbox pool', consoleTitle: 'Activity log',
+    accountsTitle: 'Account management', historyTitle: 'Task history',
     overviewDesc: 'Monitor task status, execution progress and system checks.',
     settingsDesc: 'Manage registration, email, proxy and post-processing settings.',
     proxyDesc: 'Inspect node probes, runtime health and exits; run registration-path preflight.',
     mailboxDesc: 'Manage Outlook credentials and test IMAP / Microsoft Graph before saving.',
     consoleDesc: 'Inspect live task logs, search messages and copy output.',
+    accountsDesc: 'Filter saved accounts and manage reauthentication and authorization recovery.',
+    historyDesc: 'Inspect registration runs, failure diagnostics, screenshots and reauthentication history.',
     local: 'Local console only', idle: 'Idle', running: 'Running', maintenance: 'Maintenance', stopped: 'Stopped',
     target: 'Target', success: 'Succeeded', failed: 'Failed', pending: 'Pending', uncertain: 'Uncertain', warnings: 'Warnings',
     progress: 'Execution progress', quickActions: 'Quick access', latestActivity: 'Latest activity', activityDesc: 'Recent registration activity', systemHealth: 'Dependency health',
@@ -106,6 +116,8 @@ const pageMeta: Record<Page, { label: keyof typeof copy.zh; title: keyof typeof 
   proxy: { label: 'proxy', title: 'proxyTitle', description: 'proxyDesc', mark: '03' },
   mailbox: { label: 'mailbox', title: 'mailboxTitle', description: 'mailboxDesc', mark: '04' },
   console: { label: 'console', title: 'consoleTitle', description: 'consoleDesc', mark: '05' },
+  accounts: { label: 'accounts', title: 'accountsTitle', description: 'accountsDesc', mark: '06' },
+  history: { label: 'history', title: 'historyTitle', description: 'historyDesc', mark: '07' },
 }
 
 function t(language: Language, key: keyof typeof copy.zh): string {
@@ -448,6 +460,7 @@ export function App() {
   const [mailboxDirty, setMailboxDirty] = useState(false)
   const [mailboxTest, setMailboxTest] = useState<MailboxTest | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const notify = useCallback((value: Notice) => setNotice(value), [])
   const [saving, setSaving] = useState(false)
   const [healthBusy, setHealthBusy] = useState(false)
   const [proxyBusy, setProxyBusy] = useState(false)
@@ -775,6 +788,8 @@ export function App() {
           onDataChange={value => { setMailbox(previous => previous ? { ...previous, data: value } : previous); setMailboxTest(null); setMailboxDirty(true) }}
           onPathChange={value => { setMailbox(previous => previous ? { ...previous, path: value } : previous); setMailboxDirty(true) }} />}
         {page === 'console' && <ConsolePage logs={logs} language={language} onClear={() => void clearLogs()} onCopy={entries => void copyLogs(entries)} />}
+        {page === 'accounts' && <AccountsPage language={language} busy={isBusy || saving} onNotice={notify} />}
+        {page === 'history' && <HistoryPage language={language} onNotice={notify} />}
       </div>
 
       <footer className="page-footer"><span>{t(language, 'localOnly')}</span><span>{statusText}{status.error ? ' · ' + status.error : ''}</span></footer>
