@@ -56,6 +56,7 @@ const copy = {
     stopSent: '已发送停止请求', copied: '日志已复制', copyFailed: '复制失败',
     saving: '正在保存…', checking: '正在检查…', starting: '正在启动…',
     configHint: '敏感配置以密码形式显示。保存时仅提交发生变化的字段。',
+    invalidNumbers: '数值配置必须是范围内的整数，修正后才能保存。',
     healthSummary: '检查摘要', localOnly: 'LOCAL CONTROL PLANE',
   },
   en: {
@@ -92,6 +93,7 @@ const copy = {
     stopSent: 'Stop request sent', copied: 'Logs copied', copyFailed: 'Copy failed',
     saving: 'Saving…', checking: 'Checking…', starting: 'Starting…',
     configHint: 'Sensitive settings are masked. Only changed fields are submitted when saving.',
+    invalidNumbers: 'Numeric settings must be whole numbers within their allowed ranges.',
     healthSummary: 'Check summary', localOnly: 'LOCAL CONTROL PLANE',
   },
 } as const
@@ -110,6 +112,16 @@ function t(language: Language, key: keyof typeof copy.zh): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function invalidNumericFields(config: Config): ConfigField[] {
+  return configGroups.flatMap(group => group.fields).filter(field => {
+    if (field.kind !== 'number') return false
+    const value = config[field.key]
+    return typeof value !== 'number' || !Number.isInteger(value)
+      || (field.min != null && value < field.min)
+      || (field.max != null && value > field.max)
+  })
 }
 
 function StatusBadge({ status, language }: { status: TaskStatus; language: Language }) {
@@ -149,7 +161,10 @@ function ConfigControl({ field, value, language, disabled, onChange }: {
       type={field.kind === 'password' ? 'password' : field.kind === 'number' ? 'number' : 'text'}
       value={value == null ? '' : String(value)} min={field.min} max={field.max} disabled={disabled}
       autoComplete={field.kind === 'password' ? 'new-password' : 'off'} spellCheck={false}
-      onChange={event => onChange(field.kind === 'number' ? Number(event.target.value) : event.target.value)}
+      onChange={event => {
+        const raw = event.target.value
+        onChange(field.kind === 'number' ? (raw === '' ? '' : Number(raw)) : raw)
+      }}
     />}
     {help && <small>{help}</small>}
   </label>
@@ -159,13 +174,16 @@ function SettingsPage({ config, dirty, language, disabled, saving, onChange, onS
   config: Config; dirty: Set<string>; language: Language; disabled: boolean; saving: boolean
   onChange: (key: string, value: ConfigValue) => void; onSave: () => void; onDiscard: () => void
 }) {
+  const invalidNumbers = invalidNumericFields(config)
   return <div className="page-stack">
     <div className="section-toolbar">
-      <div><span className="eyebrow">{t(language, 'configGroups')}</span><p className="muted">{t(language, 'configHint')}</p></div>
+      <div><span className="eyebrow">{t(language, 'configGroups')}</span><p className="muted">{t(language, 'configHint')}</p>
+        {invalidNumbers.length > 0 && <p className="validation-error">{t(language, 'invalidNumbers')} · {invalidNumbers.map(field => language === 'zh' ? field.zh : field.en).join(', ')}</p>}
+      </div>
       <div className="toolbar-actions">
         <span className="dirty-count">{dirty.size ? dirty.size + ' ' + t(language, 'dirty') : ''}</span>
         <button className="button button-quiet" type="button" onClick={onDiscard} disabled={!dirty.size || disabled}>{t(language, 'discard')}</button>
-        <button className="button button-primary" type="button" onClick={onSave} disabled={!dirty.size || disabled || saving}>{saving ? t(language, 'saving') : t(language, 'save')}</button>
+        <button className="button button-primary" type="button" onClick={onSave} disabled={!dirty.size || disabled || saving || invalidNumbers.length > 0}>{saving ? t(language, 'saving') : t(language, 'save')}</button>
       </div>
     </div>
     {configGroups.map(group => <section className="surface config-section" key={group.id}>
@@ -476,6 +494,20 @@ export function App() {
   }
 
   const saveConfig = async (): Promise<boolean> => {
+    const invalidNumbers = invalidNumericFields(config)
+    if (invalidNumbers.length) {
+      const field = invalidNumbers[0]
+      const label = language === 'zh' ? field.zh : field.en
+      const range = field.min + '–' + field.max
+      setNotice({
+        text: language === 'zh'
+          ? label + ' 必须是 ' + range + ' 范围内的整数。'
+          : label + ' must be a whole number between ' + range + '.',
+        error: true,
+      })
+      setPage('settings')
+      return false
+    }
     if (!dirty.size) {
       setNotice({ text: t(language, 'noChanges') })
       return true
