@@ -117,17 +117,25 @@ export type ProxySnapshot = {
   nodes?: ProxyNode[]
   sources?: Record<string, ProxySource>
 }
-export type ProxyPreflight = {
+export type ProxyPreflightTarget = {
+  url: string
+  reachable: boolean
+  usable: boolean
+  status_code: number
+  latency_ms: number
+  cloudflare_block: boolean
+  error: string
+}
+
+export type ProxyPreflightResult = {
+  id: string
   ok: boolean
-  result?: {
-    ok?: boolean
-    status?: string
-    message?: string
-    [key: string]: unknown
-  }
-  nodes?: ProxyNode[]
-  mode?: string
-  [key: string]: unknown
+  targets: ProxyPreflightTarget[]
+}
+
+export type ProxyPreflight = ProxySnapshot & {
+  ok: boolean
+  result: ProxyPreflightResult
 }
 
 export type MailboxPool = {
