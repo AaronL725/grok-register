@@ -348,14 +348,14 @@ function ProxyPage({ snapshot, preflight, busy, language, onAction }: {
   </div>
 }
 
-function MailboxPage({ pool, test, language, busy, onReload, onSave, onTest, onDataChange, onPathChange }: {
-  pool: MailboxPool | null; test: MailboxTest | null; language: Language; busy: boolean
+function MailboxPage({ pool, test, language, busy, dirty, onReload, onSave, onTest, onDataChange, onPathChange }: {
+  pool: MailboxPool | null; test: MailboxTest | null; language: Language; busy: boolean; dirty: boolean
   onReload: () => void; onSave: () => void; onTest: () => void
   onDataChange: (value: string) => void; onPathChange: (value: string) => void
 }) {
   return <div className="page-stack">
     <section className="surface mailbox-editor">
-      <div className="surface-heading"><div><h2>{t(language, 'mailboxData')}</h2><p>{t(language, 'mailboxFormat')}</p></div></div>
+      <div className="surface-heading"><div><h2>{t(language, 'mailboxData')}</h2><p>{t(language, 'mailboxFormat')}</p></div>{dirty && <span className="dirty-count">{t(language, 'unsaved')}</span>}</div>
       <label className="config-field"><span className="field-label">{t(language, 'mailboxPath')}</span>
         <input value={pool?.path || ''} disabled={busy} onChange={event => onPathChange(event.target.value)} spellCheck={false} /></label>
       <label className="config-field mailbox-textarea"><span className="field-label">{t(language, 'mailboxData')}</span>
@@ -429,6 +429,7 @@ export function App() {
   const [proxy, setProxy] = useState<ProxySnapshot | null>(null)
   const [proxyPreflight, setProxyPreflight] = useState<ProxyPreflightResult | null>(null)
   const [mailbox, setMailbox] = useState<MailboxPool | null>(null)
+  const [mailboxDirty, setMailboxDirty] = useState(false)
   const [mailboxTest, setMailboxTest] = useState<MailboxTest | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [saving, setSaving] = useState(false)
@@ -484,6 +485,7 @@ export function App() {
   const refreshMailbox = useCallback(async () => {
     const data = await api<MailboxResponse>('/api/mailboxes/outlook')
     setMailbox(data)
+    setMailboxDirty(false)
     setMailboxTest(null)
   }, [])
 
@@ -508,9 +510,9 @@ export function App() {
   }, [page, refreshProxy])
 
   useEffect(() => {
-    if (page !== 'mailbox' || mailbox) return
+    if (page !== 'mailbox' || mailbox || mailboxDirty) return
     void refreshMailbox().catch(error => setNotice({ text: errorMessage(error), error: true }))
-  }, [page, mailbox, refreshMailbox])
+  }, [page, mailbox, mailboxDirty, refreshMailbox])
 
   const isBusy = status.running || Boolean(status.maintenance)
 
@@ -638,6 +640,7 @@ export function App() {
           accounts: result.accounts,
         } : previous)
         setConfig(previous => ({ ...previous, outlook_accounts_file: result.path }))
+        setMailboxDirty(false)
         setMailboxTest(null)
         setNotice({ text: t(language, 'mailboxSaved') })
       } else {
@@ -712,10 +715,10 @@ export function App() {
           onChange={changeConfig} onSave={() => void saveConfig()}
           onDiscard={() => { void refreshConfig().catch(error => setNotice({ text: errorMessage(error), error: true })) }} />}
         {page === 'proxy' && <ProxyPage snapshot={proxy} preflight={proxyPreflight} busy={proxyBusy || isBusy || saving} language={language} onAction={(action, nodeId) => void proxyAction(action, nodeId)} />}
-        {page === 'mailbox' && <MailboxPage pool={mailbox} test={mailboxTest} language={language} busy={mailboxBusy || isBusy || saving}
+        {page === 'mailbox' && <MailboxPage pool={mailbox} test={mailboxTest} language={language} busy={mailboxBusy || isBusy || saving} dirty={mailboxDirty}
           onReload={() => void mailboxAction('reload')} onSave={() => void mailboxAction('save')} onTest={() => void mailboxAction('test')}
-          onDataChange={value => setMailbox(previous => previous ? { ...previous, data: value } : previous)}
-          onPathChange={value => setMailbox(previous => previous ? { ...previous, path: value } : previous)} />}
+          onDataChange={value => { setMailbox(previous => previous ? { ...previous, data: value } : previous); setMailboxDirty(true) }}
+          onPathChange={value => { setMailbox(previous => previous ? { ...previous, path: value } : previous); setMailboxDirty(true) }} />}
         {page === 'console' && <ConsolePage logs={logs} language={language} onClear={() => { setLogs([]); lastSeq.current = serverLatest.current }} onCopy={() => void copyLogs()} />}
       </div>
 
