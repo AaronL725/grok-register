@@ -86,11 +86,15 @@ test('editing mailbox or proxy settings invalidates stale diagnostics', async ()
   assert.ok(app.includes('setMailboxTest(null); setMailboxDirty(true)'))
 })
 
-test('overview renders every dependency check and reflects maintenance state', async () => {
+test('task status labels distinguish cancelled runs from idle state', async () => {
   const app = await read('../src/app/App.tsx')
-  assert.ok(app.includes('health.checks.map(check'))
-  assert.ok(!app.includes('health.checks.slice'))
-  assert.ok(app.includes("status.maintenance ? t(language, 'maintenance') : t(language, 'idle')"))
+  assert.ok(app.includes("return status.cancelled ? t(language, 'stopped') : t(language, 'idle')"))
+  assert.ok(app.includes('taskStatusLabel(status, language)'))
+})
+
+test('rerunning dependency checks clears stale results while loading', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.ok(app.includes('const runHealthCheck = async (connectivity: boolean) => {\n    if (dirty.size && !(await saveConfig())) return\n    setHealth(null)'))
 })
 
 test('console clear cannot replay an in-flight batch and copy uses filtered entries', async () => {
