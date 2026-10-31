@@ -282,6 +282,9 @@ function ProxyPage({ snapshot, preflight, busy, language, onAction }: {
         <button className="button button-primary" type="button" disabled={busy} onClick={() => onAction('test')}>{busy ? t(language, 'checking') : t(language, 'test')}</button>
       </div>
     </div>
+    {snapshot?.error && <section className="surface proxy-manager-error">
+      <strong>{t(language, 'loadFailed')}</strong><p>{snapshot.error}</p>
+    </section>}
     <section className="surface">
       <div className="surface-heading"><div><h2>{t(language, 'source')}</h2><p>{language === 'zh' ? '本地文件与订阅源解析摘要' : 'Local file and subscription parsing summary'}</p></div></div>
       <div className="source-grid">{(['subscription', 'file'] as const).map(key => {
