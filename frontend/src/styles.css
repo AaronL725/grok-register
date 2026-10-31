@@ -186,6 +186,9 @@ a { color: inherit; text-decoration: none; }
 .cell-sub { display: block; margin-top: 4px; color: #718198; font-size: 9px; }
 .node-errors { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(240,128,128,.06); color: #c99292; font-size: 10px; overflow-wrap: anywhere; }
 .node-errors p { margin: 4px 0; }
+.proxy-manager-error { border-color: rgba(240,128,128,.24); }
+.proxy-manager-error strong { color: var(--bad); font-size: 11px; }
+.proxy-manager-error p { margin: 7px 0 0; color: #c99292; font-size: 10px; overflow-wrap: anywhere; }
 .mailbox-editor { display: grid; gap: 14px; }
 .mailbox-textarea textarea { width: 100%; min-height: 240px; resize: vertical; border: 1px solid #304158; border-radius: 9px; padding: 13px; outline: none; background: #0d1723; color: #dce7f3; font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .mailbox-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
