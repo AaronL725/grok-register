@@ -33,6 +33,23 @@ test('numeric configuration inputs preserve empty values and validate ranges', a
   assert.match(app, /invalidNumbers\.length > 0/)
 })
 
+test('settings cannot be edited while a configuration save is in flight', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.match(app, /<SettingsPage[\\s\\S]*?disabled=\{isBusy \\|\\| saving\}/)
+})
+
+test('mailbox drafts survive navigation until the user explicitly reloads', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.match(app, /if \(page !== 'mailbox' \\|\\| mailbox\) return/)
+  assert.match(app, /onReload=\{\(\) => void mailboxAction\('reload'\)\}/)
+})
+
+test('proxy preflight displays each target result and reports failures', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.match(app, /preflight\.targets\.map/)
+  assert.match(app, /result\.result\.ok \? 'preflightPassed' : 'preflightFailed'/)
+})
+
 test('layout includes responsive mobile breakpoints', async () => {
   const css = await read('../src/styles.css')
   assert.match(css, /max-width: 980px/)
