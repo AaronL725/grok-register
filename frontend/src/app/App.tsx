@@ -446,6 +446,7 @@ export function App() {
   const lastSeq = useRef(0)
   const serverLatest = useRef(0)
   const pollingLogs = useRef(false)
+  const clearingLogs = useRef(false)
   const logRequestVersion = useRef(0)
 
   const refreshStatus = useCallback(async () => {
@@ -463,7 +464,7 @@ export function App() {
   }, [])
 
   const refreshLogs = useCallback(async () => {
-    if (pollingLogs.current) return
+    if (pollingLogs.current || clearingLogs.current) return
     pollingLogs.current = true
     const requestVersion = logRequestVersion.current
     try {
@@ -669,6 +670,8 @@ export function App() {
   }
 
   const clearLogs = async () => {
+    if (clearingLogs.current) return
+    clearingLogs.current = true
     const requestVersion = ++logRequestVersion.current
     setLogs([])
     try {
@@ -679,6 +682,8 @@ export function App() {
     } catch (error) {
       lastSeq.current = serverLatest.current
       setNotice({ text: errorMessage(error), error: true })
+    } finally {
+      clearingLogs.current = false
     }
   }
 
