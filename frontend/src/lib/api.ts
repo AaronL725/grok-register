@@ -9,30 +9,39 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
+
   if (!response.ok) {
-    let detail = response.statusText
+    let detail = response.statusText || 'Request failed'
     try {
       const data = await response.json() as { detail?: string }
       detail = data.detail || detail
     } catch {
-      // Non-JSON server failures retain the HTTP status.
+      // Keep the HTTP status when the server did not return JSON.
     }
     const error = new Error(detail) as ApiError
     error.status = response.status
     throw error
   }
+
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
 export function post<T>(path: string, payload?: unknown): Promise<T> {
-  return api<T>(path, { method: 'POST', ...(payload === undefined ? {} : { body: JSON.stringify(payload) }) })
+  return api<T>(path, {
+    method: 'POST',
+    ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+  })
 }
 
 export function put<T>(path: string, payload: unknown): Promise<T> {
   return api<T>(path, { method: 'PUT', body: JSON.stringify(payload) })
 }
 
-export type Config = Record<string, string | number | boolean | null>
+export type ConfigValue = string | number | boolean | null
+export type Config = Record<string, ConfigValue>
+export type ConfigResponse = { ok: boolean; config: Config }
+
 export type TaskStatus = {
   running: boolean
   target: number
@@ -44,11 +53,30 @@ export type TaskStatus = {
   cancelled: boolean
   error?: string
   maintenance?: string | null
+  started_at?: number | null
+  finished_at?: number | null
+  accounts_file?: string
 }
+
 export type LogEntry = { seq: number; line: string }
 export type LogBatch = { entries: LogEntry[]; latest: number }
-export type HealthEntry = { key: string; name: string; status: 'OK' | 'WARN' | 'ERROR'; required: boolean; message: string; connection_tested: boolean }
-export type HealthReport = { ready: boolean; result: string; error_count: number; warning_count: number; checks: HealthEntry[] }
+
+export type HealthEntry = {
+  key: string
+  name: string
+  status: 'OK' | 'WARN' | 'ERROR'
+  required: boolean
+  message: string
+  connection_tested: boolean
+}
+export type HealthReport = {
+  ready: boolean
+  result: string
+  error_count: number
+  warning_count: number
+  checks: HealthEntry[]
+}
+
 export type ProxyProbe = { status?: string; latency_ms?: number; exit_ip?: string }
 export type ProxyNode = {
   id: string
@@ -74,18 +102,54 @@ export type ProxyNode = {
   probe_error?: string
   last_error?: string
 }
+export type ProxySource = {
+  supported?: number
+  total_lines?: number
+  decoded_base64?: boolean
+  protocol_counts?: Record<string, number>
+  skipped?: number
+  stale?: boolean
+  error?: string
+}
 export type ProxySnapshot = {
   mode?: string
   persist_health?: boolean
   nodes?: ProxyNode[]
-  sources?: Record<string, {
-    supported?: number; total_lines?: number; decoded_base64?: boolean
-    protocol_counts?: Record<string, number>; skipped?: number
-    stale?: boolean; error?: string
-  }>
+  sources?: Record<string, ProxySource>
 }
-export type MailboxPool = { path: string; data: string; count: number; invalid: number; duplicates: string[] }
+export type ProxyPreflight = {
+  ok: boolean
+  result?: {
+    ok?: boolean
+    status?: string
+    message?: string
+    [key: string]: unknown
+  }
+  nodes?: ProxyNode[]
+  mode?: string
+  [key: string]: unknown
+}
+
+export type MailboxPool = {
+  path: string
+  data: string
+  count: number
+  invalid: number
+  duplicates: string[]
+  accounts?: Array<{ email: string; mode: string }>
+}
+export type MailboxChannel = { ok?: boolean; folders?: string[]; error?: string }
 export type MailboxTest = {
-  healthy: number; unhealthy: number; count: number; imap: number; graph: number
-  results: Array<{ email: string; mode: string; usable: boolean; imap?: { ok?: boolean; folders?: string[]; error?: string }; graph?: { ok?: boolean; folders?: string[]; error?: string } }>
+  healthy: number
+  unhealthy: number
+  count: number
+  imap: number
+  graph: number
+  results: Array<{
+    email: string
+    mode: string
+    usable: boolean
+    imap?: MailboxChannel
+    graph?: MailboxChannel
+  }>
 }
