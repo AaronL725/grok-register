@@ -26,6 +26,13 @@ test('the workspace keeps all primary operator workflows', async () => {
   }
 })
 
+test('numeric configuration inputs preserve empty values and validate ranges', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.match(app, /raw === '' \? '' : Number\(raw\)/)
+  assert.match(app, /function invalidNumericFields/)
+  assert.match(app, /invalidNumbers\.length > 0/)
+})
+
 test('layout includes responsive mobile breakpoints', async () => {
   const css = await read('../src/styles.css')
   assert.match(css, /max-width: 980px/)
