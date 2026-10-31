@@ -64,6 +64,12 @@ test('proxy preflight and mailbox edits remain observable', async () => {
   assert.match(app, /test\.unhealthy/)
 })
 
+test('editing mailbox or proxy settings invalidates stale diagnostics', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.ok(app.includes("if (key === 'proxy' || key.startsWith('proxy_')) setProxyPreflight(null)"))
+  assert.ok(app.includes('setMailboxTest(null); setMailboxDirty(true)'))
+})
+
 test('console clear cannot replay an in-flight batch and copy uses filtered entries', async () => {
   const app = await read('../src/app/App.tsx')
   assert.ok(app.includes('const clearingLogs = useRef(false)'))
