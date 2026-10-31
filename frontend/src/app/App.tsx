@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api, post, put,
   type Config, type ConfigValue, type HealthReport, type LogEntry,
-  type MailboxPool, type MailboxTest, type ProxyNode, type ProxyPreflight,
+  type MailboxPool, type MailboxTest, type ProxyNode, type ProxyPreflightResult,
   type ProxySnapshot, type TaskStatus,
 } from '../lib/api'
 import { configGroups, type ConfigField, type Language } from './configFields'
@@ -14,7 +14,7 @@ type StatusResponse = TaskStatus & { ok: boolean }
 type LogsResponse = { ok: boolean; latest: number; entries: LogEntry[] }
 type MailboxResponse = MailboxPool & { ok: boolean }
 type ProxyResponse = ProxySnapshot & { ok: boolean }
-type ProxyActionResponse = ProxyPreflight & ProxySnapshot
+type ProxyActionResponse = ProxySnapshot & { ok: boolean; result?: ProxyPreflightResult }
 
 const initialStatus: TaskStatus = {
   running: false, target: 0, success: 0, fail: 0, pending: 0,
@@ -52,7 +52,8 @@ const copy = {
     healthReady: '检查通过', healthIssues: '存在需要处理的问题', healthNone: '尚未运行健康检查',
     language: '语言', general: '基础设置', mail: '邮箱服务', grok2api: 'Grok2API 集成', cpa: 'CPA / OIDC 集成',
     unsaved: '有未保存的修改', proxyActionFailed: '代理池操作失败', mailboxSaved: '邮箱池已保存',
-    mailboxTested: '邮箱池测试完成', preflightDone: '注册路径预检完成', noJob: '当前没有运行中的任务',
+    mailboxTested: '邮箱池测试完成', preflightDone: '注册路径预检结果', preflightPassed: '注册路径预检通过', preflightFailed: '注册路径预检未通过',
+    reachable: '网络可达', notReachable: '网络不可达', cloudflareBlock: '检测到 Cloudflare 拦截', noJob: '当前没有运行中的任务',
     stopSent: '已发送停止请求', copied: '日志已复制', copyFailed: '复制失败',
     saving: '正在保存…', checking: '正在检查…', starting: '正在启动…',
     configHint: '敏感配置以密码形式显示。保存时仅提交发生变化的字段。',
@@ -89,7 +90,8 @@ const copy = {
     healthReady: 'Checks passed', healthIssues: 'Some checks need attention', healthNone: 'No health check has been run',
     language: 'Language', general: 'General', mail: 'Email services', grok2api: 'Grok2API integration', cpa: 'CPA / OIDC integration',
     unsaved: 'You have unsaved changes', proxyActionFailed: 'Proxy pool operation failed', mailboxSaved: 'Mailbox pool saved',
-    mailboxTested: 'Mailbox pool test completed', preflightDone: 'Registration path preflight completed', noJob: 'No registration job is running',
+    mailboxTested: 'Mailbox pool test completed', preflightDone: 'Registration path preflight result', preflightPassed: 'Registration path preflight passed', preflightFailed: 'Registration path preflight failed',
+    reachable: 'Reachable', notReachable: 'Unreachable', cloudflareBlock: 'Cloudflare block detected', noJob: 'No registration job is running',
     stopSent: 'Stop request sent', copied: 'Logs copied', copyFailed: 'Copy failed',
     saving: 'Saving…', checking: 'Checking…', starting: 'Starting…',
     configHint: 'Sensitive settings are masked. Only changed fields are submitted when saving.',
@@ -258,8 +260,9 @@ function OverviewPage({ status, logs, health, language, onNavigate }: {
   </div>
 }
 
-function ProxyPage({ snapshot, busy, language, onAction }: {
-  snapshot: ProxySnapshot | null; busy: boolean; language: Language
+function ProxyPage({ snapshot, preflight, busy, language, onAction }: {
+  snapshot: ProxySnapshot | null; preflight: ProxyPreflightResult | null
+  busy: boolean; language: Language
   onAction: (action: 'reload' | 'test' | 'preflight', nodeId?: string) => void
 }) {
   const nodes = snapshot?.nodes || []
@@ -320,6 +323,28 @@ function ProxyPage({ snapshot, busy, language, onAction }: {
         {nodes.filter(node => node.probe_error || node.last_error).map(node => <p key={node.id}><strong>{node.name || node.id}</strong> · {node.probe_error || node.last_error}</p>)}
       </div>}
     </section>
+    {preflight && <section className="surface">
+      <div className="surface-heading">
+        <div><h2>{t(language, 'preflightDone')}</h2><p>{preflight.id}</p></div>
+        <span className={'health-tag ' + (preflight.ok ? 'ok' : 'error')}>
+          {preflight.ok ? t(language, 'preflightPassed') : t(language, 'preflightFailed')}
+        </span>
+      </div>
+      <div className="preflight-results">
+        {preflight.targets.map(target => <article className="preflight-target" key={target.url}>
+          <strong>{target.url}</strong>
+          <span className={'health-tag ' + (target.usable ? 'ok' : 'error')}>
+            {target.usable ? t(language, 'usable') : t(language, 'notUsable')}
+          </span>
+          <small>
+            {target.reachable ? t(language, 'reachable') : t(language, 'notReachable')}
+            {' · HTTP '}{target.status_code || '—'}{' · '}{target.latency_ms}ms
+            {target.cloudflare_block ? ' · ' + t(language, 'cloudflareBlock') : ''}
+          </small>
+          {target.error && <small className="preflight-error">{target.error}</small>}
+        </article>)}
+      </div>
+    </section>}
   </div>
 }
 
@@ -402,7 +427,9 @@ export function App() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [health, setHealth] = useState<HealthReport | null>(null)
   const [proxy, setProxy] = useState<ProxySnapshot | null>(null)
+  const [proxyPreflight, setProxyPreflight] = useState<ProxyPreflightResult | null>(null)
   const [mailbox, setMailbox] = useState<MailboxPool | null>(null)
+  const [mailboxDirty, setMailboxDirty] = useState(false)
   const [mailboxTest, setMailboxTest] = useState<MailboxTest | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [saving, setSaving] = useState(false)
@@ -458,6 +485,7 @@ export function App() {
   const refreshMailbox = useCallback(async () => {
     const data = await api<MailboxResponse>('/api/mailboxes/outlook')
     setMailbox(data)
+    setMailboxDirty(false)
     setMailboxTest(null)
   }, [])
 
@@ -482,9 +510,9 @@ export function App() {
   }, [page, refreshProxy])
 
   useEffect(() => {
-    if (page !== 'mailbox') return
+    if (page !== 'mailbox' || mailboxDirty) return
     void refreshMailbox().catch(error => setNotice({ text: errorMessage(error), error: true }))
-  }, [page, refreshMailbox])
+  }, [page, mailboxDirty, refreshMailbox])
 
   const isBusy = status.running || Boolean(status.maintenance)
 
@@ -578,7 +606,16 @@ export function App() {
       const result = await post<ProxyActionResponse>(paths[action])
       if (result.nodes) setProxy(result)
       else await refreshProxy()
-      setNotice({ text: action === 'preflight' ? t(language, 'preflightDone') : t(language, action === 'reload' ? 'reload' : 'test') })
+      if (action === 'preflight' && result.result) {
+        setProxyPreflight(result.result)
+        setNotice({
+          text: t(language, result.result.ok ? 'preflightPassed' : 'preflightFailed'),
+          error: !result.result.ok,
+        })
+      } else {
+        setProxyPreflight(null)
+        setNotice({ text: t(language, action === 'reload' ? 'reload' : 'test') })
+      }
     } catch (error) {
       setNotice({ text: errorMessage(error) || t(language, 'proxyActionFailed'), error: true })
     } finally {
@@ -603,6 +640,7 @@ export function App() {
           accounts: result.accounts,
         } : previous)
         setConfig(previous => ({ ...previous, outlook_accounts_file: result.path }))
+        setMailboxDirty(false)
         setMailboxTest(null)
         setNotice({ text: t(language, 'mailboxSaved') })
       } else {
@@ -659,8 +697,8 @@ export function App() {
       <div className="page-heading">
         <div><span className="eyebrow">GROK REGISTER / {pageInfo.mark}</span><h1>{t(language, pageInfo.title)}</h1><p>{t(language, pageInfo.description)}</p></div>
         <div className="global-actions">
-          <button className="button button-quiet" type="button" onClick={() => runHealthCheck(false)} disabled={isBusy || healthBusy}>{healthBusy ? t(language, 'checking') : t(language, 'staticCheck')}</button>
-          <button className="button button-quiet" type="button" onClick={() => runHealthCheck(true)} disabled={isBusy || healthBusy}>{t(language, 'onlineCheck')}</button>
+          <button className="button button-quiet" type="button" onClick={() => runHealthCheck(false)} disabled={isBusy || healthBusy || saving}>{healthBusy ? t(language, 'checking') : t(language, 'staticCheck')}</button>
+          <button className="button button-quiet" type="button" onClick={() => runHealthCheck(true)} disabled={isBusy || healthBusy || saving}>{t(language, 'onlineCheck')}</button>
           {status.running
             ? <button className="button button-danger" type="button" onClick={stopTask}>{t(language, 'stop')}</button>
             : <button className="button button-primary" type="button" onClick={startTask} disabled={Boolean(status.maintenance) || saving || healthBusy}>{t(language, 'start')}</button>}
@@ -673,14 +711,14 @@ export function App() {
 
       <div className="page-content">
         {page === 'overview' && <OverviewPage status={status} logs={logs} health={health} language={language} onNavigate={setPage} />}
-        {page === 'settings' && <SettingsPage config={config} dirty={dirty} language={language} disabled={isBusy} saving={saving}
+        {page === 'settings' && <SettingsPage config={config} dirty={dirty} language={language} disabled={isBusy || saving} saving={saving}
           onChange={changeConfig} onSave={() => void saveConfig()}
           onDiscard={() => { void refreshConfig().catch(error => setNotice({ text: errorMessage(error), error: true })) }} />}
-        {page === 'proxy' && <ProxyPage snapshot={proxy} busy={proxyBusy || isBusy} language={language} onAction={(action, nodeId) => void proxyAction(action, nodeId)} />}
-        {page === 'mailbox' && <MailboxPage pool={mailbox} test={mailboxTest} language={language} busy={mailboxBusy || isBusy}
+        {page === 'proxy' && <ProxyPage snapshot={proxy} preflight={proxyPreflight} busy={proxyBusy || isBusy || saving} language={language} onAction={(action, nodeId) => void proxyAction(action, nodeId)} />}
+        {page === 'mailbox' && <MailboxPage pool={mailbox} test={mailboxTest} language={language} busy={mailboxBusy || isBusy || saving}
           onReload={() => void mailboxAction('reload')} onSave={() => void mailboxAction('save')} onTest={() => void mailboxAction('test')}
-          onDataChange={value => setMailbox(previous => previous ? { ...previous, data: value } : previous)}
-          onPathChange={value => setMailbox(previous => previous ? { ...previous, path: value } : previous)} />}
+          onDataChange={value => { setMailbox(previous => previous ? { ...previous, data: value } : previous); setMailboxDirty(true) }}
+          onPathChange={value => { setMailbox(previous => previous ? { ...previous, path: value } : previous); setMailboxDirty(true) }} />}
         {page === 'console' && <ConsolePage logs={logs} language={language} onClear={() => { setLogs([]); lastSeq.current = serverLatest.current }} onCopy={() => void copyLogs()} />}
       </div>
 
