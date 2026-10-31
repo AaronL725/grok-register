@@ -70,6 +70,13 @@ test('editing mailbox or proxy settings invalidates stale diagnostics', async ()
   assert.ok(app.includes('setMailboxTest(null); setMailboxDirty(true)'))
 })
 
+test('overview renders every dependency check and reflects maintenance state', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.ok(app.includes('health.checks.map(check'))
+  assert.ok(!app.includes('health.checks.slice'))
+  assert.ok(app.includes("status.maintenance ? t(language, 'maintenance') : t(language, 'idle')"))
+})
+
 test('console clear cannot replay an in-flight batch and copy uses filtered entries', async () => {
   const app = await read('../src/app/App.tsx')
   assert.ok(app.includes('const clearingLogs = useRef(false)'))
