@@ -64,6 +64,14 @@ test('proxy preflight and mailbox edits remain observable', async () => {
   assert.match(app, /test\.unhealthy/)
 })
 
+test('console clear cannot replay an in-flight batch and copy uses filtered entries', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.ok(app.includes('const clearingLogs = useRef(false)'))
+  assert.ok(app.includes('requestVersion !== logRequestVersion.current'))
+  assert.ok(app.includes('onCopy(filtered)'))
+  assert.ok(app.includes("api<LogsResponse>('/api/logs?after=0')"))
+})
+
 test('dashboard reflects current health and complete proxy source diagnostics', async () => {
   const app = await read('../src/app/App.tsx')
   assert.ok(app.includes("activityDesc"))
