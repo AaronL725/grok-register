@@ -450,6 +450,7 @@ export function App() {
   const [mailboxBusy, setMailboxBusy] = useState(false)
   const lastSeq = useRef(0)
   const serverLatest = useRef(0)
+  const configRequestVersion = useRef(0)
   const pollingLogs = useRef(false)
   const clearingLogs = useRef(false)
   const logRequestVersion = useRef(0)
@@ -488,14 +489,16 @@ export function App() {
   }, [])
 
   const refreshConfig = useCallback(async () => {
+    const requestVersion = ++configRequestVersion.current
     setConfigLoading(true)
     try {
       const data = await api<ConfigResponse>('/api/config')
+      if (requestVersion !== configRequestVersion.current) return
       setConfig(data.config)
       setDirty(new Set())
       setConfigLoaded(true)
     } finally {
-      setConfigLoading(false)
+      if (requestVersion === configRequestVersion.current) setConfigLoading(false)
     }
   }, [])
 
