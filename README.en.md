@@ -227,7 +227,7 @@ GUI:
 python grok_register_ttk.py
 ```
 
-WebUI (the React frontend requires Node.js 22 or newer):
+WebUI (the React frontend requires Node.js 22.12 or newer):
 
 ```bash
 cd frontend
