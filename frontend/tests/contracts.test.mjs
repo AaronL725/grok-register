@@ -42,6 +42,7 @@ test('settings remain locked until config loads and can retry a failed load', as
   const app = await read('../src/app/App.tsx')
   assert.ok(app.includes('const [configLoaded, setConfigLoaded] = useState(false)'))
   assert.ok(app.includes('setConfigLoaded(true)'))
+  assert.ok(app.includes('requestVersion !== configRequestVersion.current'))
   assert.ok(app.includes('!loaded && <button'))
   assert.ok(app.includes('onReload={() => { void refreshConfig()'))
 })
