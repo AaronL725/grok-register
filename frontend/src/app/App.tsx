@@ -357,13 +357,13 @@ function MailboxPage({ pool, test, language, busy, dirty, onReload, onSave, onTe
     <section className="surface mailbox-editor">
       <div className="surface-heading"><div><h2>{t(language, 'mailboxData')}</h2><p>{t(language, 'mailboxFormat')}</p></div>{dirty && <span className="dirty-count">{t(language, 'unsaved')}</span>}</div>
       <label className="config-field"><span className="field-label">{t(language, 'mailboxPath')}</span>
-        <input value={pool?.path || ''} disabled={busy} onChange={event => onPathChange(event.target.value)} spellCheck={false} /></label>
+        <input value={pool?.path || ''} disabled={busy || !pool} onChange={event => onPathChange(event.target.value)} spellCheck={false} /></label>
       <label className="config-field mailbox-textarea"><span className="field-label">{t(language, 'mailboxData')}</span>
-        <textarea value={pool?.data || ''} disabled={busy} onChange={event => onDataChange(event.target.value)} spellCheck={false} autoComplete="off" /></label>
+        <textarea value={pool?.data || ''} disabled={busy || !pool} onChange={event => onDataChange(event.target.value)} spellCheck={false} autoComplete="off" /></label>
       <div className="mailbox-actions"><div className="toolbar-actions">
         <button className="button button-quiet" type="button" disabled={busy} onClick={onReload}>{t(language, 'loadPool')}</button>
-        <button className="button button-quiet" type="button" disabled={busy} onClick={onTest}>{busy ? t(language, 'checking') : t(language, 'testPool')}</button>
-      </div><button className="button button-primary" type="button" disabled={busy || !pool?.data.trim()} onClick={onSave}>{busy ? t(language, 'saving') : t(language, 'savePool')}</button></div>
+        <button className="button button-quiet" type="button" disabled={busy || !pool} onClick={onTest}>{busy ? t(language, 'checking') : t(language, 'testPool')}</button>
+      </div><button className="button button-primary" type="button" disabled={busy || !pool || !pool.data.trim()} onClick={onSave}>{busy ? t(language, 'saving') : t(language, 'savePool')}</button></div>
     </section>
     <section className="metric-grid mailbox-metrics">
       <Metric label={t(language, 'count')} value={pool?.count || 0} />
