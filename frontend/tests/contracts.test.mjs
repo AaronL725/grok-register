@@ -149,3 +149,16 @@ test('account and history screens keep secrets out of the visible account detail
   assert.ok(!detail.includes('account.password'))
   assert.ok(!detail.includes('account.sso'))
 })
+
+test('history attempt diagnostics are paginated and stale detail requests are ignored', async () => {
+  const history = await read('../src/app/history/HistoryPage.tsx')
+  assert.ok(history.includes("limit=' + PAGE_SIZE + '&offset=' + nextOffset"))
+  assert.ok(history.includes('attemptRequestVersion.current'))
+  assert.ok(history.includes('jobRequestVersion.current'))
+})
+
+test('bulk account selection stays within backend reauthentication batch size', async () => {
+  const accounts = await read('../src/app/accounts/AccountsPage.tsx')
+  assert.ok(accounts.includes('selected.size >= 200'))
+  assert.ok(accounts.includes('selected.size > 200'))
+})
