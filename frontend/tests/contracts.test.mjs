@@ -35,19 +35,19 @@ test('numeric configuration inputs preserve empty values and validate ranges', a
 
 test('settings cannot be edited while a configuration save is in flight', async () => {
   const app = await read('../src/app/App.tsx')
-  assert.match(app, /<SettingsPage[\\s\\S]*?disabled=\{isBusy \\|\\| saving\}/)
+  assert.ok(app.includes('disabled={isBusy || saving}'))
 })
 
 test('mailbox drafts survive navigation until the user explicitly reloads', async () => {
   const app = await read('../src/app/App.tsx')
-  assert.match(app, /if \(page !== 'mailbox' \\|\\| mailbox\) return/)
-  assert.match(app, /onReload=\{\(\) => void mailboxAction\('reload'\)\}/)
+  assert.ok(app.includes("if (page !== 'mailbox' || mailbox || mailboxDirty) return"))
+  assert.ok(app.includes("onReload={() => void mailboxAction('reload')}"))
 })
 
 test('proxy preflight displays each target result and reports failures', async () => {
   const app = await read('../src/app/App.tsx')
-  assert.match(app, /preflight\.targets\.map/)
-  assert.match(app, /result\.result\.ok \? 'preflightPassed' : 'preflightFailed'/)
+  assert.ok(app.includes('preflight.targets.map'))
+  assert.ok(app.includes("result.result.ok ? 'preflightPassed' : 'preflightFailed'"))
 })
 
 test('layout includes responsive mobile breakpoints', async () => {
