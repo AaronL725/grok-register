@@ -90,6 +90,31 @@ class DatabaseTests(unittest.TestCase):
             count = connection.execute("SELECT COUNT(*) FROM account_artifacts").fetchone()[0]
         self.assertEqual(count, 2)
 
+    def test_concurrent_initialization_applies_schema_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        path = Path(self.temp_dir.name) / "shared" / "accounts.sqlite3"
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            databases = list(executor.map(lambda _index: Database(path), range(4)))
+        self.assertEqual({database.schema_version() for database in databases}, {SCHEMA_VERSION})
+        self.assertEqual(databases[0].account_count(), 0)
+
+    def test_registered_native_record_promotes_pending_source(self):
+        pending = {
+            "email": "native@example.com", "sso": "token",
+            "registration_status": "pending_recovery", "source": "legacy_pending",
+        }
+        registered = {
+            "email": "native@example.com", "sso": "token",
+            "registration_status": "registered", "source": "native",
+        }
+        self.database.insert_account(pending)
+        self.database.insert_account(registered)
+        with self.database.connection() as connection:
+            row = connection.execute("SELECT * FROM accounts").fetchone()
+        self.assertEqual(row["registration_status"], "registered")
+        self.assertEqual(row["source"], "native")
+
     def test_newer_database_schema_is_rejected(self):
         with self.database.transaction() as connection:
             connection.execute("PRAGMA user_version = %s" % (SCHEMA_VERSION + 1))
