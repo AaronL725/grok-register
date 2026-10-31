@@ -2,6 +2,10 @@
 
 The local control plane uses React 19, TypeScript and Vite. FastAPI remains the API owner and serves the compiled frontend from frontend/dist when it exists. If the frontend has not been built, the existing static WebUI remains available as a compatibility fallback.
 
+## Requirements
+
+Node.js 22.12 or newer.
+
 ## Build
 
 ~~~bash
