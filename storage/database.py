@@ -176,13 +176,14 @@ class Database:
         created_at = str(record.get("created_at") or utc_now())
         updated_at = str(record.get("updated_at") or created_at)
         profile = record.get("profile")
+        registration_status = str(record.get("registration_status") or "registered")
         source = str(record.get("source") or "native")
         existing = connection.execute(
             "SELECT id, registration_status FROM accounts WHERE email = ? COLLATE NOCASE AND sso = ?",
             (email, sso),
         ).fetchone()
         if existing is not None:
-            if record.get("registration_status") == "registered" and existing["registration_status"] == "pending_recovery":
+            if registration_status == "registered" and existing["registration_status"] == "pending_recovery":
                 connection.execute(
                     """UPDATE accounts
                        SET registration_status = 'registered', source = ?, updated_at = ?
@@ -202,7 +203,7 @@ class Database:
                 str(record.get("password") or ""),
                 sso,
                 str(record.get("email_provider") or ""),
-                str(record.get("registration_status") or "registered"),
+                registration_status,
                 str(record.get("authorization_status") or "unknown"),
                 source,
                 _json_text(profile),
