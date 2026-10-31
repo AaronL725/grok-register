@@ -116,6 +116,7 @@ export type ProxySnapshot = {
   persist_health?: boolean
   nodes?: ProxyNode[]
   sources?: Record<string, ProxySource>
+  error?: string
 }
 export type ProxyPreflightTarget = {
   url: string
