@@ -46,17 +46,6 @@ MICROSOFT_HTTP_CONCURRENCY = 6
 LogCallback = Optional[Callable[[str], None]]
 _MICROSOFT_HTTP_SEMAPHORE = threading.BoundedSemaphore(MICROSOFT_HTTP_CONCURRENCY)
 
-_CODE_TOKEN_PATTERN = r"([A-Z0-9]{3}-[A-Z0-9]{3}|[A-Z0-9]{4,8})"
-_CONTEXT_CODE_TOKEN_PATTERN = r"([A-Z0-9]{3}-[A-Z0-9]{3}|(?=[A-Z0-9]{0,7}\d)[A-Z0-9]{4,8})"
-_VERIFICATION_PATTERNS = (
-    rf"(?:confirmation|verification|security|one[-\s]?time)\s*(?:code|pin|passcode)\s*(?:is|:|：)\s*{_CODE_TOKEN_PATTERN}",
-    rf"(?:confirmation|verification|security|one[-\s]?time)\s*(?:code|pin|passcode)\s+{_CONTEXT_CODE_TOKEN_PATTERN}",
-    rf"(?:your\s+code|code|pin|passcode)\s*(?:is|:|：)\s*{_CODE_TOKEN_PATTERN}",
-    rf"(?:验证码|确认码|校验码|一次性密码)\s*(?:是|为|:|：)\s*{_CODE_TOKEN_PATTERN}",
-    rf"{_CODE_TOKEN_PATTERN}[\s\S]{{0,80}}?(?:is\s+your\s+(?:confirmation|verification|security)?\s*(?:code|pin|passcode)|(?:confirmation|verification)\s*code|作为您的验证码)",
-)
-
-
 
 @dataclass
 class OutlookAccount:
@@ -527,10 +516,6 @@ def _search_uids_after(client: imaplib.IMAP4_SSL, last_uid: int) -> list[int]:
     if status != "OK":
         raise RuntimeError(f"UID SEARCH 失败: {status}")
     return [uid for uid in _parse_uid_search(data) if uid > int(last_uid)]
-
-
-def _decode_header_value(value: str) -> str:
-    return decode_mime_header(value)
 
 
 def _message_from_fetch_data(data) -> tuple[str, str, str, str]:
