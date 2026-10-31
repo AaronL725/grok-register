@@ -33,7 +33,7 @@ const copy = {
     consoleDesc: '查看实时任务日志，支持搜索与复制。',
     local: '仅本机控制台', idle: '待机', running: '运行中', maintenance: '维护操作中', stopped: '已停止',
     target: '目标数量', success: '成功', failed: '失败', pending: '待恢复', uncertain: '结果不确定', warnings: '警告',
-    progress: '执行进度', quickActions: '快捷入口', latestActivity: '最新活动', systemHealth: '依赖健康检查',
+    progress: '执行进度', quickActions: '快捷入口', latestActivity: '最新活动', activityDesc: '最近的注册活动记录', systemHealth: '依赖健康检查',
     noActivity: '暂无活动记录', open: '打开', save: '保存修改', discard: '放弃修改', dirty: '项未保存',
     saved: '配置已保存', noChanges: '没有需要保存的修改', start: '开始任务', stop: '停止任务',
     staticCheck: '静态检查', onlineCheck: '联网检查', loading: '加载中…', loadFailed: '加载失败',
@@ -71,7 +71,7 @@ const copy = {
     consoleDesc: 'Inspect live task logs, search messages and copy output.',
     local: 'Local console only', idle: 'Idle', running: 'Running', maintenance: 'Maintenance', stopped: 'Stopped',
     target: 'Target', success: 'Succeeded', failed: 'Failed', pending: 'Pending', uncertain: 'Uncertain', warnings: 'Warnings',
-    progress: 'Execution progress', quickActions: 'Quick access', latestActivity: 'Latest activity', systemHealth: 'Dependency health',
+    progress: 'Execution progress', quickActions: 'Quick access', latestActivity: 'Latest activity', activityDesc: 'Recent registration activity', systemHealth: 'Dependency health',
     noActivity: 'No recent activity', open: 'Open', save: 'Save changes', discard: 'Discard changes', dirty: 'unsaved',
     saved: 'Configuration saved', noChanges: 'There are no changes to save', start: 'Start task', stop: 'Stop task',
     staticCheck: 'Static check', onlineCheck: 'Connectivity check', loading: 'Loading…', loadFailed: 'Load failed',
@@ -252,7 +252,7 @@ function OverviewPage({ status, logs, health, language, onNavigate }: {
       </section>
     </div>
     <section className="surface activity-surface">
-      <div className="surface-heading"><div><h2>{t(language, 'latestActivity')}</h2><p>{t(language, 'noActivity')}</p></div><button className="text-button" type="button" onClick={() => onNavigate('console')}>{t(language, 'open')} ↗</button></div>
+      <div className="surface-heading"><div><h2>{t(language, 'latestActivity')}</h2><p>{t(language, 'activityDesc')}</p></div><button className="text-button" type="button" onClick={() => onNavigate('console')}>{t(language, 'open')} ↗</button></div>
       {logs.length ? <div className="activity-list">{logs.slice(-8).reverse().map(entry => <div className="activity-row" key={entry.seq}>
         <span className="activity-seq">{String(entry.seq).padStart(5, '0')}</span><span>{entry.line}</span>
       </div>)}</div> : <p className="empty-state">{t(language, 'noActivity')}</p>}
@@ -289,10 +289,12 @@ function ProxyPage({ snapshot, preflight, busy, language, onAction }: {
       <div className="surface-heading"><div><h2>{t(language, 'source')}</h2><p>{language === 'zh' ? '本地文件与订阅源解析摘要' : 'Local file and subscription parsing summary'}</p></div></div>
       <div className="source-grid">{(['subscription', 'file'] as const).map(key => {
         const source = sources[key]
+        const protocols = Object.entries(source?.protocol_counts || {})
+          .map(([name, count]) => name + ':' + count).join(' · ')
         return <div className="source-card" key={key}>
           <strong>{key === 'subscription' ? (language === 'zh' ? '远端订阅' : 'Subscription') : (language === 'zh' ? '本地文件' : 'Local file')}</strong>
           <span>{source ? (source.supported || 0) + ' / ' + (source.total_lines || 0) : '—'}</span>
-          <small>{source ? [source.decoded_base64 ? 'Base64' : '', source.stale ? 'Last known good (stale)' : '', source.skipped ? 'Skipped: ' + source.skipped : '', source.error || ''].filter(Boolean).join(' · ') || 'OK' : '—'}</small>
+          <small>{source ? [source.decoded_base64 ? 'Base64' : '', protocols, source.stale ? 'Last known good (stale)' : '', source.skipped ? 'Skipped: ' + source.skipped : '', source.error || ''].filter(Boolean).join(' · ') || 'OK' : '—'}</small>
         </div>
       })}</div>
     </section>
@@ -521,6 +523,7 @@ export function App() {
   const isBusy = status.running || Boolean(status.maintenance)
 
   const changeConfig = (key: string, value: ConfigValue) => {
+    setHealth(null)
     setConfig(previous => ({ ...previous, [key]: value }))
     setDirty(previous => new Set(previous).add(key))
   }
@@ -644,6 +647,7 @@ export function App() {
           accounts: result.accounts,
         } : previous)
         setConfig(previous => ({ ...previous, outlook_accounts_file: result.path }))
+        setHealth(null)
         setMailboxDirty(false)
         setMailboxTest(null)
         setNotice({ text: t(language, 'mailboxSaved') })
