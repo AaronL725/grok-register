@@ -345,14 +345,14 @@ function ConsolePage({ logs, language, onClear, onCopy }: {
 }) {
   const [query, setQuery] = useState('')
   const terminalRef = useRef<HTMLDivElement>(null)
+  const followLogs = useRef(true)
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return needle ? logs.filter(entry => entry.line.toLowerCase().includes(needle)) : logs
   }, [logs, query])
   useEffect(() => {
     const terminal = terminalRef.current
-    if (!terminal) return
-    if (terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 100) terminal.scrollTop = terminal.scrollHeight
+    if (terminal && followLogs.current) terminal.scrollTop = terminal.scrollHeight
   }, [filtered.length])
   return <section className="surface console-surface">
     <div className="console-toolbar">
@@ -362,7 +362,10 @@ function ConsolePage({ logs, language, onClear, onCopy }: {
         <button className="button button-quiet" type="button" onClick={onClear}>{t(language, 'clearLogs')}</button>
       </div>
     </div>
-    <div className="terminal" ref={terminalRef}>
+    <div className="terminal" ref={terminalRef} onScroll={() => {
+      const terminal = terminalRef.current
+      if (terminal) followLogs.current = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 100
+    }}>
       {filtered.length ? filtered.map(entry => {
         const tone = entry.line.includes('[!]') ? 'log-error' : entry.line.toLowerCase().includes('warn') ? 'log-warn' : entry.line.includes('[+]') ? 'log-good' : ''
         return <div className={'terminal-line ' + tone} key={entry.seq}><span className="terminal-seq">{String(entry.seq).padStart(5, '0')}</span><span>{entry.line}</span></div>
@@ -390,6 +393,7 @@ export function App() {
   const [mailboxBusy, setMailboxBusy] = useState(false)
   const lastSeq = useRef(0)
   const serverLatest = useRef(0)
+  const pollingLogs = useRef(false)
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -406,6 +410,8 @@ export function App() {
   }, [])
 
   const refreshLogs = useCallback(async () => {
+    if (pollingLogs.current) return
+    pollingLogs.current = true
     try {
       const data = await api<LogsResponse>('/api/logs?after=' + lastSeq.current)
       serverLatest.current = data.latest
@@ -415,6 +421,8 @@ export function App() {
       }
     } catch {
       // Keep the console usable while the log endpoint is temporarily unavailable.
+    } finally {
+      pollingLogs.current = false
     }
   }, [])
 
@@ -553,8 +561,13 @@ export function App() {
         await refreshMailbox()
         setNotice({ text: t(language, 'loadPool') })
       } else if (action === 'save') {
-        const result = await put<MailboxResponse>('/api/mailboxes/outlook', { path: mailbox.path, data: mailbox.data })
-        setMailbox(result)
+        const result = await put<{ ok: boolean; path: string; count: number; accounts?: MailboxPool['accounts'] }>('/api/mailboxes/outlook', {
+          path: mailbox.path, data: mailbox.data,
+        })
+        setMailbox(previous => previous ? {
+          ...previous, path: result.path, count: result.count, invalid: 0, duplicates: [],
+          accounts: result.accounts,
+        } : previous)
         setMailboxTest(null)
         setNotice({ text: t(language, 'mailboxSaved') })
       } else {
