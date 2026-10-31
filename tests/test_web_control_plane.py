@@ -467,6 +467,10 @@ class WebControlPlaneTests(unittest.TestCase):
             wrong_run = self.client.get(
                 "/api/jobs/history/999/attempts/%s/screenshot" % attempt_id
             )
+            cross_origin = self.client.get(
+                "/api/jobs/history/%s/attempts/%s/screenshot" % (run_id, attempt_id),
+                headers={"origin": "https://attacker.example"},
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["cache-control"], "no-store")
@@ -475,6 +479,7 @@ class WebControlPlaneTests(unittest.TestCase):
         self.assertEqual(response.content, b"fake-png")
         self.assertEqual(outside_response.status_code, 404)
         self.assertEqual(wrong_run.status_code, 404)
+        self.assertEqual(cross_origin.status_code, 403)
 
     def test_account_api_requires_same_origin_for_sensitive_detail(self):
         database = self._new_database()
