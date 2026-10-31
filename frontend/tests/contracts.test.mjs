@@ -44,6 +44,12 @@ test('mailbox drafts survive navigation until the user explicitly reloads', asyn
   assert.ok(app.includes("onReload={() => void mailboxAction('reload')}"))
 })
 
+test('mailbox inputs and actions stay disabled until pool data is loaded', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.ok(app.includes('disabled={busy || !pool}'))
+  assert.ok(app.includes('disabled={busy || !pool || !pool.data.trim()}'))
+})
+
 test('proxy preflight displays each target result and reports failures', async () => {
   const app = await read('../src/app/App.tsx')
   assert.ok(app.includes('preflight.targets.map'))
