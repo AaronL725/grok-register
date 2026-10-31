@@ -294,7 +294,7 @@ python grok_register_ttk.py check --connectivity
 
 ### 已有账号重新认证
 
-SQLite 账号支持正常邮箱密码重新登录、SSO 更新、旧版 TXT 文件同步以及 CPA/Grok2API 授权恢复。任务可停止、查看进度和历史，使用本地 WebUI API 操作；完整图形化账号管理将在 React 前端阶段加入。
+SQLite 账号支持正常邮箱密码重新登录、SSO 更新、旧版 TXT 文件同步以及 CPA/Grok2API 授权恢复。React WebUI 现已提供账号筛选、详情、批量删除与导出、重新登录控制、注册历史和失败截图查看。
 
 详细说明见[重新认证与授权恢复](docs/reauthentication.md)。
 
@@ -612,7 +612,7 @@ python grok_register_ttk.py retry-pending <pending文件> [输出文件]
 ├── cpa_export.py              # CPA/OIDC 导出入口
 ├── cpa_xai/                   # CPA 浏览器、OAuth、代理辅助与凭证写入
 ├── frontend/
-│   ├── src/app/               # React 页面与配置字段
+│   ├── src/app/               # React 页面、账号管理、任务历史与配置字段
 │   ├── src/lib/               # TypeScript API contracts
 │   └── package.json           # React / TypeScript / Vite
 ├── web/
