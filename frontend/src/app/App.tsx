@@ -653,25 +653,14 @@ export function App() {
   }
 
   const mailboxAction = async (action: 'reload' | 'save' | 'test') => {
-    if (action === 'reload') {
-      setMailboxBusy(true)
-      try {
-        await refreshMailbox()
-        setNotice({ text: t(language, 'loadPool') })
-      } catch (error) {
-        setNotice({ text: errorMessage(error), error: true })
-      } finally {
-        setMailboxBusy(false)
-        void refreshStatus()
-      }
-      return
-    }
-
-    if (!mailbox) return
+    if (action !== 'reload' && !mailbox) return
     if (action === 'test') setMailboxTest(null)
     setMailboxBusy(true)
     try {
-      if (action === 'save') {
+      if (action === 'reload') {
+        await refreshMailbox()
+        setNotice({ text: t(language, 'loadPool') })
+      } else if (action === 'save' && mailbox) {
         const result = await put<{ ok: boolean; path: string; count: number; accounts?: MailboxPool['accounts'] }>('/api/mailboxes/outlook', {
           path: mailbox.path, data: mailbox.data,
         })
@@ -684,7 +673,7 @@ export function App() {
         setMailboxDirty(false)
         setMailboxTest(null)
         setNotice({ text: t(language, 'mailboxSaved') })
-      } else {
+      } else if (mailbox) {
         const result = await post<MailboxTest>('/api/mailboxes/outlook/test', { data: mailbox.data })
         setMailboxTest(result)
         setNotice({ text: t(language, 'mailboxTested'), error: result.unhealthy > 0 })
