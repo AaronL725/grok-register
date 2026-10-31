@@ -52,7 +52,8 @@ const words = {
     noPassword: '没有保存密码的账号会在任务中标记为失败。',
     selectionLimit: '一次最多选择 200 个账号。',
     registered: '已注册', pending_recovery: '待恢复', registered_unsaved: '未保存',
-    authorized: '已授权', unknown: '未知', expired: '已过期', succeeded_state: '成功',
+    authorized: '已授权', unknown: '未知', expired: '已过期', pending: '等待中',
+    running: '进行中', completed: '已完成', cancelled: '已取消', succeeded_state: '成功',
     failed_state: '失败', warning: '警告', not_requested: '未请求',
     native: '原生注册', legacy_txt: '旧版 TXT', noProvider: '未记录',
   },
@@ -78,7 +79,8 @@ const words = {
     noPassword: 'Accounts without a saved password will be marked as failed by the job.',
     selectionLimit: 'Select at most 200 accounts at a time.',
     registered: 'Registered', pending_recovery: 'Pending recovery', registered_unsaved: 'Unsaved',
-    authorized: 'Authorized', unknown: 'Unknown', expired: 'Expired', succeeded_state: 'Succeeded',
+    authorized: 'Authorized', unknown: 'Unknown', expired: 'Expired', pending: 'Pending',
+    running: 'Running', completed: 'Completed', cancelled: 'Cancelled', succeeded_state: 'Succeeded',
     failed_state: 'Failed', warning: 'Warning', not_requested: 'Not requested',
     native: 'Native registration', legacy_txt: 'Legacy TXT', noProvider: 'Not recorded',
   },
@@ -109,7 +111,8 @@ function Metric({ label: title, value, tone = '' }: { label: string; value: numb
 function StatePill({ value, language }: { value: string; language: Language }) {
   const tone = value === 'authorized' || value === 'registered' || value === 'succeeded'
     ? 'good' : value === 'failed' || value === 'expired' ? 'bad'
-      : value === 'warning' || value === 'pending_recovery' || value === 'running' ? 'warn' : ''
+      : value === 'warning' || value === 'pending_recovery' || value === 'pending'
+        || value === 'running' || value === 'skipped' ? 'warn' : ''
   return <span className={'state-pill ' + tone}>{stateLabel(value, language)}</span>
 }
 
@@ -458,7 +461,7 @@ export function AccountsPage({ language, busy, onNotice }: {
           <Metric label={label(language, 'failed')} value={counts.failed} tone={counts.failed ? 'tone-bad' : ''} />
           <Metric label={label(language, 'skipped')} value={counts.skipped} />
         </div>
-        <div className="reauth-job-meta"><span>#{job.id} · {job.status}</span><span>{formatDate(job.started_at, language)}</span></div>
+        <div className="reauth-job-meta"><span>#{job.id} · {stateLabel(job.status, language)}</span><span>{formatDate(job.started_at, language)}</span></div>
         {job.error_message && <p className="attempt-error">{job.error_message}</p>}
         {job.items && <div className="reauth-item-list">{job.items.map(item => <div className="reauth-item" key={item.account_id}>
           <strong>{item.email}</strong><StatePill value={item.status} language={language} />
