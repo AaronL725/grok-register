@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api, post, postText,
   type AccountDetail, type AccountListItem, type ReauthStatus,
@@ -50,6 +50,7 @@ const words = {
     stopSent: '已发送停止请求', startSent: '重新登录任务已启动', deleteConfirm: '确定删除选中的账号吗？此操作不会修改旧版 TXT 文件。',
     deleteDone: '已删除账号', exportDone: '账号导出已开始', reauthLimit: '每批最多选择 200 个账号进行重新登录。',
     noPassword: '没有保存密码的账号会在任务中标记为失败。',
+    selectionLimit: '一次最多选择 200 个账号。',
     registered: '已注册', pending_recovery: '待恢复', registered_unsaved: '未保存',
     authorized: '已授权', unknown: '未知', expired: '已过期', succeeded_state: '成功',
     failed_state: '失败', warning: '警告', not_requested: '未请求',
@@ -75,6 +76,7 @@ const words = {
     stopSent: 'Stop request sent', startSent: 'Reauthentication job started', deleteConfirm: 'Delete the selected accounts? This does not modify legacy TXT files.',
     deleteDone: 'Accounts deleted', exportDone: 'Account export started', reauthLimit: 'Select at most 200 accounts per reauthentication batch.',
     noPassword: 'Accounts without a saved password will be marked as failed by the job.',
+    selectionLimit: 'Select at most 200 accounts at a time.',
     registered: 'Registered', pending_recovery: 'Pending recovery', registered_unsaved: 'Unsaved',
     authorized: 'Authorized', unknown: 'Unknown', expired: 'Expired', succeeded_state: 'Succeeded',
     failed_state: 'Failed', warning: 'Warning', not_requested: 'Not requested',
@@ -199,8 +201,12 @@ export function AccountsPage({ language, busy, onNotice }: {
   const [detailLoading, setDetailLoading] = useState(false)
   const [reauth, setReauth] = useState<ReauthStatus>({ running: false, job: null })
   const [reauthBusy, setReauthBusy] = useState(false)
+  const accountRequestVersion = useRef(0)
+  const detailRequestVersion = useRef(0)
+  const reauthRequestVersion = useRef(0)
 
   const refreshAccounts = useCallback(async () => {
+    const requestVersion = ++accountRequestVersion.current
     setLoading(true)
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) })
@@ -211,19 +217,24 @@ export function AccountsPage({ language, busy, onNotice }: {
       const result = await api<{ items: AccountListItem[]; total: number }>(
         '/api/accounts?' + params.toString(),
       )
+      if (requestVersion !== accountRequestVersion.current) return
       setItems(result.items)
       setTotal(result.total)
       if (offset > 0 && offset >= result.total) setOffset(Math.max(0, offset - PAGE_SIZE))
     } catch (error) {
-      onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      if (requestVersion === accountRequestVersion.current) {
+        onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      }
     } finally {
-      setLoading(false)
+      if (requestVersion === accountRequestVersion.current) setLoading(false)
     }
   }, [filters, offset, onNotice, search])
 
   const refreshReauth = useCallback(async () => {
+    const requestVersion = ++reauthRequestVersion.current
     try {
-      setReauth(await api<ReauthStatus>('/api/reauth/status'))
+      const result = await api<ReauthStatus>('/api/reauth/status')
+      if (requestVersion === reauthRequestVersion.current) setReauth(result)
     } catch {
       // Reauthentication status is refreshed again on the next poll.
     }
@@ -247,6 +258,10 @@ export function AccountsPage({ language, busy, onNotice }: {
   }
 
   const toggleAccount = (id: number, checked: boolean) => {
+    if (checked && !selected.has(id) && selected.size >= 200) {
+      onNotice({ text: label(language, 'selectionLimit'), error: true })
+      return
+    }
     setSelected(previous => {
       const next = new Set(previous)
       if (checked) next.add(id)
@@ -256,6 +271,10 @@ export function AccountsPage({ language, busy, onNotice }: {
   }
 
   const toggleCurrentPage = () => {
+    if (!allCurrentSelected && selected.size + currentIds.filter(id => !selected.has(id)).length > 200) {
+      onNotice({ text: label(language, 'selectionLimit'), error: true })
+      return
+    }
     setSelected(previous => {
       const next = new Set(previous)
       if (allCurrentSelected) currentIds.forEach(id => next.delete(id))
@@ -265,14 +284,17 @@ export function AccountsPage({ language, busy, onNotice }: {
   }
 
   const openDetail = async (id: number) => {
+    const requestVersion = ++detailRequestVersion.current
     setDetailLoading(true)
     try {
       const result = await api<{ account: AccountDetail }>('/api/accounts/' + id)
-      setDetail(result.account)
+      if (requestVersion === detailRequestVersion.current) setDetail(result.account)
     } catch (error) {
-      onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      if (requestVersion === detailRequestVersion.current) {
+        onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      }
     } finally {
-      setDetailLoading(false)
+      if (requestVersion === detailRequestVersion.current) setDetailLoading(false)
     }
   }
 
