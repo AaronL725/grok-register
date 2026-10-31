@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   api,
   type RegistrationAttempt, type RegistrationRun, type ReauthJob,
@@ -121,39 +121,52 @@ export function HistoryPage({ language, onNotice }: {
   const [selectedRun, setSelectedRun] = useState<RegistrationRun | null>(null)
   const [attempts, setAttempts] = useState<RegistrationAttempt[]>([])
   const [attemptLoading, setAttemptLoading] = useState(false)
+  const [attemptOffset, setAttemptOffset] = useState(0)
+  const [attemptTotal, setAttemptTotal] = useState(0)
   const [reauthJobs, setReauthJobs] = useState<ReauthJob[]>([])
   const [reauthTotal, setReauthTotal] = useState(0)
   const [selectedJob, setSelectedJob] = useState<ReauthJob | null>(null)
+  const historyRequestVersion = useRef(0)
+  const attemptRequestVersion = useRef(0)
+  const jobRequestVersion = useRef(0)
 
   const refreshRegistration = useCallback(async () => {
+    const requestVersion = ++historyRequestVersion.current
     setLoading(true)
     try {
       const result = await api<{ items: RegistrationRun[]; total: number }>(
         '/api/jobs/history?limit=' + PAGE_SIZE + '&offset=' + offset,
       )
+      if (requestVersion !== historyRequestVersion.current) return
       setRuns(result.items)
       setRunTotal(result.total)
       if (offset > 0 && offset >= result.total) setOffset(Math.max(0, offset - PAGE_SIZE))
     } catch (error) {
-      onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      if (requestVersion === historyRequestVersion.current) {
+        onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      }
     } finally {
-      setLoading(false)
+      if (requestVersion === historyRequestVersion.current) setLoading(false)
     }
   }, [offset, onNotice])
 
   const refreshReauth = useCallback(async () => {
+    const requestVersion = ++historyRequestVersion.current
     setLoading(true)
     try {
       const result = await api<{ items: ReauthJob[]; total: number }>(
         '/api/reauth/history?limit=' + PAGE_SIZE + '&offset=' + offset,
       )
+      if (requestVersion !== historyRequestVersion.current) return
       setReauthJobs(result.items)
       setReauthTotal(result.total)
       if (offset > 0 && offset >= result.total) setOffset(Math.max(0, offset - PAGE_SIZE))
     } catch (error) {
-      onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      if (requestVersion === historyRequestVersion.current) {
+        onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      }
     } finally {
-      setLoading(false)
+      if (requestVersion === historyRequestVersion.current) setLoading(false)
     }
   }, [offset, onNotice])
 
@@ -162,31 +175,47 @@ export function HistoryPage({ language, onNotice }: {
     else void refreshReauth()
   }, [tab, refreshRegistration, refreshReauth])
 
+  const loadAttempts = useCallback(async (runId: number, nextOffset: number) => {
+    const requestVersion = ++attemptRequestVersion.current
+    setAttemptLoading(true)
+    try {
+      const result = await api<{ items: RegistrationAttempt[]; total: number }>(
+        '/api/jobs/history/' + runId + '/attempts?limit=' + PAGE_SIZE + '&offset=' + nextOffset,
+      )
+      if (requestVersion === attemptRequestVersion.current) {
+        setAttempts(result.items)
+        setAttemptTotal(result.total)
+        setAttemptOffset(nextOffset)
+      }
+    } catch (error) {
+      if (requestVersion === attemptRequestVersion.current) {
+        onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      }
+    } finally {
+      if (requestVersion === attemptRequestVersion.current) setAttemptLoading(false)
+    }
+  }, [onNotice])
+
   const openRun = async (run: RegistrationRun) => {
     setSelectedRun(run)
     setSelectedJob(null)
     setAttempts([])
-    setAttemptLoading(true)
-    try {
-      const result = await api<{ items: RegistrationAttempt[] }>(
-        '/api/jobs/history/' + run.id + '/attempts?limit=200&offset=0',
-      )
-      setAttempts(result.items)
-    } catch (error) {
-      onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
-    } finally {
-      setAttemptLoading(false)
-    }
+    setAttemptTotal(0)
+    setAttemptOffset(0)
+    await loadAttempts(run.id, 0)
   }
 
   const openJob = async (job: ReauthJob) => {
+    const requestVersion = ++jobRequestVersion.current
     setSelectedJob(job)
     setSelectedRun(null)
     try {
       const result = await api<{ job: ReauthJob }>('/api/reauth/jobs/' + job.id)
-      setSelectedJob(result.job)
+      if (requestVersion === jobRequestVersion.current) setSelectedJob(result.job)
     } catch (error) {
-      onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      if (requestVersion === jobRequestVersion.current) {
+        onNotice({ text: error instanceof Error ? error.message : String(error), error: true })
+      }
     }
   }
 
@@ -195,6 +224,8 @@ export function HistoryPage({ language, onNotice }: {
     setOffset(0)
     setSelectedRun(null)
     setSelectedJob(null)
+    attemptRequestVersion.current += 1
+    jobRequestVersion.current += 1
   }
 
   const total = tab === 'registration' ? runTotal : reauthTotal
@@ -252,13 +283,24 @@ export function HistoryPage({ language, onNotice }: {
 
     {selectedRun && <section className="surface">
       <div className="surface-heading">
-        <div><h2>Registration run #{selectedRun.id}</h2><p>{date(selectedRun.started_at, language)} · {selectedRun.status}</p></div>
-        <button className="button button-quiet" type="button" onClick={() => setSelectedRun(null)}>{t(language, 'close')} ×</button>
+        <div><h2>Registration run #{selectedRun.id}</h2><p>{date(selectedRun.started_at, language)} · {selectedRun.status} · {t(language, 'attempts')}: {attemptTotal}</p></div>
+        <button className="button button-quiet" type="button" onClick={() => { setSelectedRun(null); attemptRequestVersion.current += 1 }}>{t(language, 'close')} ×</button>
       </div>
       {selectedRun.error_message && <p className="attempt-error">{selectedRun.error_message}</p>}
       {attemptLoading ? <p className="empty-state">{t(language, 'loading')}</p>
-        : attempts.length ? <AttemptList runId={selectedRun.id} attempts={attempts} language={language} />
-          : <p className="empty-state">{t(language, 'noAttempts')}</p>}
+        : attempts.length ? <>
+          <AttemptList runId={selectedRun.id} attempts={attempts} language={language} />
+          <div className="pagination">
+            <span>{t(language, 'total')} {attemptTotal}</span>
+            <div className="toolbar-actions">
+              <button className="button button-quiet" type="button" disabled={attemptOffset === 0 || attemptLoading}
+                onClick={() => void loadAttempts(selectedRun.id, Math.max(0, attemptOffset - PAGE_SIZE))}>{t(language, 'previous')}</button>
+              <span>{t(language, 'page')} {Math.floor(attemptOffset / PAGE_SIZE) + 1} / {Math.max(1, Math.ceil(attemptTotal / PAGE_SIZE))}</span>
+              <button className="button button-quiet" type="button" disabled={attemptOffset + PAGE_SIZE >= attemptTotal || attemptLoading}
+                onClick={() => void loadAttempts(selectedRun.id, attemptOffset + PAGE_SIZE)}>{t(language, 'next')}</button>
+            </div>
+          </div>
+        </> : <p className="empty-state">{t(language, 'noAttempts')}</p>}
     </section>}
 
     {selectedJob && <section className="surface">
