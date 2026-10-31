@@ -9,6 +9,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests
 from registration_flow import VerificationCodeUnavailable
+from email_parser import (
+    extract_verification_code as _extract_verification_code,
+    normalize_mail_sources,
+)
 
 DUCKMAIL_API_BASE = "https://api.duckmail.sbs"
 
@@ -61,23 +65,13 @@ def bind_runtime(namespace):
 
 
 def normalize_mail_body(*sources):
-    """Return normalized text from provider payloads with string/list HTML support."""
-    parts = []
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        for key in ("text", "raw", "content", "intro", "body", "snippet"):
-            value = source.get(key)
-            values = value if isinstance(value, (list, tuple)) else [value]
-            for item in values:
-                if isinstance(item, str) and item.strip():
-                    parts.append(item)
-        html_value = source.get("html")
-        html_items = html_value if isinstance(html_value, (list, tuple)) else [html_value]
-        for item in html_items:
-            if isinstance(item, str) and item.strip():
-                parts.append(re.sub(r"<[^>]+>", " ", item))
-    return "\n".join(parts)
+    """Return visible text from provider payloads or RFC 822/MIME messages."""
+    return normalize_mail_sources(*sources)[1]
+
+
+def extract_verification_code(text, subject=""):
+    """Preserve the provider-facing API while using the shared MIME-aware parser."""
+    return _extract_verification_code(text, subject)
 
 
 def _pick_list_payload(data):
