@@ -197,6 +197,7 @@ export function HistoryPage({ language, onNotice }: {
   }, [onNotice])
 
   const openRun = async (run: RegistrationRun) => {
+    jobRequestVersion.current += 1
     setSelectedRun(run)
     setSelectedJob(null)
     setAttempts([])
@@ -206,6 +207,7 @@ export function HistoryPage({ language, onNotice }: {
   }
 
   const openJob = async (job: ReauthJob) => {
+    attemptRequestVersion.current += 1
     const requestVersion = ++jobRequestVersion.current
     setSelectedJob(job)
     setSelectedRun(null)
