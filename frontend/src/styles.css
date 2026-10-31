@@ -272,3 +272,13 @@ a { color: inherit; text-decoration: none; }
   .mailbox-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .mail-test-row { grid-template-columns: 1fr; }
 }
+
+
+.preflight-results { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.preflight-target { display: grid; align-content: start; justify-items: start; gap: 9px; min-width: 0; padding: 14px; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(255,255,255,.018); }
+.preflight-target strong { max-width: 100%; color: #dce7f2; font-size: 11px; overflow-wrap: anywhere; }
+.preflight-target small { color: #8292a7; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.preflight-target .preflight-error { color: #f08c8c; }
+@media (max-width: 700px) {
+  .preflight-results { grid-template-columns: 1fr; }
+}
