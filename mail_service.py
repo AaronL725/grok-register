@@ -728,30 +728,6 @@ def duckmail_get_oai_code(
         sleep_with_cancel(poll_interval, cancel_callback)
     raise VerificationCodeUnavailable(f"在 {timeout}s 内未收到验证码邮件")
 
-def extract_verification_code(text, subject=""):
-    if subject:
-        subject_patterns = [
-            r"^([A-Z0-9]{3}-[A-Z0-9]{3})\s+xAI\b",
-            r"\b(?:confirmation|verification)\s+code\s*:\s*([A-Z0-9]{3}-[A-Z0-9]{3})\b",
-        ]
-        for pattern in subject_patterns:
-            match = re.search(pattern, subject, re.IGNORECASE)
-            if match:
-                return match.group(1)
-    match = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b", text, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    patterns = [
-        r"verification\s+code[:\s]+(\d{4,8})",
-        r"your\s+code[:\s]+(\d{4,8})",
-        r"confirm(?:ation)?\s+code[:\s]+(\d{4,8})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1)
-    return None
-
 def generate_username(length=10):
     chars = string.ascii_lowercase + string.digits
     return "".join(secrets.choice(chars) for _ in range(length))
