@@ -373,6 +373,7 @@ function MailboxPage({ pool, test, language, busy, dirty, onReload, onSave, onTe
       <Metric label={t(language, 'invalid')} value={pool?.invalid || 0} tone={pool?.invalid ? 'tone-bad' : ''} />
       <Metric label={t(language, 'duplicates')} value={pool?.duplicates.length || 0} tone={pool?.duplicates.length ? 'tone-warn' : ''} />
       {test && <Metric label={t(language, 'healthyMail')} value={test.healthy} tone="tone-good" />}
+      {test && <Metric label={t(language, 'unhealthyMail')} value={test.unhealthy} tone={test.unhealthy ? 'tone-bad' : ''} />}
     </section>
     {pool?.duplicates.length ? <section className="surface"><div className="surface-heading"><h2>{t(language, 'duplicates')}</h2></div><p className="muted">{pool.duplicates.join(' · ')}</p></section> : null}
     {test && <section className="surface"><div className="surface-heading"><div><h2>{t(language, 'testResults')}</h2><p>{test.healthy}/{test.count} · IMAP {test.imap} · Graph {test.graph}</p></div></div>
