@@ -653,14 +653,25 @@ export function App() {
   }
 
   const mailboxAction = async (action: 'reload' | 'save' | 'test') => {
+    if (action === 'reload') {
+      setMailboxBusy(true)
+      try {
+        await refreshMailbox()
+        setNotice({ text: t(language, 'loadPool') })
+      } catch (error) {
+        setNotice({ text: errorMessage(error), error: true })
+      } finally {
+        setMailboxBusy(false)
+        void refreshStatus()
+      }
+      return
+    }
+
     if (!mailbox) return
     if (action === 'test') setMailboxTest(null)
     setMailboxBusy(true)
     try {
-      if (action === 'reload') {
-        await refreshMailbox()
-        setNotice({ text: t(language, 'loadPool') })
-      } else if (action === 'save') {
+      if (action === 'save') {
         const result = await put<{ ok: boolean; path: string; count: number; accounts?: MailboxPool['accounts'] }>('/api/mailboxes/outlook', {
           path: mailbox.path, data: mailbox.data,
         })
