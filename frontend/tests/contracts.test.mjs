@@ -118,3 +118,34 @@ test('layout includes responsive mobile breakpoints', async () => {
   assert.match(css, /max-width: 700px/)
   assert.match(css, /max-width: 420px/)
 })
+
+test('account workspace covers filtering, detail, export, delete and reauthentication', async () => {
+  const app = await read('../src/app/App.tsx')
+  const accounts = await read('../src/app/accounts/AccountsPage.tsx')
+  for (const page of ['accounts', 'history']) assert.ok(app.includes("'" + page + "'"))
+  for (const endpoint of [
+    '/api/accounts?', '/api/accounts/', '/api/accounts/export',
+    '/api/reauth/status', '/api/reauth/start', '/api/reauth/stop',
+  ]) assert.ok(accounts.includes(endpoint), 'missing account workflow: ' + endpoint)
+  assert.ok(accounts.includes("method: 'DELETE'"))
+  assert.ok(accounts.includes('window.confirm'))
+  assert.ok(accounts.includes('new Blob([text]'))
+})
+
+test('history workspace exposes registration attempts, reauthentication jobs and screenshot previews', async () => {
+  const history = await read('../src/app/history/HistoryPage.tsx')
+  for (const endpoint of [
+    '/api/jobs/history?', '/api/jobs/history/', '/api/reauth/history',
+    '/api/reauth/jobs/', '/screenshot',
+  ]) assert.ok(history.includes(endpoint), 'missing history integration: ' + endpoint)
+  assert.ok(history.includes('attempt.traceback'))
+  assert.ok(history.includes('attempt.screenshot_path'))
+})
+
+test('account and history screens keep secrets out of the visible account detail', async () => {
+  const accounts = await read('../src/app/accounts/AccountsPage.tsx')
+  const detail = accounts.slice(accounts.indexOf('function AccountDetailPanel'), accounts.indexOf('export function AccountsPage'))
+  assert.ok(detail.includes('account.email'))
+  assert.ok(!detail.includes('account.password'))
+  assert.ok(!detail.includes('account.sso'))
+})
