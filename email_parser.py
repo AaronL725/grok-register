@@ -21,7 +21,7 @@ _BLOCK_TAGS = {
     "table", "tr", "ul",
 }
 _CODE = r"(?:[A-Z0-9]{3}-[A-Z0-9]{3}|(?=[A-Z0-9]{0,7}\d)[A-Z0-9]{4,8})"
-_CODE_BOUNDARY = r"(?<![A-Z0-9])" + _CODE + r"(?![A-Z0-9])"
+_CODE_BOUNDARY = r"(?<![A-Z0-9])(" + _CODE + r")(?![A-Z0-9])"
 _SUBJECT_PATTERNS = (
     rf"^\s*({_CODE})\s+xAI\b",
     rf"(?:confirmation|verification)\s+code\s*[:：]\s*({_CODE})",
