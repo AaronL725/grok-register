@@ -538,10 +538,12 @@ export function App() {
     if (dirty.size && !(await saveConfig())) return
     setProxyBusy(true)
     try {
-      const path = action === 'preflight'
-        ? '/api/proxy-pool/preflight?node_id=' + encodeURIComponent(nodeId || '')
-        : '/api/proxy-pool/' + action
-      const result = await post<ProxyActionResponse>(path)
+      const paths = {
+        reload: '/api/proxy-pool/reload',
+        test: '/api/proxy-pool/test',
+        preflight: '/api/proxy-pool/preflight?node_id=' + encodeURIComponent(nodeId || ''),
+      }
+      const result = await post<ProxyActionResponse>(paths[action])
       if (result.nodes) setProxy(result)
       else await refreshProxy()
       setNotice({ text: action === 'preflight' ? t(language, 'preflightDone') : t(language, action === 'reload' ? 'reload' : 'test') })
