@@ -9,10 +9,14 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from email import message_from_bytes
-from email.header import decode_header
-from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
+
+from email_parser import (
+    decode_mime_header,
+    extract_verification_code as _extract_verification_code,
+    normalize_text,
+    parse_mime_message,
+)
 from typing import Callable, Optional, Union
 from urllib.parse import quote
 
@@ -155,19 +159,21 @@ def _trusted_xai_sender(sender: str) -> bool:
 def extract_verification_code(
     subject: str = "", text: str = "", html: str = "", sender: str = ""
 ) -> Optional[str]:
-    """Extract an OTP only from explicit verification context or trusted xAI/Grok mail."""
-    combined = "\n".join(str(value or "") for value in (subject, text, html))
-    for pattern in _VERIFICATION_PATTERNS:
-        match = re.search(pattern, combined, re.I | re.S)
-        if match:
-            return match.group(1)
+    """Extract an OTP from visible MIME content or a trusted xAI/Grok message."""
+    visible_text = normalize_text(text)
+    visible_html = normalize_text(html)
+    combined = "\n".join(part for part in (visible_text, visible_html) if part)
+    code = _extract_verification_code(combined, subject)
+    if code:
+        return code
 
     if _trusted_xai_sender(sender):
-        # Trusted senders may use a terse subject/body. Keep the fallback narrow
-        # enough that ordinary words and ticket identifiers are not accepted.
-        match = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3}|\d{6})\b", combined, re.I)
+        trusted_content = "\n".join(
+            part for part in (decode_mime_header(subject), combined) if part
+        )
+        match = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3}|\d{6})\b", trusted_content, re.I)
         if match:
-            return match.group(1)
+            return match.group(1).upper()
     return None
 
 
@@ -524,21 +530,7 @@ def _search_uids_after(client: imaplib.IMAP4_SSL, last_uid: int) -> list[int]:
 
 
 def _decode_header_value(value: str) -> str:
-    parts: list[str] = []
-    for part, charset in decode_header(value or ""):
-        if isinstance(part, bytes):
-            parts.append(part.decode(charset or "utf-8", errors="replace"))
-        else:
-            parts.append(str(part))
-    return "".join(parts)
-
-
-def _decode_payload(part: Message) -> str:
-    payload = part.get_payload(decode=True)
-    if payload is None:
-        raw = part.get_payload()
-        return raw if isinstance(raw, str) else ""
-    return payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+    return decode_mime_header(value)
 
 
 def _message_from_fetch_data(data) -> tuple[str, str, str, str]:
@@ -546,23 +538,7 @@ def _message_from_fetch_data(data) -> tuple[str, str, str, str]:
         item[1] for item in data or []
         if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes)
     ]
-    if not raw_parts:
-        return "", "", "", ""
-    message = message_from_bytes(b"".join(raw_parts))
-    subject = _decode_header_value(message.get("Subject", ""))
-    sender = _decode_header_value(message.get("From", ""))
-    text_parts: list[str] = []
-    html_parts: list[str] = []
-    parts = message.walk() if message.is_multipart() else [message]
-    for part in parts:
-        if part.is_multipart():
-            continue
-        content_type = (part.get_content_type() or "").lower()
-        if content_type == "text/plain":
-            text_parts.append(_decode_payload(part))
-        elif content_type == "text/html":
-            html_parts.append(_decode_payload(part))
-    return subject, "\n".join(text_parts), "\n".join(html_parts), sender
+    return parse_mime_message(b"".join(raw_parts)) if raw_parts else ("", "", "", "")
 
 
 def _fetch_message_content(client: imaplib.IMAP4_SSL, seq: int) -> tuple[str, str, str, str]:
