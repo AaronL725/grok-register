@@ -62,7 +62,8 @@ function statusText(value: string, language: Language): string {
     : value === 'completed' ? 'completed'
       : value === 'cancelled' ? 'cancelledStatus'
         : value === 'failed' ? 'failedStatus'
-          : value === 'pending' ? 'pending'
+          : value === 'succeeded' ? 'succeeded'
+            : value === 'pending' ? 'pending'
             : value === 'skipped' ? 'skipped' : ''
   return key ? t(language, key) : value
 }
