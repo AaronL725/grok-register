@@ -105,8 +105,7 @@ class DatabaseTests(unittest.TestCase):
             "registration_status": "pending_recovery", "source": "legacy_pending",
         }
         registered = {
-            "email": "native@example.com", "sso": "token",
-            "registration_status": "registered", "source": "native",
+            "email": "native@example.com", "sso": "token", "source": "native",
         }
         self.database.insert_account(pending)
         self.database.insert_account(registered)
