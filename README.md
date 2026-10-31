@@ -227,7 +227,7 @@ GUI：
 python grok_register_ttk.py
 ```
 
-WebUI（React 前端需要 Node.js 22 或更高版本）：
+WebUI（React 前端需要 Node.js 22.12 或更高版本）：
 
 ```bash
 cd frontend
