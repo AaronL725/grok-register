@@ -192,7 +192,7 @@ a { color: inherit; text-decoration: none; }
 .mailbox-editor { display: grid; gap: 14px; }
 .mailbox-textarea textarea { width: 100%; min-height: 240px; resize: vertical; border: 1px solid #304158; border-radius: 9px; padding: 13px; outline: none; background: #0d1723; color: #dce7f3; font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .mailbox-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.mailbox-metrics { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.mailbox-metrics { grid-template-columns: repeat(auto-fit,minmax(135px,1fr)); }
 .mail-test-list { display: grid; }
 .mail-test-row { display: grid; grid-template-columns: minmax(170px,1.4fr) 90px minmax(130px,1fr) minmax(130px,1fr); gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
 .mail-test-row:last-child { border-bottom: 0; }
