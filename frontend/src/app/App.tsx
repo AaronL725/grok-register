@@ -234,7 +234,7 @@ function OverviewPage({ status, logs, health, language, onNavigate }: {
       <section className="surface progress-surface">
         <div className="surface-heading"><div><h2>{t(language, 'progress')}</h2><p>{t(language, 'quickActions')}</p></div><strong className="progress-percent">{Math.round(percent)}%</strong></div>
         <div className="progress-track"><span style={{ width: percent + '%' }} /></div>
-        <div className="progress-foot"><span>{completed} / {status.target || 0}</span><span>{status.running ? t(language, 'running') : t(language, 'idle')}</span></div>
+        <div className="progress-foot"><span>{completed} / {status.target || 0}</span><span>{status.running ? t(language, 'running') : status.maintenance ? t(language, 'maintenance') : t(language, 'idle')}</span></div>
         <div className="shortcut-grid">
           {actions.map(action => <button className="shortcut-card" key={action.page} type="button" onClick={() => onNavigate(action.page)}>
             <span className="shortcut-mark">{action.mark}</span><strong>{action.title}</strong><small>{action.description}</small><span className="shortcut-arrow">↗</span>
@@ -245,7 +245,7 @@ function OverviewPage({ status, logs, health, language, onNavigate }: {
         <div className="surface-heading"><div><h2>{t(language, 'systemHealth')}</h2><p>{t(language, 'healthSummary')}</p></div><span className={'health-indicator ' + (health ? (health.ready ? 'good' : 'warn') : '')} /></div>
         {!health ? <p className="empty-state">{t(language, 'healthNone')}</p> : <>
           <div className="health-result"><strong>{health.ready ? t(language, 'healthReady') : t(language, 'healthIssues')}</strong><span>{health.error_count} {t(language, 'error')} · {health.warning_count} {t(language, 'warning')}</span></div>
-          <div className="health-list">{health.checks.slice(0, 6).map(check => <div className="health-row" key={check.key}>
+          <div className="health-list">{health.checks.map(check => <div className="health-row" key={check.key}>
             <span className={'health-tag ' + check.status.toLowerCase()}>{check.status}</span><span>{check.name}</span><small>{check.message}</small>
           </div>)}</div>
         </>}
