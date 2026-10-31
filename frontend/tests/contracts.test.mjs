@@ -64,6 +64,13 @@ test('proxy preflight and mailbox edits remain observable', async () => {
   assert.match(app, /test\.unhealthy/)
 })
 
+test('dashboard reflects current health and complete proxy source diagnostics', async () => {
+  const app = await read('../src/app/App.tsx')
+  assert.ok(app.includes("activityDesc"))
+  assert.ok(app.includes('source?.protocol_counts'))
+  assert.ok(app.includes('setHealth(null)'))
+})
+
 test('layout includes responsive mobile breakpoints', async () => {
   const css = await read('../src/styles.css')
   assert.match(css, /max-width: 980px/)
