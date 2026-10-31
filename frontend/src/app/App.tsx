@@ -390,7 +390,7 @@ function MailboxPage({ pool, test, language, busy, dirty, onReload, onSave, onTe
 }
 
 function ConsolePage({ logs, language, onClear, onCopy }: {
-  logs: LogEntry[]; language: Language; onClear: () => void; onCopy: () => void
+  logs: LogEntry[]; language: Language; onClear: () => void; onCopy: (entries: LogEntry[]) => void
 }) {
   const [query, setQuery] = useState('')
   const terminalRef = useRef<HTMLDivElement>(null)
@@ -399,15 +399,16 @@ function ConsolePage({ logs, language, onClear, onCopy }: {
     const needle = query.trim().toLowerCase()
     return needle ? logs.filter(entry => entry.line.toLowerCase().includes(needle)) : logs
   }, [logs, query])
+  const lastVisibleSeq = filtered[filtered.length - 1]?.seq
   useEffect(() => {
     const terminal = terminalRef.current
     if (terminal && followLogs.current) terminal.scrollTop = terminal.scrollHeight
-  }, [filtered.length])
+  }, [lastVisibleSeq])
   return <section className="surface console-surface">
     <div className="console-toolbar">
       <label className="search-box"><span>⌕</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t(language, 'searchLogs')} /></label>
       <div className="toolbar-actions">
-        <button className="button button-quiet" type="button" onClick={onCopy}>{t(language, 'copyLogs')}</button>
+        <button className="button button-quiet" type="button" onClick={() => onCopy(filtered)}>{t(language, 'copyLogs')}</button>
         <button className="button button-quiet" type="button" onClick={onClear}>{t(language, 'clearLogs')}</button>
       </div>
     </div>
@@ -445,6 +446,7 @@ export function App() {
   const lastSeq = useRef(0)
   const serverLatest = useRef(0)
   const pollingLogs = useRef(false)
+  const logRequestVersion = useRef(0)
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -463,8 +465,10 @@ export function App() {
   const refreshLogs = useCallback(async () => {
     if (pollingLogs.current) return
     pollingLogs.current = true
+    const requestVersion = logRequestVersion.current
     try {
       const data = await api<LogsResponse>('/api/logs?after=' + lastSeq.current)
+      if (requestVersion !== logRequestVersion.current) return
       serverLatest.current = data.latest
       if (data.entries.length) {
         setLogs(previous => [...previous, ...data.entries].slice(-2000))
@@ -664,9 +668,23 @@ export function App() {
     }
   }
 
-  const copyLogs = async () => {
+  const clearLogs = async () => {
+    const requestVersion = ++logRequestVersion.current
+    setLogs([])
     try {
-      await navigator.clipboard.writeText(logs.map(entry => entry.line).join('\n'))
+      const data = await api<LogsResponse>('/api/logs?after=0')
+      if (requestVersion !== logRequestVersion.current) return
+      serverLatest.current = data.latest
+      lastSeq.current = data.latest
+    } catch (error) {
+      lastSeq.current = serverLatest.current
+      setNotice({ text: errorMessage(error), error: true })
+    }
+  }
+
+  const copyLogs = async (entries: LogEntry[]) => {
+    try {
+      await navigator.clipboard.writeText(entries.map(entry => entry.line).join('\n'))
       setNotice({ text: t(language, 'copied') })
     } catch {
       setNotice({ text: t(language, 'copyFailed'), error: true })
@@ -727,7 +745,7 @@ export function App() {
           onReload={() => void mailboxAction('reload')} onSave={() => void mailboxAction('save')} onTest={() => void mailboxAction('test')}
           onDataChange={value => { setMailbox(previous => previous ? { ...previous, data: value } : previous); setMailboxDirty(true) }}
           onPathChange={value => { setMailbox(previous => previous ? { ...previous, path: value } : previous); setMailboxDirty(true) }} />}
-        {page === 'console' && <ConsolePage logs={logs} language={language} onClear={() => { setLogs([]); lastSeq.current = serverLatest.current }} onCopy={() => void copyLogs()} />}
+        {page === 'console' && <ConsolePage logs={logs} language={language} onClear={() => void clearLogs()} onCopy={entries => void copyLogs(entries)} />}
       </div>
 
       <footer className="page-footer"><span>{t(language, 'localOnly')}</span><span>{statusText}{status.error ? ' · ' + status.error : ''}</span></footer>
