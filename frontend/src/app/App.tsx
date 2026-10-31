@@ -529,6 +529,7 @@ export function App() {
 
   const changeConfig = (key: string, value: ConfigValue) => {
     setHealth(null)
+    if (key === 'proxy' || key.startsWith('proxy_')) setProxyPreflight(null)
     setConfig(previous => ({ ...previous, [key]: value }))
     setDirty(previous => new Set(previous).add(key))
   }
@@ -748,7 +749,7 @@ export function App() {
         {page === 'proxy' && <ProxyPage snapshot={proxy} preflight={proxyPreflight} busy={proxyBusy || isBusy || saving} language={language} onAction={(action, nodeId) => void proxyAction(action, nodeId)} />}
         {page === 'mailbox' && <MailboxPage pool={mailbox} test={mailboxTest} language={language} busy={mailboxBusy || isBusy || saving} dirty={mailboxDirty}
           onReload={() => void mailboxAction('reload')} onSave={() => void mailboxAction('save')} onTest={() => void mailboxAction('test')}
-          onDataChange={value => { setMailbox(previous => previous ? { ...previous, data: value } : previous); setMailboxDirty(true) }}
+          onDataChange={value => { setMailbox(previous => previous ? { ...previous, data: value } : previous); setMailboxTest(null); setMailboxDirty(true) }}
           onPathChange={value => { setMailbox(previous => previous ? { ...previous, path: value } : previous); setMailboxDirty(true) }} />}
         {page === 'console' && <ConsolePage logs={logs} language={language} onClear={() => void clearLogs()} onCopy={entries => void copyLogs(entries)} />}
       </div>
