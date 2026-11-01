@@ -16,14 +16,13 @@ jobs:
     name: Validate release tag
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
       - name: Check SemVer tag
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease suffix."
-            exit 1
-          fi
+        run: python3 scripts/validate_release_tag.py "$RELEASE_TAG"
 
   test:
     name: Full CI
