@@ -1,0 +1,28 @@
+services:
+  app:
+    build: .
+    image: grok-register:local
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: 1gb
+    ports:
+      - "127.0.0.1:8092:8092"
+    environment:
+      GROK_REGISTER_CONFIG_FILE: /app/config/config.json
+      GROK_REGISTER_DATA_DIR: /app/data
+      GROK_REGISTER_OUTPUT_DIR: /app/data/outputs
+      CHROME_PATH: /usr/bin/chromium
+      GROK_REGISTER_CHROMIUM_HEADLESS: "1"
+      GROK_REGISTER_CHROMIUM_NO_SANDBOX: "1"
+      GROK_REGISTER_CHROMIUM_DISABLE_DEV_SHM_USAGE: "1"
+    volumes:
+      - grok-register-config:/app/config
+      - grok-register-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  grok-register-config:
+  grok-register-data:
