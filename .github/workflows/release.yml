@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-\${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
 
       - name: Validate release tag
         env:
-          RELEASE_TAG: \${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease or build suffix."
@@ -43,27 +43,27 @@ jobs:
 
       - name: Resolve lowercase image name
         id: image
-        run: echo "name=ghcr.io/\${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: \${{ steps.image.outputs.name }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=ref,event=tag
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=\${{ !contains(github.ref_name, '-') }}
-            type=semver,pattern={{major}},enable=\${{ !contains(github.ref_name, '-') }}
-            type=raw,value=latest,enable=\${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
             type=sha,prefix=sha-
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: \${{ github.actor }}
-          password: \${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish AMD64 image
         uses: docker/build-push-action@v6
@@ -72,8 +72,8 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: \${{ steps.meta.outputs.tags }}
-          labels: \${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
@@ -89,8 +89,8 @@ jobs:
     steps:
       - name: Create release with generated notes
         env:
-          GH_TOKEN: \${{ github.token }}
-          GH_REPO: \${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists; leaving it unchanged."
