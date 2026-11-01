@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import registration_browser
+from app_config import ConfigError
 from registration_flow import RecoverablePreSubmitError
 
 
@@ -22,6 +23,28 @@ class PreSubmitBrowserRetryTests(unittest.TestCase):
              patch.object(registration_browser, "sleep_with_cancel", return_value=None, create=True):
             with self.assertRaisesRegex(RecoverablePreSubmitError, "未找到"):
                 registration_browser.click_email_signup_button(timeout=1)
+
+    def test_mailbox_configuration_error_is_not_wrapped_as_recoverable(self):
+        with patch.object(
+            registration_browser, "get_email_and_token",
+            side_effect=ConfigError("mail provider configuration is invalid"),
+            create=True,
+        ), patch.object(
+            registration_browser, "raise_if_cancelled", return_value=None, create=True
+        ):
+            with self.assertRaisesRegex(ConfigError, "mail provider configuration"):
+                registration_browser.fill_email_and_submit()
+
+    def test_transient_mailbox_error_remains_recoverable(self):
+        with patch.object(
+            registration_browser, "get_email_and_token",
+            side_effect=RuntimeError("temporary mailbox outage"),
+            create=True,
+        ), patch.object(
+            registration_browser, "raise_if_cancelled", return_value=None, create=True
+        ):
+            with self.assertRaisesRegex(RecoverablePreSubmitError, "temporary mailbox outage"):
+                registration_browser.fill_email_and_submit()
 
     def test_browser_start_failure_is_recoverable_after_local_retries(self):
         chromium = patch.object(
