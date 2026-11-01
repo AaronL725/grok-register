@@ -294,11 +294,22 @@ def configure_token_runtime(config_ref, http_get, http_post, log_exception,
     globals()["RemoteTokenRequestError"] = request_error
 
 
-def resolve_grok2api_local_token_file():
-    configured = str(config.get("grok2api_local_token_file", "") or "").strip()
+def resolve_grok2api_local_token_file(config_ref=None):
+    settings = config if config_ref is None else config_ref
+    configured = str(settings.get("grok2api_local_token_file", "") or "").strip()
     if configured:
         return configured
-    return os.path.join(os.path.dirname(__file__), "token.json")
+    return os.path.join(os.path.dirname(__file__), "data", "token.json")
+
+
+def _migrate_legacy_grok2api_local_token_file(token_file):
+    if str(config.get("grok2api_local_token_file", "") or "").strip():
+        return False
+    legacy_file = os.path.join(os.path.dirname(__file__), "token.json")
+    if not os.path.isfile(legacy_file) or os.path.exists(token_file):
+        return False
+    os.replace(legacy_file, token_file)
+    return True
 
 def _normalize_sso_token(raw_token):
     token = str(raw_token or "").strip()
@@ -326,6 +337,8 @@ def add_token_to_grok2api_local_pool(raw_token, email="", log_callback=None):
     except Exception as exc:
         raise RuntimeError(f"filelock 依赖不可用，拒绝非原子写入 token 池: {exc}")
     with FileLock(lock_path, timeout=30):
+        if _migrate_legacy_grok2api_local_token_file(token_file) and log_callback:
+            log_callback("[*] 已将旧版项目根目录 token.json 迁移至 data/token.json")
         data = {}
         if os.path.exists(token_file):
             try:

@@ -602,7 +602,7 @@ ss://...
 | `mail_credentials.txt` | 注册过程中创建的临时邮箱地址与邮箱凭据；邮箱创建后会在提交注册前提前持久化，因此可能包含后续失败、重试或结果不确定 attempt 的记录 |
 | `accounts_*.txt.pending.jsonl` | 主账号结果保存失败后尝试写入的恢复队列；成功入队后可用 `retry-pending` 恢复 |
 | `<sso_risk_rejected_file>.pending.jsonl` | 风控账号写入主隔离文件失败后的独立 risk pending；不要使用普通 `retry-pending` 恢复 |
-| `<grok2api_local_token_file>` | 可选 grok2api 本地 token 池；留空时默认项目目录下 `token.json` |
+| `<grok2api_local_token_file>` | 可选 grok2api 本地 token 池；留空时默认项目目录下 `data/token.json`；旧版根目录 `token.json` 会在首次写入时自动迁移 |
 | `<cpa_auth_dir>/xai-*.json` | 可选 CPA xAI OIDC 凭证；默认目录 `./cpa_auths` |
 | `<cpa_auth_dir>/cpa_auth_failed.txt` | CPA 导出失败记录 |
 | `screenshots/` | CPA 浏览器失败调试截图 |
