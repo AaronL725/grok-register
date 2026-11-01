@@ -66,7 +66,18 @@ docker compose exec -T app tar -czf - -C /app/data . > grok-register-data.tar.gz
 - 容器以非 root 用户运行。为兼容容器内 Chromium，Docker 环境会显式设置 `--no-sandbox`。
 - WebUI 端口只绑定宿主机 `127.0.0.1`，不会默认暴露到局域网或公网。
 - 镜像包含 Chromium 和 WebUI 所需 Python 依赖。基础镜像不包含可选的 `sing-box`；如果使用 VLESS、VMess、Trojan、Hysteria2、TUIC 或 Shadowsocks 节点，需要额外挂载 AMD64 sing-box 二进制，并在配置中设置 `proxy_singbox_path`。
-- 可将代理源文件放在持久化目录 `/app/data`，然后在 WebUI 中将 `proxy_pool_file` 设置为对应绝对路径。
+- 可将代理源文件复制到持久化目录，再在 WebUI 中设置绝对路径：
+  ```bash
+  docker compose cp ./proxies.txt app:/app/data/proxies.txt
+  ```
+- 高级代理协议需要额外挂载 Linux AMD64 sing-box 二进制。先确保宿主机文件具有可执行权限，再在 Compose 中增加：
+  ```yaml
+  services:
+    app:
+      volumes:
+        - ./sing-box:/usr/local/bin/sing-box:ro
+  ```
+  然后在 WebUI 将 `proxy_singbox_path` 设置为 `/usr/local/bin/sing-box`。
 - Docker 版本面向 WebUI 使用，不提供桌面 Tk GUI。
 
 ## 常用命令
