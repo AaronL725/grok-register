@@ -326,6 +326,26 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(len(page["items"]), 1)
         self.assertNotEqual(first, second)
 
+    def test_reauthentication_history_retains_items_after_account_deletion(self):
+        first, _ = self.database.insert_account({
+            "email": "one@example.com", "password": "pw1", "sso": "token1",
+        })
+        second, _ = self.database.insert_account({
+            "email": "two@example.com", "password": "pw2", "sso": "token2",
+        })
+        job_id = self.database.create_job("reauthentication", [
+            self.database.get_account(first),
+            self.database.get_account(second),
+        ])
+
+        self.database.delete_accounts([first, second])
+        job = self.database.get_job(job_id)
+
+        self.assertEqual([item["email"] for item in job["items"]], [
+            "one@example.com", "two@example.com",
+        ])
+        self.assertEqual([item["account_id"] for item in job["items"]], [None, None])
+
     def test_bulk_delete_removes_accounts_and_related_artifacts(self):
         first, _ = self.database.insert_account({"email": "one@example.com", "sso": "one"})
         second, _ = self.database.insert_account({"email": "two@example.com", "sso": "two"})
