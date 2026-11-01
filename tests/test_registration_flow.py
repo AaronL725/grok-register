@@ -3,6 +3,7 @@
 import unittest
 
 from app_config import ConfigError
+from proxy_pool import ProxyConfigurationError
 from registration_flow import (
     RecoverablePreSubmitError,
     RegistrationCallbacks,
@@ -430,6 +431,39 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(batch.fail_count, 1)
         self.assertEqual(batch.uncertain_count, 1)
         self.assertEqual(batch.success_count, 0)
+
+    def test_value_error_during_page_open_is_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def open_signup_page():
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise ValueError("temporary browser result parsing error")
+
+        ops.open_signup_page = open_signup_page
+        batch = run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(batch.success_count, 1)
+        self.assertEqual(batch.fail_count, 0)
+
+    def test_proxy_configuration_error_is_not_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def start_browser():
+            calls["count"] += 1
+            raise ProxyConfigurationError("invalid proxy configuration")
+
+        ops.start_browser = start_browser
+        with self.assertRaisesRegex(ProxyConfigurationError, "invalid proxy configuration"):
+            run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
 
     def test_configuration_error_is_not_retried(self):
         fake = FakeOps()
