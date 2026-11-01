@@ -221,6 +221,129 @@ class OptionalMultithreadTests(unittest.TestCase):
         self.assertEqual(observed, sorted(observed))
 
 
+    def test_parallel_failure_screenshot_uses_the_failing_workers_page(self):
+        from app_config import ConfigError
+        from registration_flow import RegistrationCallbacks
+        from registration_parallel import run_parallel_batch
+
+        class Cancelled(Exception):
+            pass
+
+        class RetryNeeded(Exception):
+            pass
+
+        class FakeMail:
+            _OWN_NAMES = set()
+
+            def bind_runtime(self, _namespace):
+                return None
+
+            def get_email_provider(self):
+                return "duckmail"
+
+        class FakePage:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+
+        class FakeBrowser:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+                self.browser = None
+                self.page = FakePage(worker_id)
+
+            def bind_runtime(self, _namespace):
+                return None
+
+            def start_browser(self, **_kwargs):
+                self.browser = object()
+
+            def stop_browser(self):
+                self.browser = None
+
+            def open_signup_page(self, **_kwargs):
+                if self.worker_id == 1:
+                    raise ConfigError("worker browser configuration failed")
+
+            def fill_email_and_submit(self, **_kwargs):
+                return "worker%s@example.com" % self.worker_id, "mail-token"
+
+            def fill_code_and_submit(self, _email, _token, **_kwargs):
+                return "123456"
+
+            def fill_profile_and_submit(self, **_kwargs):
+                return {"given_name": "Test", "family_name": "User", "password": "pw"}
+
+            def wait_for_sso_cookie(self, **_kwargs):
+                return "sso-token-%s" % self.worker_id
+
+            def enable_nsfw_for_token(self, _sso, **_kwargs):
+                return True, "ok"
+
+        modules = {}
+        captured = []
+        module_lock = threading.Lock()
+
+        def fake_loader(path, module_name):
+            if Path(path).name == "mail_service.py":
+                return FakeMail()
+            worker_id = int(module_name.split("_worker_", 1)[1].split("_", 1)[0])
+            with module_lock:
+                module = FakeBrowser(worker_id)
+                modules[worker_id] = module
+            return module
+
+        def capture(page, run_id, details, log_callback=None, screenshot_dir=None):
+            captured.append((page, run_id, details, screenshot_dir))
+            return "/tmp/worker-%s.png" % page.worker_id
+
+        runtime_namespace = {
+            "_save_mail_credential": lambda *_args, **_kwargs: True,
+            "_append_account_line": lambda *_args, **_kwargs: None,
+            "_queue_unsaved_account": lambda *_args, **_kwargs: True,
+            "add_token_to_grok2api_pools": lambda *_args, **_kwargs: {},
+            "maybe_export_cpa_xai_after_success": lambda **_kwargs: {
+                "ok": False, "skipped": True, "reason": "disabled",
+            },
+            "sleep_with_cancel": lambda _seconds, _cancel: None,
+            "RegistrationCancelled": Cancelled,
+            "AccountRetryNeeded": RetryNeeded,
+            "_screen_registered_sso": lambda *_args, **_kwargs: None,
+        }
+        callbacks = RegistrationCallbacks(
+            log=lambda _message: None,
+            cancelled=lambda: False,
+            record_attempt=lambda _attempt: None,
+        )
+
+        with patch("registration_parallel.load_isolated_module", side_effect=fake_loader), patch(
+            "registration_diagnostics.capture_failure_screenshot", side_effect=capture
+        ), patch("cpa_xai.browser_confirm.shutdown_mint_browsers", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "parallel worker"):
+                run_parallel_batch(
+                    count=2,
+                    callbacks=callbacks,
+                    observer=lambda *_args: None,
+                    runtime_namespace=runtime_namespace,
+                    accounts_output_file="unused.txt",
+                    workers=2,
+                    enable_nsfw=False,
+                    cleanup_interval=0,
+                    registration_run_id=77,
+                    diagnostics_dir="/tmp/grok-register-diagnostics",
+                )
+
+        self.assertTrue(captured)
+        self.assertTrue(any(
+            page is modules[page.worker_id].page and run_id == 77
+            for page, run_id, _details, _directory in captured
+        ))
+        self.assertTrue(any(
+            page.worker_id == 1 and details["stage"] == "page_open"
+            and directory == "/tmp/grok-register-diagnostics"
+            for page, _run_id, details, directory in captured
+        ))
+
+
     def test_transient_pre_submit_failures_do_not_abort_other_workers(self):
         from registration_flow import (
             RegistrationCallbacks,
