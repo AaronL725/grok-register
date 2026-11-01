@@ -95,6 +95,11 @@ jobs:
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
+      - name: Validate published image override
+        run: |
+          GROK_REGISTER_IMAGE=ghcr.io/aaronl725/grok-register:1.2.3 \
+            docker compose config --format json | jq -e '.services.app.image == "ghcr.io/aaronl725/grok-register:1.2.3"'
+
       - name: Build Docker image
         run: docker build --platform linux/amd64 --tag grok-register:local .
 
