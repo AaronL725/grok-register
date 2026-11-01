@@ -258,6 +258,16 @@ docker compose logs -f app
 
 访问 `http://127.0.0.1:8092`。首次启动会自动初始化持久化配置；后续可直接通过 WebUI 修改配置。
 
+也可以直接使用已发布的 GHCR 镜像，而不是本地构建：
+
+```bash
+export GROK_REGISTER_IMAGE=ghcr.io/aaronl725/grok-register:latest
+docker compose pull
+docker compose up -d --no-build
+```
+
+版本标签和自动发布流程见 [Docker 部署文档](docs/docker.md)。
+
 配置与运行数据保存在 Docker 命名卷中。普通的 `docker compose down` 不会删除数据；**不要执行 `docker compose down -v`，除非要清空配置和全部账号数据**。
 
 Docker 部署仅提供 WebUI，不提供 Tk 桌面 GUI；Chromium 使用 headless 模式。当前只验证 AMD64，尚未承诺 ARM64 原生支持。
