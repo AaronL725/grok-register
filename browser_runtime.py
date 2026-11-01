@@ -155,10 +155,28 @@ def apply_browser_proxy_option(options, proxy):
         options.set_argument("--proxy-server", proxy)
 
 
+def _configure_browser_environment(options):
+    browser_path = str(os.environ.get("CHROME_PATH") or "").strip()
+    if browser_path:
+        browser_path = os.path.abspath(os.path.expanduser(browser_path))
+        if not os.path.isfile(browser_path):
+            raise FileNotFoundError("CHROME_PATH does not exist: %s" % browser_path)
+        options.set_browser_path(browser_path)
+
+    if os.environ.get("GROK_REGISTER_CHROMIUM_HEADLESS") == "1":
+        options.headless(True)
+    if os.environ.get("GROK_REGISTER_CHROMIUM_NO_SANDBOX") == "1":
+        options.set_argument("--no-sandbox")
+    if os.environ.get("GROK_REGISTER_CHROMIUM_DISABLE_DEV_SHM_USAGE") == "1":
+        options.set_argument("--disable-dev-shm-usage")
+    return options
+
+
 def create_browser_options(browser_proxy="", extension_path=None):
     options = ChromiumOptions()
     options.auto_port()
     options.set_timeouts(base=1)
+    _configure_browser_environment(options)
     apply_browser_proxy_option(options, browser_proxy)
     effective_extension = _resolve_extension_path(extension_path)
     if effective_extension:
