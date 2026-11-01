@@ -258,6 +258,16 @@ docker compose logs -f app
 
 Open `http://127.0.0.1:8092`. The first start initializes persistent configuration; subsequent settings can be edited in the WebUI.
 
+You can also pull a published GHCR image instead of building locally:
+
+```bash
+export GROK_REGISTER_IMAGE=ghcr.io/aaronl725/grok-register:latest
+docker compose pull
+docker compose up -d --no-build
+```
+
+See the [Docker deployment guide](docs/docker.en.md) for version tags and the automated release process.
+
 Configuration and runtime data are stored in Docker named volumes. A normal `docker compose down` preserves them. **Do not run `docker compose down -v` unless you intend to delete the configuration and all account data.**
 
 The Docker deployment provides the WebUI, not the desktop Tk GUI; Chromium runs headless. AMD64 is the only currently validated architecture, and native ARM64 support is not claimed.

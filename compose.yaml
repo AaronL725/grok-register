@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: grok-register:local
+    image: ${GROK_REGISTER_IMAGE:-grok-register:local}
     platform: linux/amd64
     init: true
     restart: unless-stopped
