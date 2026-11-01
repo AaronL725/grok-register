@@ -36,7 +36,7 @@ docker compose pull
 docker compose up -d --no-build
 ```
 
-Replace `latest` with a specific version such as `1.2.3` or `1.2.3-rc.1` to pin a release. Stable releases also receive `1.2.3`, `1.2`, `1`, and `latest` tags; prereleases do not update `latest`.
+Replace `latest` with a specific version such as `1.2.3` or `1.2.3-rc.1` to pin a release. Stable releases receive `v1.2.3`, `1.2.3`, `1.2`, `1`, `latest`, and `sha-<commit>` tags. Prereleases retain their version and SHA tags but do not update `latest`.
 
 Push a version tag to start an automated release:
 
