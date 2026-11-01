@@ -38,6 +38,7 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
 
 - [Features](#features)
 - [Quick Start](#quick-start)
+- [Docker Deployment](#docker-deployment)
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [Proxy & Proxy Pool](#proxy--proxy-pool)
@@ -245,6 +246,23 @@ http://127.0.0.1:8092
 ```
 
 > GUI, CLI, and WebUI share the same `config.json` and registration logic. It is recommended to run a task from only one interface at a time.
+
+## Docker Deployment
+
+An AMD64 Docker image is provided with the React WebUI, FastAPI, and headless Chromium:
+
+```bash
+docker compose up -d --build
+docker compose logs -f app
+```
+
+Open `http://127.0.0.1:8092`. The first start initializes persistent configuration; subsequent settings can be edited in the WebUI.
+
+Configuration and runtime data are stored in Docker named volumes. A normal `docker compose down` preserves them. **Do not run `docker compose down -v` unless you intend to delete the configuration and all account data.**
+
+The Docker deployment provides the WebUI, not the desktop Tk GUI; Chromium runs headless. AMD64 is the only currently validated architecture, and native ARM64 support is not claimed.
+
+See the [Docker deployment guide](docs/docker.en.md) for details, backups, and optional sing-box setup.
 
 ## Usage
 
