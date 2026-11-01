@@ -726,7 +726,9 @@ def maybe_export_cpa_xai_after_success(email, password, sso="", log_callback=Non
 def _save_mail_credential(email, credential, log_callback=None):
     from account_outputs import save_mail_credential
     try:
-        return save_mail_credential(os.path.dirname(__file__), email, credential)
+        base_dir = os.environ.get("GROK_REGISTER_DATA_DIR") or os.path.dirname(__file__)
+        os.makedirs(base_dir, exist_ok=True)
+        return save_mail_credential(base_dir, email, credential)
     except Exception as exc:
         log_exception("保存邮箱凭据失败", exc, log_callback)
         return False
