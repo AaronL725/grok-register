@@ -26,6 +26,27 @@ http://127.0.0.1:8092
 
 On first start, the entrypoint copies `config.docker.example.json` into the persistent configuration volume. You can then edit and save settings from the WebUI.
 
+## Use a published GHCR image
+
+To pull a published image instead of building it locally:
+
+```bash
+export GROK_REGISTER_IMAGE=ghcr.io/aaronl725/grok-register:latest
+docker compose pull
+docker compose up -d --no-build
+```
+
+Replace `latest` with a specific version such as `1.2.3` or `1.2.3-rc.1` to pin a release. Stable releases also receive `1.2.3`, `1.2`, `1`, and `latest` tags; prereleases do not update `latest`.
+
+Push a version tag to start an automated release:
+
+```bash
+git tag -a v1.2.3 -m "v1.2.3"
+git push origin v1.2.3
+```
+
+GitHub Actions runs the full test suite, builds and publishes the AMD64 image, then creates a GitHub Release with generated release notes. After the first publish, check the container package visibility in GitHub Packages. Set it to Public if anonymous pulls are desired.
+
 ## Persistent data
 
 Compose creates two named volumes:
