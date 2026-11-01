@@ -51,6 +51,9 @@ def create_standalone_page(proxy: Optional[str] = None, headless: bool = False, 
             "--window-size=1280,900",
         ):
             options.set_argument(flag)
+    headless = bool(
+        headless or os.environ.get("GROK_REGISTER_CHROMIUM_HEADLESS") == "1"
+    )
     if headless:
         try:
             options.headless(True)
