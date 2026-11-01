@@ -6,6 +6,7 @@ import traceback
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from app_config import ConfigError, config as app_config
+from proxy_protocols import ProxyProtocolError
 from sso_risk import RegistrationRiskDenied
 from proxy_pool import (
     ProxyAcquireCancelled,
@@ -52,8 +53,8 @@ def current_registration_stage():
 def _is_non_retryable_pre_submit_error(error):
     while error is not None:
         if isinstance(error, (
-            ConfigError, ProxyConfigurationError, FileNotFoundError,
-            PermissionError, ImportError,
+            ConfigError, ProxyConfigurationError, ProxyProtocolError,
+            FileNotFoundError, PermissionError, ImportError,
         )):
             return True
         if isinstance(error, ProxyPoolError) and classify_proxy_network_error(error) in (
