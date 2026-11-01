@@ -115,5 +115,9 @@ jobs:
           done
 
           curl --fail --silent http://127.0.0.1:18092/ | grep -q "/assets/"
+          curl --fail --silent \
+            --header "Origin: http://127.0.0.1:18092" \
+            "http://127.0.0.1:18092/api/accounts?limit=1" >/dev/null
           docker exec grok-register-smoke test -f /app/config/config.json
+          docker exec grok-register-smoke test -f /app/data/grok-register.sqlite3
           docker exec grok-register-smoke test -d /app/data/outputs
