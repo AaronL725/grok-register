@@ -53,7 +53,7 @@ def _is_non_retryable_pre_submit_error(error):
     while error is not None:
         if isinstance(error, (
             ConfigError, ProxyConfigurationError, FileNotFoundError,
-            PermissionError, ImportError, ValueError, TypeError,
+            PermissionError, ImportError,
         )):
             return True
         if isinstance(error, ProxyPoolError) and classify_proxy_network_error(error) in (
