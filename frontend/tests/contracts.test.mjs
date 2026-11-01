@@ -162,3 +162,8 @@ test('bulk account selection stays within backend reauthentication batch size', 
   assert.ok(accounts.includes('selected.size >= 200'))
   assert.ok(accounts.includes('selected.size > 200'))
 })
+
+test('closing reauthentication details invalidates an in-flight detail request', async () => {
+  const history = await read('../src/app/history/HistoryPage.tsx')
+  assert.match(history, /setSelectedJob\(null\)[\s\S]{0,100}jobRequestVersion\.current \+= 1/)
+})
