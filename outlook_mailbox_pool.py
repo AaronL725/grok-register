@@ -284,9 +284,10 @@ class OutlookAccountPool:
                 if log_callback:
                     log_callback("[!] Outlook 邮箱预检失败，跳过 %s: %s" % (account.email, exc))
 
-    def release_unsubmitted(self, account: OutlookAccount) -> None:
+    def release_unsubmitted(self, mailbox: OutlookMailbox) -> None:
         with self._lock:
-            self._available.appendleft(account)
+            mailbox.close()
+            self._available.appendleft(mailbox.account)
 
 
 class OutlookTaskRuntime:
@@ -340,8 +341,7 @@ class OutlookTaskRuntime:
             if lease.email.lower() != str(email or "").lower():
                 raise RuntimeError("Outlook 邮箱会话与目标邮箱不匹配")
             del self._leases[key]
-        lease.mailbox.close()
-        self._pool.release_unsubmitted(lease.mailbox.account)
+        self._pool.release_unsubmitted(lease.mailbox)
         return True
 
     def wait_for_code(

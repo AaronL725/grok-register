@@ -5,7 +5,7 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import browser_runtime
 import proxy_pool
@@ -88,7 +88,7 @@ class ReauthenticationJobTests(unittest.TestCase):
         start.assert_called_once_with(log_callback=log)
         login.assert_called_once_with(
             "user@example.com", "password", page,
-            cancelled=unittest.mock.ANY, log=log,
+            cancelled=ANY, log=log,
         )
         stop.assert_called_once_with()
 

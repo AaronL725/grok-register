@@ -94,6 +94,7 @@ class OutlookMailboxPoolTests(unittest.TestCase):
                 self.assertTrue(runtime.release_before_submit(handle, email))
                 close.assert_called_once_with()
 
+            self.assertEqual(runtime.count, 8)
             self.assertEqual(runtime.status()["remaining"], 8)
             self.assertEqual(runtime.status()["leased"], 0)
             next_email, next_handle = runtime.acquire()
