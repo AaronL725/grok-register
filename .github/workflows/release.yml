@@ -12,8 +12,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check SemVer tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease or build suffix."
+            exit 1
+          fi
+
   test:
     name: Full CI
+    needs: validate
     uses: ./.github/workflows/tests.yml
 
   publish:
@@ -28,15 +42,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-
-      - name: Validate release tag
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease or build suffix."
-            exit 1
-          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -98,6 +103,8 @@ jobs:
             release_args=(--title "$GITHUB_REF_NAME" --generate-notes)
             if [[ "$GITHUB_REF_NAME" == *-* ]]; then
               release_args+=(--prerelease)
+            else
+              release_args+=(--latest)
             fi
             gh release create "$GITHUB_REF_NAME" "${release_args[@]}"
           fi
