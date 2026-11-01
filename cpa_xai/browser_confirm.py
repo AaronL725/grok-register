@@ -33,7 +33,9 @@ def _project_root() -> Path:
 
 
 def _debug_shot_dir() -> Path:
-    folder = _project_root() / "screenshots"
+    data_dir = str(os.environ.get("GROK_REGISTER_DATA_DIR") or "").strip()
+    root = Path(data_dir).expanduser() if data_dir else _project_root()
+    folder = root / "screenshots"
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 

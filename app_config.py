@@ -4,7 +4,10 @@ import os
 import tempfile
 import urllib.parse
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+CONFIG_FILE = os.path.abspath(os.path.expanduser(
+    os.environ.get("GROK_REGISTER_CONFIG_FILE")
+    or os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+))
 
 DEFAULT_CONFIG = {
     "duckmail_api_key": "",

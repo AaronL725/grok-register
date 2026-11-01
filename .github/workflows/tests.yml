@@ -81,3 +81,55 @@ jobs:
       - name: Type-check and build frontend
         working-directory: frontend
         run: npm run build
+
+  docker:
+    name: Docker AMD64 smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate Docker Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build Docker image
+        run: docker build --platform linux/amd64 --tag grok-register:local .
+
+      - name: Smoke test WebUI and persistent volumes
+        run: |
+          project="grok-register-ci"
+          cleanup() {
+            docker compose --project-name "$project" down --volumes --remove-orphans >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker compose --project-name "$project" up --detach --no-build
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8092/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker compose --project-name "$project" logs app
+              exit 1
+            fi
+            sleep 2
+          done
+
+          curl --fail --silent http://127.0.0.1:8092/ | grep -q "/assets/"
+          curl --fail --silent \
+            --header "Origin: http://127.0.0.1:8092" \
+            "http://127.0.0.1:8092/api/accounts?limit=1" >/dev/null
+          docker compose --project-name "$project" exec --no-TTY app test -f /app/LICENSE
+          docker compose --project-name "$project" exec --no-TTY app test -f /app/config/config.json
+          docker compose --project-name "$project" exec --no-TTY app test -f /app/data/grok-register.sqlite3
+          docker compose --project-name "$project" exec --no-TTY app test -d /app/data/outputs
+
+          docker compose --project-name "$project" exec --no-TTY app sh -c \
+            'printf config > /app/config/.ci-volume-marker && printf data > /app/data/.ci-volume-marker'
+          docker compose --project-name "$project" down
+          docker compose --project-name "$project" up --detach --no-build
+          docker compose --project-name "$project" exec --no-TTY app test -f /app/config/.ci-volume-marker
+          docker compose --project-name "$project" exec --no-TTY app test -f /app/data/.ci-volume-marker
