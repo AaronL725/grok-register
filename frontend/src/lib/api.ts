@@ -253,7 +253,7 @@ export type RegistrationRun = {
 }
 
 export type ReauthJobItem = {
-  account_id: number
+  account_id: number | null
   email: string
   status: string
   error_message: string
