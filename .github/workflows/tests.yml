@@ -81,3 +81,39 @@ jobs:
       - name: Type-check and build frontend
         working-directory: frontend
         run: npm run build
+
+  docker:
+    name: Docker AMD64 smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build Docker image
+        run: docker build --platform linux/amd64 --tag grok-register:ci .
+
+      - name: Smoke test WebUI container
+        run: |
+          docker run --detach --name grok-register-smoke --platform linux/amd64 \
+            --publish 127.0.0.1:18092:8092 grok-register:ci
+          cleanup() {
+            docker rm --force grok-register-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18092/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker logs grok-register-smoke
+              exit 1
+            fi
+            sleep 2
+          done
+
+          curl --fail --silent http://127.0.0.1:18092/ | grep -q "/assets/"
+          docker exec grok-register-smoke test -f /app/config/config.json
+          docker exec grok-register-smoke test -d /app/data/outputs
