@@ -323,7 +323,7 @@ export function HistoryPage({ language, onNotice }: {
       {selectedJob.error_message && <p className="attempt-error">{selectedJob.error_message}</p>}
       <h3>{t(language, 'jobItems')}</h3>
       {selectedJob.items?.length ? <div className="reauth-item-list">
-        {selectedJob.items.map(item => <div className="reauth-item" key={item.account_id}>
+        {selectedJob.items.map(item => <div className="reauth-item" key={item.account_id ?? item.email}>
           <strong>{item.email}</strong><Pill value={item.status} language={language} />
           {item.error_message && <small>{item.error_message}</small>}
         </div>)}
