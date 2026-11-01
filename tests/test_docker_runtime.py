@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import browser_runtime
 import grok_register_ttk
-from cpa_xai import browser_confirm
+from cpa_xai import browser_confirm, browser_session
 from web import server
 
 
@@ -76,6 +76,27 @@ class DockerRuntimeTests(unittest.TestCase):
         self.assertTrue(options.headless_enabled)
         self.assertIn("--no-sandbox", options.arguments)
         self.assertIn("--disable-dev-shm-usage", options.arguments)
+
+    def test_container_headless_mode_overrides_cpa_gui_preference(self):
+        class FakeBrowser:
+            latest_tab = object()
+
+            def quit(self):
+                return None
+
+        options = FakeChromiumOptions()
+        browser = FakeBrowser()
+        with patch.dict(os.environ, {"GROK_REGISTER_CHROMIUM_HEADLESS": "1"}), patch(
+            "browser_runtime.create_browser_options", return_value=options
+        ), patch("DrissionPage.Chromium", return_value=browser), patch(
+            "cpa_xai.proxyutil.resolve_proxy", return_value=None
+        ), patch(
+            "cpa_xai.proxyutil.prepare_chromium_proxy", return_value=("", None)
+        ):
+            created, _page = browser_session.create_standalone_page(headless=False)
+            browser_session.close_standalone(created)
+
+        self.assertTrue(options.headless_enabled)
 
     def test_invalid_explicit_chromium_path_fails_clearly(self):
         with patch.dict(os.environ, {"CHROME_PATH": "/missing/chromium"}), patch.object(
