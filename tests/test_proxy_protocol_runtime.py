@@ -1,4 +1,5 @@
 import os
+import threading
 import tempfile
 import time
 import unittest
@@ -102,6 +103,61 @@ class ProtocolRuntimeTests(unittest.TestCase):
             os.unlink(path)
         except FileNotFoundError:
             pass
+
+    def test_concurrent_acquire_waits_for_and_reuses_one_runtime_start(self):
+        manager = ProtocolRuntimeManager({"proxy_runtime_idle_ttl_sec": 120})
+        node = parse_proxy_line("socks5://127.0.0.1:1080")
+        starter_entered = threading.Event()
+        waiter_entered = threading.Event()
+        waiter_returned = threading.Event()
+        finish_start = threading.Event()
+        original_wait = manager._condition.wait
+        process = FakeProcess()
+        entry = RuntimeEntry(node.node_id, process, 32002, "", 0)
+        results = []
+        errors = []
+
+        def starter(_descriptor):
+            starter_entered.set()
+            if not finish_start.wait(timeout=3):
+                raise AssertionError("test did not release the runtime starter")
+            return entry
+
+        def tracked_wait(timeout=None):
+            waiter_entered.set()
+            result = original_wait(timeout)
+            waiter_returned.set()
+            return result
+
+        def acquire():
+            try:
+                results.append(manager.acquire(node))
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch.object(manager, "_start_bridge_entry", side_effect=starter), \
+             patch.object(manager._condition, "wait", side_effect=tracked_wait):
+            first = threading.Thread(target=acquire)
+            second = threading.Thread(target=acquire)
+            first.start()
+            self.assertTrue(starter_entered.wait(timeout=2))
+            second.start()
+            self.assertTrue(waiter_entered.wait(timeout=2))
+            returned_before_start = waiter_returned.wait(timeout=0.3)
+            finish_start.set()
+            first.join(timeout=3)
+            second.join(timeout=3)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertFalse(returned_before_start)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0][0], results[1][0])
+        self.assertIs(results[0][1], entry)
+        self.assertIs(results[1][1], entry)
+        self.assertEqual(manager.active_snapshot()[node.node_id]["refcount"], 2)
+        manager.shutdown()
 
     def test_native_only_allows_native_bridge_but_rejects_advanced_protocols(self):
         manager = ProtocolRuntimeManager({"proxy_protocol_backend": "native-only", "proxy_runtime_idle_ttl_sec": 0})

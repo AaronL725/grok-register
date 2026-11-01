@@ -1,6 +1,7 @@
 """Thread-safe Outlook mailbox pool, task runtime and private local persistence."""
 from __future__ import annotations
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import os
@@ -243,37 +244,35 @@ class OutlookMailboxLease:
 
 
 class OutlookAccountPool:
-    """Monotonic per-task allocator. Accounts are never wrapped or reused."""
+    """Per-task allocator; only accounts released before submission can be reused."""
 
     def __init__(self, accounts: list[OutlookAccount]) -> None:
         if not accounts:
             raise ValueError("Outlook 邮箱池没有有效账号")
-        self._accounts = list(accounts)
+        self._available = deque(accounts)
         self._lock = threading.Lock()
-        self._next = 0
 
     @property
     def count(self) -> int:
-        return len(self._accounts)
+        return len(self._available)
 
     @property
     def remaining(self) -> int:
         with self._lock:
-            return max(0, len(self._accounts) - self._next)
+            return len(self._available)
 
     def acquire(self, log_callback=None) -> OutlookMailbox:
         last_error = None
         while True:
             with self._lock:
-                if self._next >= len(self._accounts):
+                if not self._available:
                     if last_error is not None:
                         raise RuntimeError(
                             "Outlook 邮箱池已耗尽；剩余邮箱预检均失败，且不会循环复用已领取账号: %s"
                             % last_error
                         ) from last_error
                     raise RuntimeError("Outlook 邮箱池已耗尽，不会循环复用已领取账号")
-                account = self._accounts[self._next]
-                self._next += 1
+                account = self._available.popleft()
             mailbox = OutlookMailbox(account, log_callback=log_callback)
             try:
                 mailbox.prepare()
@@ -283,6 +282,10 @@ class OutlookAccountPool:
                 last_error = exc
                 if log_callback:
                     log_callback("[!] Outlook 邮箱预检失败，跳过 %s: %s" % (account.email, exc))
+
+    def release_unsubmitted(self, account: OutlookAccount) -> None:
+        with self._lock:
+            self._available.appendleft(account)
 
 
 class OutlookTaskRuntime:
@@ -326,6 +329,19 @@ class OutlookTaskRuntime:
                 raise RuntimeError("Outlook 邮箱任务运行时已关闭")
             self._leases[handle] = lease
         return mailbox.email, handle
+
+    def release_before_submit(self, handle: str, email: str) -> bool:
+        with self._lock:
+            key = str(handle or "")
+            lease = self._leases.get(key)
+            if lease is None:
+                return False
+            if lease.email.lower() != str(email or "").lower():
+                raise RuntimeError("Outlook 邮箱会话与目标邮箱不匹配")
+            del self._leases[key]
+        lease.mailbox.close()
+        self._pool.release_unsubmitted(lease.mailbox.account)
+        return True
 
     def wait_for_code(
         self,

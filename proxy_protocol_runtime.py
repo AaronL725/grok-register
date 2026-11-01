@@ -256,7 +256,6 @@ class ProtocolRuntimeManager:
 
     def _acquire_runtime_entry(self, descriptor, starter):
         while True:
-            stale = []
             with self._condition:
                 stale = self._cleanup_locked()
                 current = self._entries.get(descriptor.node_id)
@@ -264,23 +263,25 @@ class ProtocolRuntimeManager:
                     current.refcount += 1
                     current.idle_since = None
                     current.last_used = time.time()
-                    endpoint = current.proxy_url
-                    runtime_key = current
-                    self._condition.notify_all()
-                    break
-                if descriptor.node_id not in self._starting:
+                    endpoint, runtime_key = current.proxy_url, current
+                    should_start = False
+                elif descriptor.node_id in self._starting:
+                    self._condition.wait()
+                    endpoint = runtime_key = None
+                    should_start = False
+                else:
                     self._starting.add(descriptor.node_id)
                     endpoint = runtime_key = None
-                    break
-                self._condition.wait(timeout=0.2)
+                    should_start = True
+
             for entry in stale:
                 self._stop_entry(entry)
+
             if endpoint is not None:
                 return endpoint, runtime_key
-        for entry in stale:
-            self._stop_entry(entry)
-        if endpoint is not None:
-            return endpoint, runtime_key
+            if should_start:
+                break
+
         try:
             entry = starter(descriptor)
             entry.refcount = 1

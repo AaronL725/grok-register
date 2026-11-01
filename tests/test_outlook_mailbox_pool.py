@@ -80,6 +80,28 @@ class OutlookMailboxPoolTests(unittest.TestCase):
                 runtime.acquire()
             runtime.close()
 
+    def test_pre_submit_release_closes_and_reuses_the_unsubmitted_mailbox(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            pool.OutlookMailbox, "prepare", return_value=None
+        ):
+            path = Path(tmp) / "pool.txt"
+            pool.save_outlook_mailbox_pool(path, ACCOUNT_ROWS)
+            runtime = pool.create_outlook_task_runtime(path)
+            email, handle = runtime.acquire()
+            mailbox = runtime._leases[handle].mailbox
+
+            with patch.object(mailbox, "close", wraps=mailbox.close) as close:
+                self.assertTrue(runtime.release_before_submit(handle, email))
+                close.assert_called_once_with()
+
+            self.assertEqual(runtime.status()["remaining"], 8)
+            self.assertEqual(runtime.status()["leased"], 0)
+            next_email, next_handle = runtime.acquire()
+            self.assertEqual(next_email, email)
+            self.assertNotEqual(next_handle, handle)
+            self.assertFalse(runtime.release_before_submit(handle, email))
+            runtime.close()
+
     def test_new_task_gets_fresh_allocator(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             pool.OutlookMailbox, "prepare", return_value=None
@@ -105,6 +127,7 @@ class OutlookMailboxPoolTests(unittest.TestCase):
                 runtime.wait_for_code(handle, email)
 
             email2, handle2 = runtime.acquire()
+            self.assertEqual(email2, "user2@example.com")
             with patch.object(pool.OutlookMailbox, "wait_for_code", return_value=None):
                 with self.assertRaises(VerificationCodeUnavailable):
                     runtime.wait_for_code(handle2, email2, timeout=1)
@@ -136,6 +159,10 @@ class OutlookMailboxPoolTests(unittest.TestCase):
                 calls.append((args, kwargs))
                 return "ABC123"
 
+            def release_before_submit(self, *args):
+                calls.append(("release", args))
+                return True
+
         previous_config = mail_service.config
         previous_runtime = getattr(mail_service, "outlook_runtime", None)
         had_runtime = hasattr(mail_service, "outlook_runtime")
@@ -149,8 +176,10 @@ class OutlookMailboxPoolTests(unittest.TestCase):
                 mail_service.get_oai_code("outlook:opaque", "u@example.com", timeout=7),
                 "ABC123",
             )
+            self.assertTrue(mail_service.release_email_lease("outlook:opaque", "u@example.com"))
             self.assertEqual(calls[0], "acquire")
             self.assertEqual(calls[1][0][:2], ("outlook:opaque", "u@example.com"))
+            self.assertEqual(calls[2], ("release", ("outlook:opaque", "u@example.com")))
         finally:
             mail_service.config = previous_config
             if had_runtime:
