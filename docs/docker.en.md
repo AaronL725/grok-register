@@ -13,18 +13,18 @@ The Docker image provides the **React WebUI, FastAPI, and headless Chromium**. I
 
 Run from the repository root:
 
-\`\`\`bash
+```bash
 docker compose up -d --build
 docker compose logs -f app
-\`\`\`
+```
 
 Open:
 
-\`\`\`text
+```text
 http://127.0.0.1:8092
-\`\`\`
+```
 
-On first start, the entrypoint copies \`config.docker.example.json\` into the persistent configuration volume. You can then edit and save settings from the WebUI.
+On first start, the entrypoint copies `config.docker.example.json` into the persistent configuration volume. You can then edit and save settings from the WebUI.
 
 ## Persistent data
 
@@ -32,46 +32,46 @@ Compose creates two named volumes:
 
 | Volume | Contents |
 | --- | --- |
-| \`grok-register-config\` | \`config.json\` |
-| \`grok-register-data\` | SQLite database, account TXT/pending files, mailbox credentials, Outlook mailbox pool, risk quarantine, proxy state, tokens, CPA credentials, and browser screenshots |
+| `grok-register-config` | `config.json` |
+| `grok-register-data` | SQLite database, account TXT/pending files, mailbox credentials, Outlook mailbox pool, risk quarantine, proxy state, tokens, CPA credentials, and browser screenshots |
 
-Recreating the container or running \`docker compose down\` does not remove these volumes.
+Recreating the container or running `docker compose down` does not remove these volumes.
 
-**Do not run \`docker compose down -v\` unless you intend to delete all persistent data.**
+**Do not run `docker compose down -v` unless you intend to delete all persistent data.**
 
 Inspect the configuration:
 
-\`\`\`bash
+```bash
 docker compose exec app cat /app/config/config.json
-\`\`\`
+```
 
 You can also copy a local configuration into the container:
 
-\`\`\`bash
+```bash
 docker compose cp ./config.json app:/app/config/config.json
 docker compose exec -u root app chown grok:grok /app/config/config.json
 docker compose restart app
-\`\`\`
+```
 
 Back up the configuration and data:
 
-\`\`\`bash
+```bash
 docker compose exec -T app tar -czf - -C /app/config . > grok-register-config.tar.gz
 docker compose exec -T app tar -czf - -C /app/data . > grok-register-data.tar.gz
-\`\`\`
+```
 
 ## Runtime notes
 
-- Chromium runs headless in the container; \`cpa_headless\` also defaults to \`true\`.
-- The container runs as a non-root user. Docker explicitly enables Chromium's \`--no-sandbox\` mode for container compatibility.
-- The WebUI port is bound to host \`127.0.0.1\`; it is not exposed to the LAN or public internet by default.
-- The image includes Chromium and the Python dependencies required by the WebUI. Optional \`sing-box\` is not bundled. VLESS, VMess, Trojan, Hysteria2, TUIC, and Shadowsocks nodes require an AMD64 sing-box binary to be mounted separately and selected with \`proxy_singbox_path\`.
-- Place proxy source files in the persistent \`/app/data\` directory and set \`proxy_pool_file\` to the corresponding absolute path in the WebUI.
+- Chromium runs headless in the container; `cpa_headless` also defaults to `true`.
+- The container runs as a non-root user. Docker explicitly enables Chromium's `--no-sandbox` mode for container compatibility.
+- The WebUI port is bound to host `127.0.0.1`; it is not exposed to the LAN or public internet by default.
+- The image includes Chromium and the Python dependencies required by the WebUI. Optional `sing-box` is not bundled. VLESS, VMess, Trojan, Hysteria2, TUIC, and Shadowsocks nodes require an AMD64 sing-box binary to be mounted separately and selected with `proxy_singbox_path`.
+- Place proxy source files in the persistent `/app/data` directory and set `proxy_pool_file` to the corresponding absolute path in the WebUI.
 - The Docker deployment is intended for WebUI use and does not provide the desktop Tk GUI.
 
 ## Common commands
 
-\`\`\`bash
+```bash
 # Status
 docker compose ps
 
@@ -87,6 +87,6 @@ docker compose down
 # Rebuild
 docker compose build --no-cache
 docker compose up -d
-\`\`\`
+```
 
-The container health check calls the local \`/health\` endpoint. It does not launch Chromium, run registration, or perform external account actions.
+The container health check calls the local `/health` endpoint. It does not launch Chromium, run registration, or perform external account actions.
