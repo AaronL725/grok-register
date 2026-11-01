@@ -26,6 +26,27 @@ http://127.0.0.1:8092
 
 首次启动时，entrypoint 会将 `config.docker.example.json` 复制到持久化配置卷。之后可以直接在 WebUI 的设置页面修改并保存配置。
 
+## 使用已发布的 GHCR 镜像
+
+如果不想在本机编译镜像，可以直接拉取 GitHub Container Registry 中的版本：
+
+```bash
+export GROK_REGISTER_IMAGE=ghcr.io/aaronl725/grok-register:latest
+docker compose pull
+docker compose up -d --no-build
+```
+
+将 `latest` 替换为指定版本（例如 `1.2.3` 或 `1.2.3-rc.1)，即可固定使用某个发布版本。发布稳定版时还会生成 `1.2.3`、`1.2`、`1` 和 `latest` 标签；预发布版本不会更新 `latest`。
+
+创建并推送版本标签即可触发自动发布：
+
+```bash
+git tag -a v1.2.3 -m "v1.2.3"
+git push origin v1.2.3
+```
+
+GitHub Actions 会先运行完整测试，再构建并发布 AMD64 镜像，最后创建带自动生成变更说明的 GitHub Release。首次发布后，请在 GitHub Packages 中确认容器包的可见性；若希望匿名拉取，需要将包设置为 Public。
+
 ## 持久化数据
 
 Compose 创建两个命名卷：
