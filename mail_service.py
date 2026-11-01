@@ -172,12 +172,21 @@ def _decode_mime_part(part):
         return payload.decode("utf-8", errors="replace")
 
 
+def _iter_mime_body_parts(part):
+    if part.get_content_disposition() == "attachment":
+        return
+    payload = part.get_payload()
+    if part.is_multipart() and isinstance(payload, list):
+        for child in payload:
+            yield from _iter_mime_body_parts(child)
+    else:
+        yield part
+
+
 def _mime_message_text(message):
     plain_parts = []
     html_parts = []
-    for part in message.walk():
-        if part.is_multipart() or part.get_content_disposition() == "attachment":
-            continue
+    for part in _iter_mime_body_parts(message):
         content_type = part.get_content_type().lower()
         if content_type not in ("text/plain", "text/html"):
             continue
