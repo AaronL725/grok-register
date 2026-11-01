@@ -167,3 +167,12 @@ test('closing reauthentication details invalidates an in-flight detail request',
   const history = await read('../src/app/history/HistoryPage.tsx')
   assert.match(history, /setSelectedJob\(null\)[\s\S]{0,100}jobRequestVersion\.current \+= 1/)
 })
+
+test('reauthentication history remains renderable after an account is deleted', async () => {
+  const api = await read('../src/lib/api.ts')
+  const accounts = await read('../src/app/accounts/AccountsPage.tsx')
+  const history = await read('../src/app/history/HistoryPage.tsx')
+  assert.ok(api.includes('account_id: number | null'))
+  assert.ok(accounts.includes('key={item.account_id ?? item.email}'))
+  assert.ok(history.includes('key={item.account_id ?? item.email}'))
+})
