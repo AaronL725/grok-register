@@ -26,3 +26,7 @@ autoPortData/
 
 frontend/node_modules/
 frontend/dist/
+tests/
+docs/
+README*.md
+LICENSE
