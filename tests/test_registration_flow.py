@@ -3,7 +3,8 @@
 import unittest
 
 from app_config import ConfigError
-from proxy_pool import ProxyConfigurationError
+from proxy_pool import ProxyConfigurationError, ProxyPoolError
+from proxy_protocols import ProxyProtocolError
 from registration_flow import (
     RecoverablePreSubmitError,
     RegistrationCallbacks,
@@ -448,6 +449,25 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(calls["count"], 2)
         self.assertEqual(batch.success_count, 1)
         self.assertEqual(batch.fail_count, 0)
+
+    def test_malformed_proxy_protocol_is_not_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def start_browser():
+            calls["count"] += 1
+            try:
+                raise ProxyProtocolError("invalid proxy port")
+            except ProxyProtocolError as exc:
+                raise ProxyPoolError(str(exc)) from exc
+
+        ops.start_browser = start_browser
+        with self.assertRaisesRegex(ProxyPoolError, "invalid proxy port"):
+            run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
 
     def test_proxy_configuration_error_is_not_retried(self):
         fake = FakeOps()
