@@ -463,7 +463,7 @@ export function AccountsPage({ language, busy, onNotice }: {
         </div>
         <div className="reauth-job-meta"><span>#{job.id} · {stateLabel(job.status, language)}</span><span>{formatDate(job.started_at, language)}</span></div>
         {job.error_message && <p className="attempt-error">{job.error_message}</p>}
-        {job.items && <div className="reauth-item-list">{job.items.map(item => <div className="reauth-item" key={item.account_id}>
+        {job.items && <div className="reauth-item-list">{job.items.map(item => <div className="reauth-item" key={item.account_id ?? item.email}>
           <strong>{item.email}</strong><StatePill value={item.status} language={language} />
           {item.error_message && <small>{item.error_message}</small>}
         </div>)}</div>}
