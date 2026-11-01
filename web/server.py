@@ -633,6 +633,31 @@ def registration_attempt_history(
     )
 
 
+@app.get("/api/jobs/history/{run_id}/attempts/{attempt_id}/screenshot")
+def registration_attempt_screenshot(run_id: int, attempt_id: int, request: Request):
+    _require_local_origin(request)
+    database = _get_database()
+    attempt = database.get_registration_attempt(run_id, attempt_id)
+    if attempt is None or not attempt["screenshot_path"]:
+        raise HTTPException(status_code=404, detail="失败截图不存在")
+
+    diagnostics_dir = (
+        Path(database.path).expanduser().resolve().parent / "diagnostics" / "registration"
+    )
+    screenshot = Path(attempt["screenshot_path"]).resolve()
+    try:
+        screenshot.relative_to(diagnostics_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=404, detail="失败截图不存在")
+    if not screenshot.is_file():
+        raise HTTPException(status_code=404, detail="失败截图不存在")
+    return FileResponse(
+        screenshot,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @app.post("/api/reauth/start")
 async def start_reauthentication(request: Request):
     _require_local_origin(request)

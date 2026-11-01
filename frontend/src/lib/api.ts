@@ -38,6 +38,29 @@ export function put<T>(path: string, payload: unknown): Promise<T> {
   return api<T>(path, { method: 'PUT', body: JSON.stringify(payload) })
 }
 
+export async function postText(path: string, payload: unknown): Promise<string> {
+  const response = await fetch(path, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    let detail = response.statusText || 'Request failed'
+    try {
+      const data = await response.json() as { detail?: string }
+      detail = typeof data.detail === 'string' ? data.detail : detail
+    } catch {
+      // Keep the HTTP status when the server did not return JSON.
+    }
+    const error = new Error(detail) as ApiError
+    error.status = response.status
+    throw error
+  }
+  return response.text()
+}
+
+
 export type ConfigValue = string | number | boolean | null
 export type Config = Record<string, ConfigValue>
 export type ConfigResponse = { ok: boolean; config: Config }
@@ -161,4 +184,98 @@ export type MailboxTest = {
     imap?: MailboxChannel
     graph?: MailboxChannel
   }>
+}
+
+export type AccountListItem = {
+  id: number
+  email: string
+  email_provider: string
+  registration_status: string
+  authorization_status: string
+  cpa_status: string
+  grok2api_local_status: string
+  grok2api_remote_status: string
+  source: string
+  registration_run_id: number | null
+  created_at: string
+  updated_at: string
+  last_authenticated_at: string | null
+}
+
+export type RegistrationAttempt = {
+  id: number
+  registration_run_id: number
+  slot_index: number
+  account_id: number | null
+  attempt_number: number
+  worker_key: string
+  stage: string
+  status: string
+  error_type: string
+  error_message: string
+  traceback: string
+  failure_type: string
+  screenshot_path: string
+  started_at: string
+  finished_at: string | null
+}
+
+export type AccountArtifact = {
+  id: number
+  artifact_type: string
+  path: string
+  format: string
+  created_at: string
+}
+
+export type AccountDetail = AccountListItem & {
+  profile: Record<string, unknown>
+  attempts: RegistrationAttempt[]
+  artifacts: AccountArtifact[]
+}
+
+export type RegistrationRun = {
+  id: number
+  status: string
+  requested_count: number
+  processed_count: number
+  success_count: number
+  failed_count: number
+  uncertain_count: number
+  registered_unsaved_count: number
+  postprocess_warning_count: number
+  cancelled: number
+  started_at: string
+  finished_at: string | null
+  error_message: string
+  success_rate: number
+  attempt_count: number
+}
+
+export type ReauthJobItem = {
+  account_id: number | null
+  email: string
+  status: string
+  error_message: string
+  updated_at: string
+}
+
+export type ReauthJob = {
+  id: number
+  job_type: string
+  status: string
+  requested_count: number
+  processed_count: number
+  success_count: number
+  failed_count: number
+  cancelled: number
+  started_at: string
+  finished_at: string | null
+  error_message: string
+  items?: ReauthJobItem[]
+}
+
+export type ReauthStatus = {
+  running: boolean
+  job: ReauthJob | null
 }

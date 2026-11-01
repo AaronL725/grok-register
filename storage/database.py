@@ -438,6 +438,16 @@ class Database:
             ).fetchall()
         return {"items": [dict(row) for row in rows], "total": total}
 
+    def get_registration_attempt(self, registration_run_id, attempt_id):
+        with self.connection() as connection:
+            row = connection.execute(
+                """SELECT id, registration_run_id, screenshot_path
+                   FROM registration_attempts
+                   WHERE registration_run_id = ? AND id = ?""",
+                (int(registration_run_id), int(attempt_id)),
+            ).fetchone()
+        return None if row is None else dict(row)
+
     def update_account_integration_status(
         self, account_id, cpa_status, cpa_error,
         grok2api_local_status, grok2api_local_error,

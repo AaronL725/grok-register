@@ -298,7 +298,7 @@ See [Dependency health checks](docs/health-check.en.md) for details.
 
 ### Existing-account reauthentication
 
-Stored accounts can be reauthenticated through normal email/password sign-in, refresh their SSO session, synchronize legacy TXT files, and update CPA/Grok2API authorization exports independently. The local API provides job start, stop and persisted history. The full account management interface will be added in the React phase.
+Stored accounts can be reauthenticated through normal email/password sign-in, refresh their SSO session, synchronize legacy TXT files, and update CPA/Grok2API authorization exports independently. The React WebUI now provides account filtering, details, bulk deletion/export, reauthentication controls, registration history, and failure screenshot previews.
 
 See [Reauthentication and authorization recovery](docs/reauthentication.en.md).
 
@@ -616,7 +616,7 @@ Recovery uses file locks, deduplication, and atomic replacement. Repeating the o
 ├── cpa_export.py              # CPA/OIDC export entry point
 ├── cpa_xai/                   # CPA browser, OAuth, proxy helpers, and credential writing
 ├── frontend/
-│   ├── src/app/               # React pages and configuration fields
+│   ├── src/app/               # React pages, account management, task history, and configuration fields
 │   ├── src/lib/               # TypeScript API contracts
 │   └── package.json           # React / TypeScript / Vite
 ├── web/
