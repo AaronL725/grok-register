@@ -265,6 +265,8 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
                 try:
                     future.result()
                 except Exception as exc:
+                    # Pre-submit transient failures are retried inside run_batch.
+                    # An exception escaping a worker is therefore genuinely fatal.
                     fatal_errors.append((worker_id, exc))
                     abort_event.set()
                     callbacks.log("[!] T%s worker 级异常，正在停止其他 worker: %s" % (worker_id, exc))

@@ -221,8 +221,8 @@ class OptionalMultithreadTests(unittest.TestCase):
         self.assertEqual(observed, sorted(observed))
 
 
-    def test_parallel_failure_screenshot_uses_the_failing_workers_page(self):
-        from registration_flow import RegistrationCallbacks
+    def test_transient_worker_page_open_failure_does_not_abort_other_workers(self):
+        from registration_flow import RegistrationCallbacks, STAGE_PAGE_OPEN, _set_registration_stage
         from registration_parallel import run_parallel_batch
 
         class Cancelled(Exception):
@@ -249,6 +249,7 @@ class OptionalMultithreadTests(unittest.TestCase):
                 self.worker_id = worker_id
                 self.browser = None
                 self.page = FakePage(worker_id)
+                self.open_calls = 0
 
             def bind_runtime(self, _namespace):
                 return None
@@ -256,12 +257,18 @@ class OptionalMultithreadTests(unittest.TestCase):
             def start_browser(self, **_kwargs):
                 self.browser = object()
 
+            def restart_browser(self, **_kwargs):
+                self.stop_browser()
+                self.start_browser()
+
             def stop_browser(self):
                 self.browser = None
 
             def open_signup_page(self, **_kwargs):
-                if self.worker_id == 1:
-                    raise RuntimeError("worker browser failed")
+                _set_registration_stage(STAGE_PAGE_OPEN)
+                self.open_calls += 1
+                if self.worker_id == 1 and self.open_calls == 1:
+                    raise RuntimeError("temporary page navigation failure")
 
             def fill_email_and_submit(self, **_kwargs):
                 return "worker%s@example.com" % self.worker_id, "mail-token"
@@ -317,30 +324,30 @@ class OptionalMultithreadTests(unittest.TestCase):
         with patch("registration_parallel.load_isolated_module", side_effect=fake_loader), patch(
             "registration_diagnostics.capture_failure_screenshot", side_effect=capture
         ), patch("cpa_xai.browser_confirm.shutdown_mint_browsers", return_value=None):
-            with self.assertRaisesRegex(RuntimeError, "parallel worker"):
-                run_parallel_batch(
-                    count=2,
-                    callbacks=callbacks,
-                    observer=lambda *_args: None,
-                    runtime_namespace=runtime_namespace,
-                    accounts_output_file="unused.txt",
-                    workers=2,
-                    enable_nsfw=False,
-                    cleanup_interval=0,
-                    registration_run_id=77,
-                    diagnostics_dir="/tmp/grok-register-diagnostics",
-                )
+            result = run_parallel_batch(
+                count=2,
+                callbacks=callbacks,
+                observer=lambda *_args: None,
+                runtime_namespace=runtime_namespace,
+                accounts_output_file="unused.txt",
+                workers=2,
+                enable_nsfw=False,
+                cleanup_interval=0,
+                registration_run_id=77,
+                diagnostics_dir="/tmp/grok-register-diagnostics",
+            )
 
-        self.assertTrue(captured)
-        self.assertTrue(any(
-            page is modules[page.worker_id].page and run_id == 77
-            for page, run_id, _details, _directory in captured
-        ))
-        self.assertTrue(any(
-            page.worker_id == 1 and details["stage"] == "page_open"
-            and directory == "/tmp/grok-register-diagnostics"
-            for page, _run_id, details, directory in captured
-        ))
+        self.assertEqual(result.processed_count, 2)
+        self.assertEqual(result.success_count, 2)
+        self.assertEqual(result.fail_count, 0)
+        self.assertEqual(modules[1].open_calls, 2)
+        self.assertEqual(modules[2].open_calls, 1)
+        self.assertEqual(len(captured), 1)
+        page, run_id, details, directory = captured[0]
+        self.assertIs(page, modules[1].page)
+        self.assertEqual(run_id, 77)
+        self.assertEqual(details["stage"], "page_open")
+        self.assertEqual(directory, "/tmp/grok-register-diagnostics")
 
 
 if __name__ == "__main__":

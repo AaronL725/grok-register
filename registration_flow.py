@@ -5,11 +5,12 @@ import threading
 import traceback
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from app_config import config as app_config
+from app_config import ConfigError, config as app_config
 from sso_risk import RegistrationRiskDenied
 from proxy_pool import (
     ProxyAcquireCancelled,
     ProxyPoolError,
+    ProxyConfigurationError,
     ProxyTransportError,
     begin_registration_slot,
     classify_proxy_network_error,
@@ -36,6 +37,7 @@ SAFE_NEW_LEASE = "safe_new_lease"
 SAME_LEASE_RECOVERY = "same_lease_recovery"
 OUTCOME_UNCERTAIN = "outcome_uncertain"
 NO_RETRY = "no_retry"
+FATAL = "fatal"
 
 
 def _set_registration_stage(value):
@@ -47,11 +49,22 @@ def current_registration_stage():
     return getattr(_STAGE_TLS, "stage", STAGE_LEASE_ACQUIRE)
 
 
+def _is_non_retryable_pre_submit_error(error):
+    if isinstance(error, (
+        ConfigError, ProxyConfigurationError, FileNotFoundError,
+        PermissionError, ImportError, ValueError, TypeError,
+    )):
+        return True
+    if isinstance(error, ProxyPoolError):
+        return classify_proxy_network_error(error) in ("configuration", "compatibility")
+    return False
+
+
 def registration_retry_disposition(stage, error=None):
-    """Classify whether a failed attempt may safely be replayed with a new lease."""
+    """Classify retry safety from the last completed registration stage."""
     stage = str(stage or STAGE_LEASE_ACQUIRE)
     if stage in (STAGE_LEASE_ACQUIRE, STAGE_BROWSER_START, STAGE_PAGE_OPEN):
-        return SAFE_NEW_LEASE
+        return FATAL if _is_non_retryable_pre_submit_error(error) else SAFE_NEW_LEASE
     if stage == STAGE_CODE_WAIT:
         return SAME_LEASE_RECOVERY
     if stage in (STAGE_EMAIL_SUBMIT, STAGE_CODE_SUBMIT, STAGE_PROFILE_SUBMIT, STAGE_SSO_WAIT):
@@ -59,7 +72,6 @@ def registration_retry_disposition(stage, error=None):
     if stage in (STAGE_ACCOUNT_CONFIRMED, STAGE_POSTPROCESS):
         return NO_RETRY
     return OUTCOME_UNCERTAIN
-
 
 class EmailSignupUnavailable(RuntimeError):
     """The xAI signup page explicitly declined the email signup flow."""
@@ -550,17 +562,29 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                 result.cancelled = True; callbacks.log("[!] 注册被停止"); continue_batch = False
             except ops.retry_exception as exc:
                 attempt_error = exc
-                stage = current_registration_stage(); disposition = registration_retry_disposition(stage, exc)
+                stage = current_registration_stage()
+                disposition = registration_retry_disposition(stage, exc)
+                if disposition == FATAL:
+                    attempt_status = "failed"
+                    raise
                 if disposition != SAFE_NEW_LEASE:
                     attempt_status = "uncertain"
-                    _record_uncertain(result, callbacks, stage, exc); retry_count_for_slot = 0
+                    _record_uncertain(result, callbacks, stage, exc)
+                    retry_count_for_slot = 0
                 else:
                     attempt_status = "retrying"
                     retry_count_for_slot += 1
-                    if retry_count_for_slot <= settings.max_slot_retry: callbacks.log(f"[!] 当前账号流程卡住，安全重试第 {retry_count_for_slot}/{settings.max_slot_retry} 次: {exc}")
+                    if retry_count_for_slot <= settings.max_slot_retry:
+                        callbacks.log(
+                            f"[!] 当前账号流程卡住，安全重试第 "
+                            f"{retry_count_for_slot}/{settings.max_slot_retry} 次: {exc}"
+                        )
                     else:
                         attempt_status = "failed"
-                        result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 当前账号已达到最大重试次数，跳过: {exc}")
+                        result.fail_count += 1
+                        result.processed_count += 1
+                        retry_count_for_slot = 0
+                        callbacks.log(f"[-] 当前账号已达到最大重试次数，跳过: {exc}")
             except EmailSignupUnavailable as exc:
                 attempt_status = "rejected"; attempt_error = exc
                 result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
@@ -575,35 +599,47 @@ def _run_batch_managed(settings, callbacks, observer, ops):
             except Exception as exc:
                 attempt_error = exc
                 has_lease = current_proxy_lease() is not None
-                proxy_failure = isinstance(exc, ProxyPoolError) or (has_lease and is_proxy_transport_exception(exc))
-                stage = current_registration_stage(); disposition = registration_retry_disposition(stage, exc)
-                if proxy_failure and has_lease and is_proxy_transport_exception(exc): transport_error = exc
+                proxy_failure = isinstance(exc, ProxyPoolError) or (
+                    has_lease and is_proxy_transport_exception(exc)
+                )
+                stage = current_registration_stage()
+                disposition = registration_retry_disposition(stage, exc)
+                if proxy_failure and has_lease and is_proxy_transport_exception(exc):
+                    transport_error = exc
+
                 if disposition == OUTCOME_UNCERTAIN:
                     attempt_status = "uncertain"
-                    _record_uncertain(result, callbacks, stage, exc); retry_count_for_slot = 0
-                elif proxy_failure and disposition == SAFE_NEW_LEASE:
-                    attempt_status = "retrying"
-                    retry_count_for_slot += 1
-                    if retry_count_for_slot <= settings.max_slot_retry:
-                        callbacks.log(f"[!] 当前账号代理在安全阶段不可用，释放租约并重试 {retry_count_for_slot}/{settings.max_slot_retry}: {exc}")
-                    else:
-                        attempt_status = "failed"
-                        result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 当前账号代理重试达到上限，跳过: {exc}")
-                elif disposition == SAFE_NEW_LEASE and isinstance(exc, RecoverablePreSubmitError):
-                    attempt_status = "retrying"
-                    retry_count_for_slot += 1
-                    if retry_count_for_slot <= settings.max_slot_retry:
-                        callbacks.log(f"[!] 提交前页面暂时不可用，重试 {retry_count_for_slot}/{settings.max_slot_retry}: {exc}")
-                    else:
-                        attempt_status = "failed"
-                        result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0
-                        callbacks.log(f"[-] 提交前页面重试达到上限，跳过: {exc}")
+                    _record_uncertain(result, callbacks, stage, exc)
+                    retry_count_for_slot = 0
                 elif disposition == SAFE_NEW_LEASE:
+                    attempt_status = "retrying"
+                    retry_count_for_slot += 1
+                    if retry_count_for_slot <= settings.max_slot_retry:
+                        if proxy_failure:
+                            callbacks.log(
+                                f"[!] 当前账号代理在安全阶段不可用，释放租约并重试 "
+                                f"{retry_count_for_slot}/{settings.max_slot_retry}: {exc}"
+                            )
+                        else:
+                            callbacks.log(
+                                f"[!] {stage} 阶段在注册信息提交前失败，安全重试 "
+                                f"{retry_count_for_slot}/{settings.max_slot_retry}: {exc}"
+                            )
+                    else:
+                        attempt_status = "failed"
+                        result.fail_count += 1
+                        result.processed_count += 1
+                        retry_count_for_slot = 0
+                        callbacks.log(f"[-] 提交前安全重试达到上限，跳过当前账号: {exc}")
+                elif disposition == FATAL:
                     attempt_status = "failed"
                     raise
                 else:
                     attempt_status = "failed"
-                    result.fail_count += 1; result.processed_count += 1; retry_count_for_slot = 0; callbacks.log(f"[-] 注册失败: {exc}")
+                    result.fail_count += 1
+                    result.processed_count += 1
+                    retry_count_for_slot = 0
+                    callbacks.log(f"[-] 注册失败: {exc}")
             finally:
                 try:
                     end_registration_slot(success=slot_success, transport_error=transport_error)
