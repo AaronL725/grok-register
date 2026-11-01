@@ -534,6 +534,7 @@ def _release_email_lease(dev_token, email, log_callback=None):
 
 
 def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None, on_mail_created=None):
+    _mark_registration_stage("page_open")
     raise_if_cancelled(cancel_callback)
     email = dev_token = ""
     try:
