@@ -309,7 +309,10 @@ export function HistoryPage({ language, onNotice }: {
     {selectedJob && <section className="surface">
       <div className="surface-heading">
         <div><h2>Reauthentication job #{selectedJob.id}</h2><p>{date(selectedJob.started_at, language)} · {statusText(selectedJob.status, language)}</p></div>
-        <button className="button button-quiet" type="button" onClick={() => setSelectedJob(null)}>{t(language, 'close')} ×</button>
+        <button className="button button-quiet" type="button" onClick={() => {
+          setSelectedJob(null)
+          jobRequestVersion.current += 1
+        }}>{t(language, 'close')} ×</button>
       </div>
       <div className="detail-status-grid">
         <div><small>{t(language, 'requestedCount')}</small><strong>{selectedJob.requested_count}</strong></div>
