@@ -514,6 +514,33 @@ class WebControlPlaneTests(unittest.TestCase):
                 self.assertEqual(account["email"], "legacy@example.com")
                 self.assertEqual(account["email_provider"], "")
 
+    def test_database_api_imports_legacy_files_from_configured_output_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            output = Path(directory) / "persistent-output"
+            root.mkdir()
+            output.mkdir()
+            (root / "accounts-old.txt").write_text(
+                "root@example.com----root-pw----root-token\n", encoding="utf-8"
+            )
+            (output / "accounts-container.txt").write_text(
+                "output@example.com----output-pw----output-token\n", encoding="utf-8"
+            )
+            with patch.object(self.server, "ROOT", root), patch.dict(
+                "os.environ", {"GROK_REGISTER_OUTPUT_DIR": str(output)}
+            ), patch.object(
+                self.server, "_load_config_if_idle",
+                return_value={"database_path": str(root / "accounts.sqlite3")},
+            ), patch.object(self.server, "_database_cache", {}):
+                database = self.server._get_database()
+                accounts = database.list_accounts()["items"]
+
+            self.assertEqual(
+                {account["email"] for account in accounts},
+                {"root@example.com", "output@example.com"},
+            )
+
+
 
 if __name__ == "__main__":
     unittest.main()
