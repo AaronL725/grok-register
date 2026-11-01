@@ -529,8 +529,9 @@ def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None, o
         if not email or not dev_token:
             raise RuntimeError("邮箱服务未返回完整凭据")
     except Exception as exc:
-        # No browser form was submitted: this slot can be retried safely.
         raise_if_cancelled(cancel_callback)
+        if _is_non_retryable_browser_error(exc):
+            raise
         from registration_flow import RecoverablePreSubmitError
         raise RecoverablePreSubmitError(f"提交前创建邮箱失败: {exc}") from exc
     if log_callback:
