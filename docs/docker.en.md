@@ -66,7 +66,18 @@ docker compose exec -T app tar -czf - -C /app/data . > grok-register-data.tar.gz
 - The container runs as a non-root user. Docker explicitly enables Chromium's `--no-sandbox` mode for container compatibility.
 - The WebUI port is bound to host `127.0.0.1`; it is not exposed to the LAN or public internet by default.
 - The image includes Chromium and the Python dependencies required by the WebUI. Optional `sing-box` is not bundled. VLESS, VMess, Trojan, Hysteria2, TUIC, and Shadowsocks nodes require an AMD64 sing-box binary to be mounted separately and selected with `proxy_singbox_path`.
-- Place proxy source files in the persistent `/app/data` directory and set `proxy_pool_file` to the corresponding absolute path in the WebUI.
+- Copy proxy source files into the persistent data volume, then set the absolute path in the WebUI:
+  ```bash
+  docker compose cp ./proxies.txt app:/app/data/proxies.txt
+  ```
+- Advanced proxy protocols require a separately mounted Linux AMD64 sing-box binary. Make it executable on the host, then add this Compose override:
+  ```yaml
+  services:
+    app:
+      volumes:
+        - ./sing-box:/usr/local/bin/sing-box:ro
+  ```
+  Set `proxy_singbox_path` to `/usr/local/bin/sing-box` in the WebUI.
 - The Docker deployment is intended for WebUI use and does not provide the desktop Tk GUI.
 
 ## Common commands
