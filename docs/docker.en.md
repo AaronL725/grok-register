@@ -49,6 +49,7 @@ You can also copy a local configuration into the container:
 
 \`\`\`bash
 docker compose cp ./config.json app:/app/config/config.json
+docker compose exec -u root app chown grok:grok /app/config/config.json
 docker compose restart app
 \`\`\`
 
