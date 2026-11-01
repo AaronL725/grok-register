@@ -353,9 +353,9 @@ class OptionalMultithreadTests(unittest.TestCase):
         self.assertEqual(result.fail_count, 0)
         self.assertEqual(modules[1].start_calls, 2)
         self.assertEqual(modules[1].open_calls, 1)
-        self.assertEqual(modules[2].start_calls, 1)
+        self.assertEqual(modules[2].start_calls, 2)
         self.assertEqual(modules[2].open_calls, 2)
-        self.assertEqual(modules[3].start_calls, 1)
+        self.assertEqual(modules[3].start_calls, 2)
         self.assertEqual(modules[3].open_calls, 2)
 
         captured_by_worker = {page.worker_id: (run_id, details, directory) for page, run_id, details, directory in captured}
