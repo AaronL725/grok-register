@@ -221,8 +221,13 @@ class OptionalMultithreadTests(unittest.TestCase):
         self.assertEqual(observed, sorted(observed))
 
 
-    def test_transient_worker_page_open_failure_does_not_abort_other_workers(self):
-        from registration_flow import RegistrationCallbacks, STAGE_PAGE_OPEN, _set_registration_stage
+    def test_transient_pre_submit_failures_do_not_abort_other_workers(self):
+        from registration_flow import (
+            RegistrationCallbacks,
+            RecoverablePreSubmitError,
+            STAGE_PAGE_OPEN,
+            _set_registration_stage,
+        )
         from registration_parallel import run_parallel_batch
 
         class Cancelled(Exception):
@@ -249,12 +254,16 @@ class OptionalMultithreadTests(unittest.TestCase):
                 self.worker_id = worker_id
                 self.browser = None
                 self.page = FakePage(worker_id)
+                self.start_calls = 0
                 self.open_calls = 0
 
             def bind_runtime(self, _namespace):
                 return None
 
             def start_browser(self, **_kwargs):
+                self.start_calls += 1
+                if self.worker_id == 1 and self.start_calls == 1:
+                    raise RuntimeError("temporary browser startup failure")
                 self.browser = object()
 
             def restart_browser(self, **_kwargs):
@@ -267,8 +276,10 @@ class OptionalMultithreadTests(unittest.TestCase):
             def open_signup_page(self, **_kwargs):
                 _set_registration_stage(STAGE_PAGE_OPEN)
                 self.open_calls += 1
-                if self.worker_id == 1 and self.open_calls == 1:
+                if self.worker_id == 2 and self.open_calls == 1:
                     raise RuntimeError("temporary page navigation failure")
+                if self.worker_id == 3 and self.open_calls == 1:
+                    raise RecoverablePreSubmitError("email signup button not found")
 
             def fill_email_and_submit(self, **_kwargs):
                 return "worker%s@example.com" % self.worker_id, "mail-token"
@@ -325,29 +336,35 @@ class OptionalMultithreadTests(unittest.TestCase):
             "registration_diagnostics.capture_failure_screenshot", side_effect=capture
         ), patch("cpa_xai.browser_confirm.shutdown_mint_browsers", return_value=None):
             result = run_parallel_batch(
-                count=2,
+                count=3,
                 callbacks=callbacks,
                 observer=lambda *_args: None,
                 runtime_namespace=runtime_namespace,
                 accounts_output_file="unused.txt",
-                workers=2,
+                workers=3,
                 enable_nsfw=False,
                 cleanup_interval=0,
                 registration_run_id=77,
                 diagnostics_dir="/tmp/grok-register-diagnostics",
             )
 
-        self.assertEqual(result.processed_count, 2)
-        self.assertEqual(result.success_count, 2)
+        self.assertEqual(result.processed_count, 3)
+        self.assertEqual(result.success_count, 3)
         self.assertEqual(result.fail_count, 0)
-        self.assertEqual(modules[1].open_calls, 2)
-        self.assertEqual(modules[2].open_calls, 1)
-        self.assertEqual(len(captured), 1)
-        page, run_id, details, directory = captured[0]
-        self.assertIs(page, modules[1].page)
-        self.assertEqual(run_id, 77)
-        self.assertEqual(details["stage"], "page_open")
-        self.assertEqual(directory, "/tmp/grok-register-diagnostics")
+        self.assertEqual(modules[1].start_calls, 2)
+        self.assertEqual(modules[1].open_calls, 1)
+        self.assertEqual(modules[2].start_calls, 1)
+        self.assertEqual(modules[2].open_calls, 2)
+        self.assertEqual(modules[3].start_calls, 1)
+        self.assertEqual(modules[3].open_calls, 2)
+
+        captured_by_worker = {page.worker_id: (run_id, details, directory) for page, run_id, details, directory in captured}
+        self.assertEqual(set(captured_by_worker), {1, 2, 3})
+        self.assertEqual(captured_by_worker[1][0], 77)
+        self.assertEqual(captured_by_worker[1][1]["stage"], "browser_start")
+        self.assertEqual(captured_by_worker[2][1]["stage"], "page_open")
+        self.assertEqual(captured_by_worker[3][1]["stage"], "page_open")
+        self.assertTrue(all(item[2] == "/tmp/grok-register-diagnostics" for item in captured_by_worker.values()))
 
 
 if __name__ == "__main__":
