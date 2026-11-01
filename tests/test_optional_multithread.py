@@ -225,6 +225,7 @@ class OptionalMultithreadTests(unittest.TestCase):
         from registration_flow import (
             RegistrationCallbacks,
             RecoverablePreSubmitError,
+            STAGE_BROWSER_START,
             STAGE_PAGE_OPEN,
             _set_registration_stage,
         )
@@ -261,6 +262,7 @@ class OptionalMultithreadTests(unittest.TestCase):
                 return None
 
             def start_browser(self, **_kwargs):
+                _set_registration_stage(STAGE_BROWSER_START)
                 self.start_calls += 1
                 if self.worker_id == 1 and self.start_calls == 1:
                     raise RuntimeError("temporary browser startup failure")
