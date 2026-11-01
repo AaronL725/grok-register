@@ -2,6 +2,9 @@
 
 import unittest
 
+from app_config import ConfigError
+from proxy_pool import ProxyConfigurationError, ProxyPoolError
+from proxy_protocols import ProxyProtocolError
 from registration_flow import (
     RecoverablePreSubmitError,
     RegistrationCallbacks,
@@ -68,13 +71,24 @@ class RegistrationFlowTests(unittest.TestCase):
         logs = logs if logs is not None else []
         return RegistrationCallbacks(log=logs.append, cancelled=lambda: False)
 
-    def test_start_failure_still_runs_cleanup(self):
+    def test_transient_browser_start_failure_retries_and_still_runs_cleanup(self):
         fake = FakeOps()
         ops = fake.operations()
-        ops.start_browser = lambda: (_ for _ in ()).throw(RuntimeError("start failed"))
-        with self.assertRaises(RuntimeError):
-            run_batch(1, self.callbacks(), lambda *args: None, ops)
-        self.assertEqual(fake.events, [("cleanup", "任务结束")])
+        starts = {"count": 0}
+
+        def start_browser():
+            starts["count"] += 1
+            if starts["count"] == 1:
+                raise RuntimeError("temporary start failure")
+            fake.events.append("start")
+
+        ops.start_browser = start_browser
+        batch = run_batch(1, self.callbacks(), lambda *args: None, ops)
+
+        self.assertEqual(starts["count"], 2)
+        self.assertEqual(batch.success_count, 1)
+        self.assertEqual(batch.fail_count, 0)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
 
     def test_last_account_does_not_restart_browser(self):
         fake = FakeOps()
@@ -144,10 +158,10 @@ class RegistrationFlowTests(unittest.TestCase):
     def test_final_cleanup_failure_does_not_hide_original_error(self):
         fake = FakeOps()
         ops = fake.operations()
-        ops.start_browser = lambda: (_ for _ in ()).throw(RuntimeError("original start error"))
+        ops.start_browser = lambda: (_ for _ in ()).throw(ConfigError("original configuration error"))
         ops.cleanup = lambda reason: (_ for _ in ()).throw(RuntimeError("cleanup error"))
         logs = []
-        with self.assertRaisesRegex(RuntimeError, "original start error"):
+        with self.assertRaisesRegex(ConfigError, "original configuration error"):
             run_batch(1, self.callbacks(logs), lambda *args: None, ops)
         self.assertTrue(any("清理失败" in line for line in logs))
 
@@ -191,14 +205,14 @@ class RegistrationFlowTests(unittest.TestCase):
     def test_attempt_callback_records_failed_stage_without_credentials(self):
         fake = FakeOps()
         ops = fake.operations()
-        ops.start_browser = lambda: (_ for _ in ()).throw(RuntimeError("failed before registration"))
+        ops.start_browser = lambda: (_ for _ in ()).throw(ConfigError("invalid browser configuration"))
         attempts = []
         callbacks = RegistrationCallbacks(
             log=lambda _message: None,
             cancelled=lambda: False,
             record_attempt=attempts.append,
         )
-        with self.assertRaisesRegex(RuntimeError, "failed before registration"):
+        with self.assertRaisesRegex(ConfigError, "invalid browser configuration"):
             run_batch(1, callbacks, lambda *args: None, ops)
         self.assertEqual(len(attempts), 1)
         self.assertEqual(attempts[0]["status"], "failed")
@@ -272,7 +286,7 @@ class RegistrationFlowTests(unittest.TestCase):
         fake = FakeOps()
         ops = fake.operations()
         events = []
-        ops.start_browser = lambda: (_ for _ in ()).throw(RuntimeError("browser start failed"))
+        ops.start_browser = lambda: (_ for _ in ()).throw(ConfigError("browser start configuration failed"))
         ops.capture_failure_diagnostics = lambda details: (
             events.append(("screenshot", details["stage"], details["status"])) or "/tmp/failure.png"
         )
@@ -284,20 +298,20 @@ class RegistrationFlowTests(unittest.TestCase):
             record_attempt=attempts.append,
         )
 
-        with self.assertRaisesRegex(RuntimeError, "browser start failed"):
+        with self.assertRaisesRegex(ConfigError, "browser start configuration failed"):
             run_batch(1, callbacks, lambda *_args: None, ops)
 
         self.assertEqual(events[0], ("screenshot", "browser_start", "failed"))
         self.assertEqual(events[1], ("cleanup", "任务结束"))
         self.assertEqual(attempts[0]["failure_type"], "browser")
         self.assertEqual(attempts[0]["screenshot_path"], "/tmp/failure.png")
-        self.assertIn("browser start failed", attempts[0]["traceback"])
+        self.assertIn("browser start configuration failed", attempts[0]["traceback"])
 
     def test_screenshot_failure_does_not_replace_registration_error_or_skip_cleanup(self):
         fake = FakeOps()
         ops = fake.operations()
         events = []
-        ops.start_browser = lambda: (_ for _ in ()).throw(RuntimeError("original failure"))
+        ops.start_browser = lambda: (_ for _ in ()).throw(ConfigError("original configuration failure"))
         ops.capture_failure_diagnostics = lambda _details: (
             _ for _ in ()
         ).throw(OSError("screenshot disk full"))
@@ -310,12 +324,12 @@ class RegistrationFlowTests(unittest.TestCase):
             record_attempt=attempts.append,
         )
 
-        with self.assertRaisesRegex(RuntimeError, "original failure"):
+        with self.assertRaisesRegex(ConfigError, "original configuration failure"):
             run_batch(1, callbacks, lambda *_args: None, ops)
 
         self.assertEqual(events, ["任务结束"])
         self.assertEqual(attempts[0]["screenshot_path"], "")
-        self.assertEqual(attempts[0]["error_message"], "original failure")
+        self.assertEqual(attempts[0]["error_message"], "original configuration failure")
         self.assertTrue(any("失败截图捕获异常" in message for message in logs))
 
     def test_attempt_error_and_traceback_redact_account_credentials(self):
@@ -374,6 +388,134 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(len(screenshots), 1)
         self.assertEqual(attempts[0]["failure_type"], "browser")
         self.assertEqual(attempts[0]["screenshot_path"], "/tmp/retry.png")
+
+
+    def test_generic_page_open_exception_retries_with_a_new_attempt(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+        attempts = []
+
+        def open_signup_page():
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("email signup button not ready")
+
+        ops.open_signup_page = open_signup_page
+        callbacks = RegistrationCallbacks(
+            log=lambda _message: None,
+            cancelled=lambda: False,
+            record_attempt=attempts.append,
+        )
+
+        batch = run_batch(1, callbacks, lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(batch.success_count, 1)
+        self.assertEqual(batch.fail_count, 0)
+        self.assertEqual([item["status"] for item in attempts], ["retrying", "succeeded"])
+
+    def test_post_submit_exception_is_uncertain_and_never_replayed(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def submit_email():
+            calls["count"] += 1
+            raise RuntimeError("browser disconnected during email submit")
+
+        ops.fill_email_and_submit = submit_email
+        batch = run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(batch.processed_count, 1)
+        self.assertEqual(batch.fail_count, 1)
+        self.assertEqual(batch.uncertain_count, 1)
+        self.assertEqual(batch.success_count, 0)
+
+    def test_value_error_during_page_open_is_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def open_signup_page():
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise ValueError("temporary browser result parsing error")
+
+        ops.open_signup_page = open_signup_page
+        batch = run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(batch.success_count, 1)
+        self.assertEqual(batch.fail_count, 0)
+
+    def test_browser_api_compatibility_error_is_not_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def start_browser():
+            calls["count"] += 1
+            raise AttributeError("ChromiumOptions does not support proxy arguments")
+
+        ops.start_browser = start_browser
+        with self.assertRaisesRegex(AttributeError, "does not support proxy arguments"):
+            run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
+
+    def test_malformed_proxy_protocol_is_not_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def start_browser():
+            calls["count"] += 1
+            try:
+                raise ProxyProtocolError("invalid proxy port")
+            except ProxyProtocolError as exc:
+                raise ProxyPoolError(str(exc)) from exc
+
+        ops.start_browser = start_browser
+        with self.assertRaisesRegex(ProxyPoolError, "invalid proxy port"):
+            run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
+
+    def test_proxy_configuration_error_is_not_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def start_browser():
+            calls["count"] += 1
+            raise ProxyConfigurationError("invalid proxy configuration")
+
+        ops.start_browser = start_browser
+        with self.assertRaisesRegex(ProxyConfigurationError, "invalid proxy configuration"):
+            run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
+
+    def test_configuration_error_is_not_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def start_browser():
+            calls["count"] += 1
+            raise ConfigError("invalid configuration")
+
+        ops.start_browser = start_browser
+        with self.assertRaisesRegex(ConfigError, "invalid configuration"):
+            run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
 
 if __name__ == "__main__":
     unittest.main()

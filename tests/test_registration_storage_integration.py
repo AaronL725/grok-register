@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import grok_register_ttk as engine
+from app_config import ConfigError
 from storage.database import Database
 
 
@@ -111,7 +112,7 @@ class RegistrationStorageIntegrationTests(unittest.TestCase):
 
             patches = [
                 patch.object(engine, "config", config),
-                patch.object(engine, "start_browser", side_effect=RuntimeError("browser start failed")),
+                patch.object(engine, "start_browser", side_effect=ConfigError("browser start failed")),
                 patch.object(engine._registration_browser, "page", FakePage()),
                 patch.object(engine, "cleanup_runtime_memory"),
                 patch("registration_flow.begin_registration_slot"),
@@ -120,7 +121,7 @@ class RegistrationStorageIntegrationTests(unittest.TestCase):
             ]
 
             with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
-                with self.assertRaisesRegex(RuntimeError, "browser start failed"):
+                with self.assertRaisesRegex(ConfigError, "browser start failed"):
                     engine.run_registration_common(
                         1, lambda _message: None, lambda: False,
                         str(output_path), lambda *_args: None,
@@ -134,7 +135,7 @@ class RegistrationStorageIntegrationTests(unittest.TestCase):
             self.assertEqual(run["status"], "failed")
             self.assertEqual(attempt["status"], "failed")
             self.assertEqual(attempt["failure_type"], "browser")
-            self.assertEqual(attempt["error_type"], "RuntimeError")
+            self.assertEqual(attempt["error_type"], "ConfigError")
             self.assertIn("browser start failed", attempt["traceback"])
             self.assertTrue(Path(attempt["screenshot_path"]).is_file())
             self.assertEqual(Path(attempt["screenshot_path"]).parent, screenshot_dir)
