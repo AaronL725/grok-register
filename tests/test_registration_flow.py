@@ -303,7 +303,7 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(events[1], ("cleanup", "任务结束"))
         self.assertEqual(attempts[0]["failure_type"], "browser")
         self.assertEqual(attempts[0]["screenshot_path"], "/tmp/failure.png")
-        self.assertIn("browser start failed", attempts[0]["traceback"])
+        self.assertIn("browser start configuration failed", attempts[0]["traceback"])
 
     def test_screenshot_failure_does_not_replace_registration_error_or_skip_cleanup(self):
         fake = FakeOps()
@@ -327,7 +327,7 @@ class RegistrationFlowTests(unittest.TestCase):
 
         self.assertEqual(events, ["任务结束"])
         self.assertEqual(attempts[0]["screenshot_path"], "")
-        self.assertEqual(attempts[0]["error_message"], "original failure")
+        self.assertEqual(attempts[0]["error_message"], "original configuration failure")
         self.assertTrue(any("失败截图捕获异常" in message for message in logs))
 
     def test_attempt_error_and_traceback_redact_account_credentials(self):
