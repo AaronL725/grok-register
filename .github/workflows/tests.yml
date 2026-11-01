@@ -122,6 +122,7 @@ jobs:
           curl --fail --silent \
             --header "Origin: http://127.0.0.1:8092" \
             "http://127.0.0.1:8092/api/accounts?limit=1" >/dev/null
+          docker compose --project-name "$project" exec --no-TTY app test -f /app/LICENSE
           docker compose --project-name "$project" exec --no-TTY app test -f /app/config/config.json
           docker compose --project-name "$project" exec --no-TTY app test -f /app/data/grok-register.sqlite3
           docker compose --project-name "$project" exec --no-TTY app test -d /app/data/outputs
