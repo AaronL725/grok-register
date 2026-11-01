@@ -50,18 +50,22 @@ def current_registration_stage():
 
 
 def _is_non_retryable_pre_submit_error(error):
-    if isinstance(error, (
-        ConfigError, ProxyConfigurationError, FileNotFoundError,
-        PermissionError, ImportError, ValueError, TypeError,
-    )):
-        return True
-    if isinstance(error, ProxyPoolError):
-        return classify_proxy_network_error(error) in ("configuration", "compatibility")
+    while error is not None:
+        if isinstance(error, (
+            ConfigError, ProxyConfigurationError, FileNotFoundError,
+            PermissionError, ImportError, ValueError, TypeError,
+        )):
+            return True
+        if isinstance(error, ProxyPoolError) and classify_proxy_network_error(error) in (
+            "configuration", "compatibility",
+        ):
+            return True
+        error = error.__cause__ or error.__context__
     return False
 
 
 def registration_retry_disposition(stage, error=None):
-    """Classify retry safety from the last completed registration stage."""
+    """Classify retry safety from the current registration stage."""
     stage = str(stage or STAGE_LEASE_ACQUIRE)
     if stage in (STAGE_LEASE_ACQUIRE, STAGE_BROWSER_START, STAGE_PAGE_OPEN):
         return FATAL if _is_non_retryable_pre_submit_error(error) else SAFE_NEW_LEASE
@@ -72,6 +76,7 @@ def registration_retry_disposition(stage, error=None):
     if stage in (STAGE_ACCOUNT_CONFIRMED, STAGE_POSTPROCESS):
         return NO_RETRY
     return OUTCOME_UNCERTAIN
+
 
 class EmailSignupUnavailable(RuntimeError):
     """The xAI signup page explicitly declined the email signup flow."""
