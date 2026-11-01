@@ -450,6 +450,22 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(batch.success_count, 1)
         self.assertEqual(batch.fail_count, 0)
 
+    def test_browser_api_compatibility_error_is_not_retried(self):
+        fake = FakeOps()
+        ops = fake.operations()
+        calls = {"count": 0}
+
+        def start_browser():
+            calls["count"] += 1
+            raise AttributeError("ChromiumOptions does not support proxy arguments")
+
+        ops.start_browser = start_browser
+        with self.assertRaisesRegex(AttributeError, "does not support proxy arguments"):
+            run_batch(1, self.callbacks(), lambda *_args: None, ops)
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(fake.events[-1], ("cleanup", "任务结束"))
+
     def test_malformed_proxy_protocol_is_not_retried(self):
         fake = FakeOps()
         ops = fake.operations()
