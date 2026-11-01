@@ -18,16 +18,16 @@ from proxy_pool import (
 
 def browser_login(email, password, cancelled, log):
     """Run a normal login in a browser dedicated to this account."""
-    import registration_browser
+    import grok_register_ttk as engine
     from reauthentication import login_with_password
 
     try:
-        _browser, page = registration_browser.start_browser(log_callback=log)
+        _browser, page = engine.start_browser(log_callback=log)
         return login_with_password(
             email, password, page, cancelled=cancelled, log=log
         )
     finally:
-        registration_browser.stop_browser()
+        engine.stop_browser()
 
 
 def refresh_integrations(email, password, sso, cancelled, log):

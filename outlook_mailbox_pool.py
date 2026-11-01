@@ -249,12 +249,13 @@ class OutlookAccountPool:
     def __init__(self, accounts: list[OutlookAccount]) -> None:
         if not accounts:
             raise ValueError("Outlook 邮箱池没有有效账号")
+        self._count = len(accounts)
         self._available = deque(accounts)
         self._lock = threading.Lock()
 
     @property
     def count(self) -> int:
-        return len(self._available)
+        return self._count
 
     @property
     def remaining(self) -> int:

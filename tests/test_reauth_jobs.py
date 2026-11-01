@@ -74,6 +74,24 @@ class ReauthenticationJobTests(unittest.TestCase):
         import_legacy_accounts(self.database, old_file)
         self.assertEqual(self.database.account_count(), 1)
 
+    def test_browser_login_uses_the_bound_engine_browser_runtime(self):
+        page = object()
+        log = lambda _message: None
+        with patch("grok_register_ttk.start_browser", return_value=(object(), page)) as start, \
+             patch("grok_register_ttk.stop_browser") as stop, \
+             patch("reauthentication.login_with_password", return_value="fresh-session") as login:
+            result = reauth_jobs.browser_login(
+                "user@example.com", "password", lambda: False, log,
+            )
+
+        self.assertEqual(result, "fresh-session")
+        start.assert_called_once_with(log_callback=log)
+        login.assert_called_once_with(
+            "user@example.com", "password", page,
+            cancelled=unittest.mock.ANY, log=log,
+        )
+        stop.assert_called_once_with()
+
     def test_login_and_postprocess_share_the_managed_proxy_lease(self):
         lease = SimpleNamespace(proxy_url="http://127.0.0.1:8123")
         observed = []
