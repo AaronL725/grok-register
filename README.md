@@ -38,6 +38,7 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
 
 - [项目功能](#项目功能)
 - [快速开始](#快速开始)
+- [Docker 部署](#docker-部署)
 - [运行方式](#运行方式)
 - [配置说明](#配置说明)
 - [代理与代理池](#代理与代理池)
@@ -245,6 +246,23 @@ http://127.0.0.1:8092
 ```
 
 > GUI、CLI 和 WebUI 共用同一个 `config.json` 和同一套注册逻辑。建议同一时间只使用一个入口启动任务。
+
+## Docker 部署
+
+项目提供 AMD64 Docker 镜像，包含 React WebUI、FastAPI 和 headless Chromium：
+
+```bash
+docker compose up -d --build
+docker compose logs -f app
+```
+
+访问 `http://127.0.0.1:8092`。首次启动会自动初始化持久化配置；后续可直接通过 WebUI 修改配置。
+
+配置与运行数据保存在 Docker 命名卷中。普通的 `docker compose down` 不会删除数据；**不要执行 `docker compose down -v`，除非要清空配置和全部账号数据**。
+
+Docker 部署仅提供 WebUI，不提供 Tk 桌面 GUI；Chromium 使用 headless 模式。当前只验证 AMD64，尚未承诺 ARM64 原生支持。
+
+详细说明、数据备份和可选 sing-box 配置见[Docker 部署文档](docs/docker.md)。
 
 ## 运行方式
 
