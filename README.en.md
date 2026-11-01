@@ -606,7 +606,7 @@ The two remote credential methods cannot be configured at the same time. The new
 | `mail_credentials.txt` | Temporary email addresses and email credentials created during registration. Email credentials are persisted before registration submission immediately after mailbox creation, so this file may include attempts that later failed, were retried, or ended with an uncertain outcome |
 | `accounts_*.txt.pending.jsonl` | Recovery queue attempted when saving the main account file fails; successfully queued results can be recovered with `retry-pending` |
 | `<sso_risk_rejected_file>.pending.jsonl` | Separate risk pending queue used when a quarantined account cannot be written to the main quarantine file; do not recover with the normal `retry-pending` command |
-| `<grok2api_local_token_file>` | Optional local grok2api token pool; defaults to `token.json` in the project directory when left empty |
+| `<grok2api_local_token_file>` | Optional local grok2api token pool; defaults to `data/token.json` in the project directory when left empty. A legacy root-level `token.json` is migrated on the first write |
 | `<cpa_auth_dir>/xai-*.json` | Optional CPA xAI OIDC credentials; default directory `./cpa_auths` |
 | `<cpa_auth_dir>/cpa_auth_failed.txt` | CPA export failure records |
 | `screenshots/` | CPA browser failure-debugging screenshots |

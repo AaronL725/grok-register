@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import urllib.parse
 
+from account_outputs import resolve_grok2api_local_token_file
+
 
 def _result(key, name, status, required, message, connection_tested=False):
     return {
@@ -274,9 +276,7 @@ def _check_grok2api_config(config):
     if local_enabled:
         if config.get("grok2api_pool_name") not in {"ssoBasic", "ssoSuper"}:
             warnings.append("本地 token 池名称无效")
-        configured_path = str(config.get("grok2api_local_token_file") or "").strip()
-        path = Path(configured_path or (Path(__file__).resolve().parent / "token.json"))
-        path = path.expanduser().resolve()
+        path = Path(resolve_grok2api_local_token_file(config)).expanduser().resolve()
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))

@@ -18,6 +18,9 @@ output/mailboxes/
 config.json
 config.local.json
 proxy_pool_state.json
+/token.json
+/token.json.*
+.token-*.tmp
 
 *.log
 .DS_Store
