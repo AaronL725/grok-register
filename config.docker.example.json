@@ -1,0 +1,10 @@
+{
+  "email_provider": "duckmail",
+  "database_path": "/app/data/grok-register.sqlite3",
+  "outlook_accounts_file": "/app/data/mailboxes/outlook-accounts.txt",
+  "proxy_pool_state_file": "/app/data/proxy_pool_state.json",
+  "sso_risk_rejected_file": "/app/data/sso_risk_rejected.txt",
+  "grok2api_local_token_file": "/app/data/token.json",
+  "cpa_auth_dir": "/app/data/cpa_auths",
+  "cpa_headless": true
+}
