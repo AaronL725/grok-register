@@ -199,6 +199,23 @@ class VerificationCodeExtractionTests(unittest.TestCase):
         self.assertIn("Fallback content remains available.", body)
         self.assertEqual(mail_service.extract_verification_code(body), "ABC-123")
 
+    def test_attached_forwarded_email_is_not_searched_for_otp(self):
+        message = EmailMessage()
+        message["Subject"] = "xAI account notification"
+        message.set_content("Your account settings have been updated.")
+
+        attachment = EmailMessage()
+        attachment["Subject"] = "Confirmation code: ABC-123"
+        attachment.set_content("Your verification code is ABC-123.")
+        message.add_attachment(attachment)
+
+        subject, body = mail_service.normalize_mail_message({"raw": message.as_bytes()})
+
+        self.assertEqual(subject, "xAI account notification")
+        self.assertIn("Your account settings have been updated.", body)
+        self.assertNotIn("ABC-123", body)
+        self.assertIsNone(mail_service.extract_verification_code(body, subject))
+
     def test_unsupported_mime_part_does_not_discard_provider_text(self):
         message = EmailMessage()
         message.set_content("Your verification code is ABC-123.")
