@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections
 import datetime
+import os
 import threading
 import time
 from pathlib import Path
@@ -72,7 +73,10 @@ def _get_database():
         if database is None:
             database = Database(path)
             _database_cache[path] = database
-        imported = import_legacy_directory(database, ROOT, "")
+        imported = []
+        for directory in dict.fromkeys((ROOT, _output_directory())):
+            if directory.is_dir():
+                imported.extend(import_legacy_directory(database, directory, ""))
     for source, summary in imported:
         _append_log(
             "[*] 读取账号列表时导入旧文件: %s | 新增 %s | 重复 %s | 格式错误 %s"
@@ -144,9 +148,16 @@ def _load_config_if_idle() -> dict[str, Any]:
         return dict(engine.config)
 
 
+def _output_directory() -> Path:
+    configured = str(os.environ.get("GROK_REGISTER_OUTPUT_DIR") or "").strip()
+    return Path(configured).expanduser().resolve() if configured else ROOT
+
+
 def _new_accounts_file() -> str:
+    directory = _output_directory()
+    directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    return str(ROOT / ("accounts_%s.txt" % stamp))
+    return str(directory / ("accounts_%s.txt" % stamp))
 
 
 def _update_progress(batch: Any) -> None:
@@ -677,7 +688,7 @@ async def start_reauthentication(request: Request):
 
         manager = ReauthManager(
             _get_database(), browser_login, refresh_integrations,
-            ROOT, log=_append_log, on_finish=lambda: _end_maintenance(kind),
+            _output_directory(), log=_append_log, on_finish=lambda: _end_maintenance(kind),
         )
         job_id = manager.start(ids)
         _reauth_manager = manager
