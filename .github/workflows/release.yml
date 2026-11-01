@@ -95,7 +95,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists; leaving it unchanged."
           else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --generate-notes
+            release_args=(--title "$GITHUB_REF_NAME" --generate-notes)
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              release_args+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" "${release_args[@]}"
           fi
