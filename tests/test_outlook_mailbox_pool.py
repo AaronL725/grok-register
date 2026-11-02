@@ -103,6 +103,23 @@ class OutlookMailboxPoolTests(unittest.TestCase):
             self.assertFalse(runtime.release_before_submit(handle, email))
             runtime.close()
 
+    def test_wrong_email_does_not_release_mailbox_lease(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            pool.OutlookMailbox, "prepare", return_value=None
+        ):
+            path = Path(tmp) / "pool.txt"
+            pool.save_outlook_mailbox_pool(path, ACCOUNT_ROWS)
+            runtime = pool.create_outlook_task_runtime(path)
+            email, handle = runtime.acquire()
+
+            with self.assertRaisesRegex(RuntimeError, "不匹配"):
+                runtime.release_before_submit(handle, "wrong@example.com")
+
+            self.assertEqual(runtime.status()["leased"], 1)
+            self.assertEqual(runtime.status()["remaining"], 7)
+            self.assertTrue(runtime.release_before_submit(handle, email))
+            runtime.close()
+
     def test_new_task_gets_fresh_allocator(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             pool.OutlookMailbox, "prepare", return_value=None

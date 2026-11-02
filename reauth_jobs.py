@@ -130,17 +130,21 @@ class ReauthManager:
                 login_succeeded = False
                 transport_error = None
                 try:
-                    lease_started = True
+                    if current_proxy_lease() is not None:
+                        raise RuntimeError("重新登录线程已有未释放的代理租约")
                     try:
-                        begin_registration_slot(
-                            slot_index=account_id,
-                            attempt_index=1,
-                            worker_key=threading.current_thread().name,
-                            log=self.log,
-                            cancel_callback=self._stop.is_set,
-                        )
-                    except ProxyAcquireCancelled as exc:
-                        raise LoginCancelled("重新登录已停止") from exc
+                        try:
+                            begin_registration_slot(
+                                slot_index=account_id,
+                                attempt_index=1,
+                                worker_key=threading.current_thread().name,
+                                log=self.log,
+                                cancel_callback=self._stop.is_set,
+                            )
+                        except ProxyAcquireCancelled as exc:
+                            raise LoginCancelled("重新登录已停止") from exc
+                    finally:
+                        lease_started = current_proxy_lease() is not None
 
                     new_sso = self.login(
                         account["email"], account["password"],
