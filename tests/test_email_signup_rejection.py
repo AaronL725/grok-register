@@ -82,7 +82,7 @@ class EmailSignupRejectionTests(unittest.TestCase):
              patch.object(registration_browser, "_mark_registration_stage", side_effect=lambda stage: events.append(stage)):
             with self.assertRaises(EmailSignupUnavailable):
                 registration_browser.fill_email_and_submit(timeout=3)
-        self.assertEqual(events, ["email_submit", "submit-click"])
+        self.assertEqual(events, ["page_open", "email_submit", "submit-click"])
 
     def test_no_banner_preserves_successful_email_submission(self):
         class Page:
