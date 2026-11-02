@@ -4,7 +4,12 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import ANY, patch
 
+import browser_runtime
+import proxy_pool
+import reauth_jobs
 from account_outputs import replace_account_session
 from reauth_jobs import ReauthManager
 from reauthentication import LoginCancelled
@@ -68,6 +73,61 @@ class ReauthenticationJobTests(unittest.TestCase):
         )
         import_legacy_accounts(self.database, old_file)
         self.assertEqual(self.database.account_count(), 1)
+
+    def test_browser_login_uses_the_bound_engine_browser_runtime(self):
+        page = object()
+        log = lambda _message: None
+        with patch("grok_register_ttk.start_browser", return_value=(object(), page)) as start, \
+             patch("grok_register_ttk.stop_browser") as stop, \
+             patch("reauthentication.login_with_password", return_value="fresh-session") as login:
+            result = reauth_jobs.browser_login(
+                "user@example.com", "password", lambda: False, log,
+            )
+
+        self.assertEqual(result, "fresh-session")
+        start.assert_called_once_with(log_callback=log)
+        login.assert_called_once_with(
+            "user@example.com", "password", page,
+            cancelled=ANY, log=log,
+        )
+        stop.assert_called_once_with()
+
+    def test_login_and_postprocess_share_the_managed_proxy_lease(self):
+        lease = SimpleNamespace(proxy_url="http://127.0.0.1:8123")
+        observed = []
+
+        def begin(**_kwargs):
+            proxy_pool._TLS.lease = lease
+
+        def end(**_kwargs):
+            proxy_pool._TLS.lease = None
+
+        def login(*_args, **_kwargs):
+            observed.append(("login", browser_runtime.get_configured_proxy()))
+            return "new-session"
+
+        def postprocess(*_args, **_kwargs):
+            observed.append(("postprocess", browser_runtime.get_configured_proxy()))
+            return ("not_requested", "", "not_requested", "", "not_requested", "")
+
+        manager = ReauthManager(
+            self.database, login, postprocess, self.root,
+        )
+        with patch.object(browser_runtime, "_config", {"proxy_mode": "pool"}), \
+             patch.object(reauth_jobs, "begin_registration_slot", side_effect=begin) as begin_slot, \
+             patch.object(reauth_jobs, "end_registration_slot", side_effect=end) as end_slot:
+            job_id = manager.start([self.account_id])
+            manager._thread.join(timeout=5)
+
+        self.assertFalse(manager._thread.is_alive())
+        self.assertEqual(self.database.get_job(job_id)["status"], "completed")
+        self.assertEqual(observed, [
+            ("login", lease.proxy_url),
+            ("postprocess", lease.proxy_url),
+        ])
+        begin_slot.assert_called_once()
+        end_slot.assert_called_once_with(success=True, transport_error=None)
+        self.assertIsNone(proxy_pool.current_proxy_lease())
 
     def test_failed_login_preserves_old_authorization_and_file(self):
         original = self.legacy.read_text(encoding="utf-8")

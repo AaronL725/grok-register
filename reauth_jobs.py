@@ -7,20 +7,27 @@ import threading
 from account_outputs import replace_account_session
 from reauthentication import LoginCancelled
 from storage.account_service import classify_integration_status
+from proxy_pool import (
+    ProxyAcquireCancelled,
+    begin_registration_slot,
+    current_proxy_lease,
+    end_registration_slot,
+    is_proxy_transport_exception,
+)
 
 
 def browser_login(email, password, cancelled, log):
     """Run a normal login in a browser dedicated to this account."""
-    import registration_browser
+    import grok_register_ttk as engine
     from reauthentication import login_with_password
 
     try:
-        _browser, page = registration_browser.start_browser(log_callback=log)
+        _browser, page = engine.start_browser(log_callback=log)
         return login_with_password(
             email, password, page, cancelled=cancelled, log=log
         )
     finally:
-        registration_browser.stop_browser()
+        engine.stop_browser()
 
 
 def refresh_integrations(email, password, sso, cancelled, log):
@@ -119,13 +126,33 @@ class ReauthManager:
                     continue
 
                 self.database.update_job_item(job_id, account_id, "running")
+                lease_started = False
+                login_succeeded = False
+                transport_error = None
                 try:
+                    if current_proxy_lease() is not None:
+                        raise RuntimeError("重新登录线程已有未释放的代理租约")
+                    try:
+                        try:
+                            begin_registration_slot(
+                                slot_index=account_id,
+                                attempt_index=1,
+                                worker_key=threading.current_thread().name,
+                                log=self.log,
+                                cancel_callback=self._stop.is_set,
+                            )
+                        except ProxyAcquireCancelled as exc:
+                            raise LoginCancelled("重新登录已停止") from exc
+                    finally:
+                        lease_started = current_proxy_lease() is not None
+
                     new_sso = self.login(
                         account["email"], account["password"],
                         cancelled=self._stop.is_set, log=self.log,
                     )
                     if self._stop.is_set():
                         raise LoginCancelled("重新登录已停止")
+                    login_succeeded = True
                     previous = self.database.update_account_session(account_id, new_sso)
                     warnings = self._restore_legacy_exports(account, previous["old_sso"], new_sso)
                     try:
@@ -137,6 +164,8 @@ class ReauthManager:
                             account_id, *integrations
                         )
                     except Exception as exc:
+                        if current_proxy_lease() is not None and is_proxy_transport_exception(exc):
+                            transport_error = exc
                         warnings.append("授权后处理失败: " + type(exc).__name__)
                     self.database.update_job_item(
                         job_id, account_id, "succeeded", "; ".join(warnings)
@@ -145,6 +174,8 @@ class ReauthManager:
                     self.database.update_job_item(job_id, account_id, "skipped")
                     self._stop.set()
                 except Exception as exc:
+                    if current_proxy_lease() is not None and is_proxy_transport_exception(exc):
+                        transport_error = exc
                     message = str(exc)
                     for secret in (account["password"], account["sso"]):
                         if secret:
@@ -152,6 +183,15 @@ class ReauthManager:
                     self.database.update_job_item(
                         job_id, account_id, "failed", type(exc).__name__ + ": " + message[:200]
                     )
+                finally:
+                    if lease_started:
+                        try:
+                            end_registration_slot(
+                                success=login_succeeded and transport_error is None,
+                                transport_error=transport_error,
+                            )
+                        except Exception as exc:
+                            self.log("[!] 重新登录代理租约释放失败: %s" % type(exc).__name__)
             self.database.finish_job(
                 job_id, "cancelled" if self._stop.is_set() else "completed",
                 cancelled=self._stop.is_set(),

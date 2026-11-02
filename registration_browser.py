@@ -67,7 +67,7 @@ _RUNTIME_DEPENDENCIES = (
     "config", "get_configured_proxy", "get_proxies", "prepare_browser_proxy",
     "create_browser_options", "page_has_proxy_error", "is_proxy_connection_error",
     "sleep_with_cancel", "raise_if_cancelled", "AccountRetryNeeded",
-    "get_email_and_token", "get_oai_code", "get_user_agent",
+    "get_email_and_token", "release_email_lease", "get_oai_code", "get_user_agent",
 )
 
 
@@ -522,18 +522,46 @@ return !!(givenInput && familyInput && passwordInput);
     except Exception:
         return False
 
+def _release_email_lease(dev_token, email, log_callback=None):
+    release = globals().get("release_email_lease")
+    if not callable(release) or not dev_token:
+        return
+    try:
+        release(dev_token, email)
+    except Exception as exc:
+        if log_callback:
+            log_callback("[!] 邮箱租约释放失败: %s" % type(exc).__name__)
+
+
 def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None, on_mail_created=None):
+    _mark_registration_stage("page_open")
     raise_if_cancelled(cancel_callback)
+    email = dev_token = ""
     try:
         email, dev_token = get_email_and_token()
         if not email or not dev_token:
             raise RuntimeError("邮箱服务未返回完整凭据")
     except Exception as exc:
+        if dev_token:
+            _release_email_lease(dev_token, email, log_callback)
         raise_if_cancelled(cancel_callback)
         if _is_non_retryable_browser_error(exc):
             raise
         from registration_flow import RecoverablePreSubmitError
         raise RecoverablePreSubmitError(f"提交前创建邮箱失败: {exc}") from exc
+
+    try:
+        return _fill_email_form(
+            email, dev_token, timeout=timeout, log_callback=log_callback,
+            cancel_callback=cancel_callback, on_mail_created=on_mail_created,
+        )
+    finally:
+        from registration_flow import current_registration_stage
+        if current_registration_stage() != "email_submit":
+            _release_email_lease(dev_token, email, log_callback)
+
+
+def _fill_email_form(email, dev_token, timeout=45, log_callback=None, cancel_callback=None, on_mail_created=None):
     if log_callback:
         log_callback(f"[*] 已创建邮箱: {email}")
     if on_mail_created is not None:

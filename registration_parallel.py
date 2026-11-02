@@ -113,7 +113,7 @@ def run_parallel_batch(count, callbacks, observer, runtime_namespace, accounts_o
         mail_module.bind_runtime(mail_runtime)
 
         worker_namespace = dict(mail_runtime)
-        for name in ("get_email_and_token", "get_oai_code", "get_user_agent"):
+        for name in ("get_email_and_token", "release_email_lease", "get_oai_code", "get_user_agent"):
             if hasattr(mail_module, name):
                 worker_namespace[name] = getattr(mail_module, name)
 
