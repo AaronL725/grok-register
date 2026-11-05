@@ -101,19 +101,14 @@ class Grok2ApiGoRemoteTests(unittest.TestCase):
         multipart = FakeCurlMime.instances[0]
         self.assertIs(calls[1][1]["multipart"], multipart)
         self.assertTrue(multipart.closed)
+        self.assertEqual(len(multipart.parts), 1)
+
+        part = multipart.parts[0]
+        self.assertEqual(part["name"], "file")
+        self.assertEqual(part["filename"], "grok-web-sso.json")
+        self.assertEqual(part["content_type"], "application/json; charset=utf-8")
         self.assertEqual(
-            multipart.parts,
-            [
-                {
-                    "name": "file",
-                    "filename": "grok-web-sso.json",
-                    "content_type": "application/json; charset=utf-8",
-                    "data": multipart.parts[0]["data"],
-                }
-            ],
-        )
-        self.assertEqual(
-            json.loads(multipart.parts[0]["data"].decode("utf-8")),
+            json.loads(part["data"].decode("utf-8")),
             {
                 "provider": "grok_web",
                 "accounts": [
