@@ -69,14 +69,14 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
   </tr>
   <tr>
     <td valign="top">
-      <p><sub>需要稳定的住宅 IP？试试 <a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a>住宅代理。</sub></p>
+      <p><sub>需要稳定的住宅IP？试试<a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a>住宅代理。</sub></p>
       <p><sub>
         覆盖 195+ 国家和地区<br>
         真实住宅 IP 资源<br>
-        灵活的 IP 轮换<br>
-        支持 HTTP / HTTPS / SOCKS5
+        支持 HTTP / HTTPS / SOCKS5<br>
+        静态 IP 低至 9.9 元/条/月
       </sub></p>
-      <p><sub>适用于自动化注册、账号管理、数据采集及跨境业务场景，可与浏览器自动化工具和代理池灵活搭配。免费试用，折扣码：<strong><code>0205</code></strong></sub></p>
+      <p><sub>适用于自动化注册、账号管理、数据采集及跨境业务场景，可与浏览器自动化工具和代理池灵活搭配。免费试用，折扣码：<strong><code>0205</code></strong> 即可减免 10%。</sub></p>
     </td>
     <td valign="top">
       <p><sub>需要每个账号一个固定住宅IP？试试<a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">ProxyLane</a>住宅代理。</sub></p>
