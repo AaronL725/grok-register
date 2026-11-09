@@ -214,6 +214,17 @@ class LocalProxyBridge(object):
         self.upstream_port = safe_proxy_port(parsed) or (443 if scheme == "https" else 1080 if scheme.startswith("socks") else 80)
         self.username = urllib.parse.unquote(parsed.username or "")
         self.password = urllib.parse.unquote(parsed.password or "")
+        if scheme in ("socks5", "socks5h") and (
+            parsed.username is not None or parsed.password is not None
+        ):
+            if not self.username or not self.password:
+                raise ValueError(
+                    "SOCKS5 authentication requires both a non-empty username and password"
+                )
+            if len(self.username.encode("utf-8")) > 255:
+                raise ValueError("SOCKS5 username must be 1-255 UTF-8 bytes")
+            if len(self.password.encode("utf-8")) > 255:
+                raise ValueError("SOCKS5 password must be 1-255 UTF-8 bytes")
         raw_auth = ("%s:%s" % (self.username, self.password)).encode("utf-8")
         self.auth_header = base64.b64encode(raw_auth).decode("ascii") if (self.username or self.password) else ""
         self.timeout = 20
@@ -265,8 +276,6 @@ class LocalProxyBridge(object):
         if method == 0x02:
             username = self.username.encode("utf-8")
             password = self.password.encode("utf-8")
-            if len(username) > 255 or len(password) > 255:
-                raise ProxyBridgeError("configuration", "SOCKS5 credentials too long")
             sock.sendall(bytes([0x01, len(username)]) + username + bytes([len(password)]) + password)
             auth_version, status = _recv_exact(sock, 2)
             if auth_version != 0x01 or status != 0x00:
