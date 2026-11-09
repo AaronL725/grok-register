@@ -69,14 +69,14 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
   </tr>
   <tr>
     <td valign="top">
-      <p><sub>Need stable residential IPs? Try <a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a> residential proxies.</sub></p>
+      <p><sub>Need reliable residential IPs? Try <a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a> residential proxies.</sub></p>
       <p><sub>
         Coverage across 195+ countries and regions<br>
         Genuine residential IP resources<br>
-        Flexible IP rotation<br>
-        HTTP / HTTPS / SOCKS5 support
+        HTTP / HTTPS / SOCKS5 support<br>
+        Static IPs starting at just CNY 9.9 per IP per month
       </sub></p>
-      <p><sub>Suitable for automated registration, account management, data collection, and cross-border operations. Integrates with browser automation tools and proxy pools. Free trial available. Discount code: <strong><code>0205</code></strong></sub></p>
+      <p><sub>Suitable for automated registration, account management, data collection, and cross-border business scenarios. Flexible integration with browser automation tools and proxy pools. Free trial available. Use discount code: <strong><code>0205</code></strong> to get 10% off.</sub></p>
     </td>
     <td valign="top">
       <p><sub>Need one dedicated residential IP per account? Try <a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">ProxyLane</a> residential proxies.</sub></p>
