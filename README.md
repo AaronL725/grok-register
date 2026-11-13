@@ -83,9 +83,8 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
       <p><sub>从浏览器自动化到多账号环境管理，RapidProxy提供灵活可靠的全球住宅代理资源，满足不同地区的网络访问需求。</sub></p>
       <p><sub>
         7000万+真实住宅IP · 智能轮换 · 粘性会话<br>
-        支持HTTP(S) / SOCKS5，流量不过期，轻松适配Python、Playwright等自动化工具。
-      </sub></p>
-      <p><sub>$0.55/GB 起｜免费试用｜<strong><code>RAPID10</code></strong> 专享9折<br>
+        支持HTTP(S) / SOCKS5，流量不过期，轻松适配Python、Playwright等自动化工具。<br>
+        $0.55/GB 起｜免费试用｜<strong><code>RAPID10</code></strong> 专享9折<br>
         立即体验RapidProxy
       </sub></p>
     </td>
