@@ -62,13 +62,13 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
       </a>
     </td>
     <td width="50%" align="center" valign="middle">
-      <a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">
-        <img alt="ProxyLane Residential Proxies" src="./assets/proxylane-banner.png" width="100%" />
+      <a href="https://www.rapidproxy.io/?ref=grok">
+        <img alt="RapidProxy Residential Proxies" src="./assets/rapidproxy-banner.png" width="100%" />
       </a>
     </td>
   </tr>
   <tr>
-    <td valign="top">
+    <td width="50%" valign="top">
       <p><sub>Need reliable residential IPs? Try <a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a> residential proxies.</sub></p>
       <p><sub>
         Coverage across 195+ countries and regions<br>
@@ -78,27 +78,7 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
         Suitable for automated registration, account management, data collection, and cross-border business scenarios. Flexible integration with browser automation tools and proxy pools. Free trial available. Use discount code: <strong><code>0205</code></strong> to get 10% off.
       </sub></p>
     </td>
-    <td valign="top">
-      <p><sub>Need one dedicated residential IP per account? Try <a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">ProxyLane</a> residential proxies.</sub></p>
-      <p><sub>
-        Coverage in 195 countries, with city, ISP, and ASN targeting<br>
-        95%+ of IPs rated low risk by Scamalytics<br>
-        Supports the <strong><code>{account}</code></strong> placeholder to assign a dedicated residential IP to each registration:<br>
-        <code>http://&#8203;USER_c_US_s_&#8203;{account}&#8203;:PASS@&#8203;us.gw.&#8203;proxylane.&#8203;dev:10000</code><br>
-        Chinese-language interface and USDT payments; use <strong><code>GROKREG30</code></strong> for 30% off your first purchase
-      </sub></p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="middle">
-      <a href="https://www.rapidproxy.io/?ref=grok">
-        <img alt="RapidProxy Residential Proxies" src="./assets/rapidproxy-banner.png" width="100%" />
-      </a>
-    </td>
-    <td width="50%" align="center" valign="middle"></td>
-  </tr>
-  <tr>
-    <td valign="top">
+    <td width="50%" valign="top">
       <p><sub><a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a> | Stable network connectivity for automation</sub></p>
       <p><sub>From browser automation to multi-account environments, RapidProxy provides flexible, reliable global residential proxies for network access across regions.</sub></p>
       <p><sub>
@@ -108,9 +88,6 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
       <p><sub>From $0.55/GB | Free trial | 10% off with <strong><code>RAPID10</code></strong><br>
         Try RapidProxy now
       </sub></p>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <img alt="Grok Register project banner" src="./assets/banner.png" width="100%" />
     </td>
   </tr>
   <tr>

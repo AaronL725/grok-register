@@ -62,13 +62,13 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
       </a>
     </td>
     <td width="50%" align="center" valign="middle">
-      <a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">
-        <img alt="ProxyLane住宅代理" src="./assets/proxylane-banner.png" width="100%" />
+      <a href="https://www.rapidproxy.io/?ref=grok">
+        <img alt="RapidProxy住宅代理" src="./assets/rapidproxy-banner.png" width="100%" />
       </a>
     </td>
   </tr>
   <tr>
-    <td valign="top">
+    <td width="50%" valign="top">
       <p><sub>需要稳定的住宅IP？试试<a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a>住宅代理。</sub></p>
       <p><sub>
         覆盖 195+ 国家和地区<br>
@@ -78,27 +78,7 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
         适用于自动化注册、账号管理、数据采集及跨境业务场景，可与浏览器自动化工具和代理池灵活搭配。免费试用，折扣码：<strong><code>0205</code></strong> 即可减免 10%。
       </sub></p>
     </td>
-    <td valign="top">
-      <p><sub>需要每个账号一个固定住宅IP？试试<a href="https://proxylane.dev/?utm_source=grok_register&amp;utm_medium=partnership&amp;utm_campaign=grok_register_sponsor_202610&amp;utm_content=github_readme">ProxyLane</a>住宅代理。</sub></p>
-      <p><sub>
-        覆盖195个国家，可按城市、ISP、ASN定向<br>
-        95%+ IP获Scamalytics低风险评级<br>
-        支持<strong><code>{account}</code></strong>占位符，每次注册一个固定住宅 IP：<br>
-        <code>http://&#8203;USER_c_US_s_&#8203;{account}&#8203;:PASS@&#8203;us.gw.&#8203;proxylane.&#8203;dev:10000</code><br>
-        中文界面，支持USDT付款，首次购买使用优惠码<strong><code>GROKREG30</code></strong>享7折
-      </sub></p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="middle">
-      <a href="https://www.rapidproxy.io/?ref=grok">
-        <img alt="RapidProxy住宅代理" src="./assets/rapidproxy-banner.png" width="100%" />
-      </a>
-    </td>
-    <td width="50%" align="center" valign="middle"></td>
-  </tr>
-  <tr>
-    <td valign="top">
+    <td width="50%" valign="top">
       <p><sub><a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a>｜为自动化任务提供稳定的网络连接</sub></p>
       <p><sub>从浏览器自动化到多账号环境管理，RapidProxy提供灵活可靠的全球住宅代理资源，满足不同地区的网络访问需求。</sub></p>
       <p><sub>
@@ -108,9 +88,6 @@ Grok Register 是基于 Python 和 Chromium 的注册自动化工具，提供 GU
       <p><sub>$0.55/GB 起｜免费试用｜<strong><code>RAPID10</code></strong> 专享9折<br>
         立即体验RapidProxy
       </sub></p>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <img alt="Grok Register 项目横幅" src="./assets/banner.png" width="100%" />
     </td>
   </tr>
   <tr>
