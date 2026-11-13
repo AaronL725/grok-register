@@ -966,7 +966,7 @@ def run_registration_common(count, log_callback, cancel_callback, accounts_outpu
 class GrokRegisterGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Grok 注册机")
+        self.root.title("Grok 注册助手")
         width, height, min_width, min_height = calculate_gui_window_size(
             self.root.winfo_screenwidth(),
             self.root.winfo_screenheight(),
