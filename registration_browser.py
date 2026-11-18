@@ -893,6 +893,9 @@ return false;
     if not code:
         raise Exception("获取验证码失败")
     clean_code = str(code).replace("-", "").strip()
+    # From this point onward the code has been obtained. Even if the OTP
+    # form is not ready, a later failure must not trigger a new-email replay.
+    _mark_registration_stage("code_submit")
     deadline = time.time() + timeout
 
     while time.time() < deadline:
