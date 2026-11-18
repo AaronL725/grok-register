@@ -56,19 +56,14 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
 
 <table width="100%">
   <tr>
-    <td width="50%" align="center" valign="middle">
+    <td width="100%" align="center" valign="middle">
       <a href="https://www.ipwo.net/?ref=githubgrokregister">
         <img alt="IPWO Residential Proxies" src="./assets/ipwo-banner.png" width="100%" />
       </a>
     </td>
-    <td width="50%" align="center" valign="middle">
-      <a href="https://www.rapidproxy.io/?ref=grok">
-        <img alt="RapidProxy Residential Proxies" src="./assets/rapidproxy-banner.png" width="100%" />
-      </a>
-    </td>
   </tr>
   <tr>
-    <td width="50%" valign="top">
+    <td width="100%" valign="top">
       <p><sub>Need reliable residential IPs? Try <a href="https://www.ipwo.net/?ref=githubgrokregister">IPWO</a> residential proxies.</sub></p>
       <p><sub>
         Coverage across 195+ countries and regions<br>
@@ -78,19 +73,9 @@ Grok Register is a Python-and-Chromium registration automation tool with GUI, CL
         Suitable for automated registration, account management, data collection, and cross-border business scenarios. Flexible integration with browser automation tools and proxy pools. Free trial available. Use discount code: <strong><code>0205</code></strong> to get 10% off.
       </sub></p>
     </td>
-    <td width="50%" valign="top">
-      <p><sub><a href="https://www.rapidproxy.io/?ref=grok">RapidProxy</a> | Stable network connectivity for automation</sub></p>
-      <p><sub>From browser automation to multi-account environments, RapidProxy provides flexible, reliable global residential proxies for network access across regions.</sub></p>
-      <p><sub>
-        70M+ real residential IPs · Smart rotation · Sticky sessions<br>
-        HTTP(S) / SOCKS5 support, non-expiring traffic, and easy integration with Python, Playwright, and other automation tools.<br>
-        From $0.55/GB | Free trial | 10% off with <strong><code>RAPID10</code></strong><br>
-        Try RapidProxy now
-      </sub></p>
-    </td>
   </tr>
   <tr>
-    <td colspan="2"><sub>For advertising partnerships, contact me: <strong><code>2309501984</code></strong></sub></td>
+    <td><sub>For advertising partnerships, contact me: <strong><code>2309501984</code></strong></sub></td>
   </tr>
 </table>
 
