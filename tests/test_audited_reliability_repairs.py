@@ -145,6 +145,22 @@ class AuditedReliabilityRepairTests(unittest.TestCase):
         self.assertLess(events.index("persist"), events.index("stage:email_submit"))
         self.assertLess(events.index("stage:email_submit"), events.index("submit-dom"))
 
+    def test_code_is_marked_obtained_before_otp_dom_access(self):
+        stages = []
+
+        class FakePage:
+            def run_js(self, *_args):
+                raise RetryNeeded("OTP DOM temporarily unavailable")
+
+        with patch.object(registration_browser, "page", FakePage()), \
+             patch.object(registration_browser, "get_oai_code", return_value="123456", create=True), \
+             patch.object(registration_browser, "raise_if_cancelled", return_value=None, create=True), \
+             patch.object(registration_browser, "_mark_registration_stage", side_effect=stages.append):
+            with self.assertRaises(RetryNeeded):
+                registration_browser.fill_code_and_submit("u@example.com", "mail-token")
+
+        self.assertEqual(stages[:2], [STAGE_CODE_WAIT, STAGE_CODE_SUBMIT])
+
     def test_no_button_otp_requires_confirmed_page_transition(self):
         markers = []
 
