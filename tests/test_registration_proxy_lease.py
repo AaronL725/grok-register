@@ -147,7 +147,7 @@ class RegistrationProxyLeaseTests(unittest.TestCase):
 
         def fail_after_code(_email, _token):
             state["code_calls"] += 1
-            registration_flow._set_registration_stage(registration_flow.STAGE_CODE_SUBMIT)
+            registration_flow._set_registration_stage(registration_flow.STAGE_CODE_RECEIVED)
             raise RetryNeeded("OTP UI failure after code was obtained")
 
         ops.fill_code_and_submit = fail_after_code
