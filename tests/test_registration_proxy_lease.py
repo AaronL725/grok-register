@@ -87,6 +87,105 @@ class RegistrationProxyLeaseTests(unittest.TestCase):
         self.assertEqual(state["code_calls"], 2)
         self.assertEqual(state["restarts"], 1, "mail retry should restart browser without starting a new slot")
 
+    def test_retryable_code_wait_recovers_on_one_lease(self):
+        state = {"browser": False, "restarts": 0, "code_calls": 0}
+        ops = self._ops(state)
+        ops.internal_stage_markers = True
+
+        def fill_code(_email, _token):
+            state["code_calls"] += 1
+            registration_flow._set_registration_stage(registration_flow.STAGE_CODE_WAIT)
+            if state["code_calls"] == 1:
+                raise RetryNeeded("temporary mailbox failure")
+            return "123456"
+
+        ops.fill_code_and_submit = fill_code
+        lease, begin, end = self._lease_spy()
+        callbacks = RegistrationCallbacks(log=lambda _: None, cancelled=lambda: False)
+        with patch("registration_flow.begin_registration_slot", side_effect=begin), \
+             patch("registration_flow.end_registration_slot", side_effect=end):
+            result = run_batch(1, callbacks, lambda *_: None, ops, enable_nsfw=False, max_mail_retry=2)
+
+        self.assertEqual(result.success_count, 1)
+        self.assertEqual(result.uncertain_count, 0)
+        self.assertEqual(state["code_calls"], 2)
+        self.assertEqual(state["restarts"], 1)
+        self.assertEqual(len(lease["begins"]), 1)
+        self.assertEqual(len(lease["releases"]), 1)
+        self.assertTrue(lease["releases"][0]["success"])
+
+    def test_retryable_code_wait_exhaustion_is_failed_not_uncertain(self):
+        state = {"browser": False, "restarts": 0, "code_calls": 0}
+        ops = self._ops(state)
+        ops.internal_stage_markers = True
+
+        def always_fail(_email, _token):
+            state["code_calls"] += 1
+            registration_flow._set_registration_stage(registration_flow.STAGE_CODE_WAIT)
+            raise RetryNeeded("mailbox unavailable")
+
+        ops.fill_code_and_submit = always_fail
+        lease, begin, end = self._lease_spy()
+        callbacks = RegistrationCallbacks(log=lambda _: None, cancelled=lambda: False)
+        with patch("registration_flow.begin_registration_slot", side_effect=begin), \
+             patch("registration_flow.end_registration_slot", side_effect=end):
+            result = run_batch(1, callbacks, lambda *_: None, ops, enable_nsfw=False, max_mail_retry=2)
+
+        self.assertEqual(result.success_count, 0)
+        self.assertEqual(result.fail_count, 1)
+        self.assertEqual(result.uncertain_count, 0)
+        self.assertEqual(result.processed_count, 1)
+        self.assertEqual(state["code_calls"], 2)
+        self.assertEqual(state["restarts"], 1)
+        self.assertEqual(len(lease["begins"]), 1)
+        self.assertEqual(len(lease["releases"]), 1)
+
+    def test_retryable_failure_after_code_received_is_never_replayed(self):
+        state = {"browser": False, "restarts": 0, "code_calls": 0}
+        ops = self._ops(state)
+        ops.internal_stage_markers = True
+
+        def fail_after_code(_email, _token):
+            state["code_calls"] += 1
+            registration_flow._set_registration_stage(registration_flow.STAGE_CODE_SUBMIT)
+            raise RetryNeeded("OTP UI failure after code was obtained")
+
+        ops.fill_code_and_submit = fail_after_code
+        lease, begin, end = self._lease_spy()
+        callbacks = RegistrationCallbacks(log=lambda _: None, cancelled=lambda: False)
+        with patch("registration_flow.begin_registration_slot", side_effect=begin), \
+             patch("registration_flow.end_registration_slot", side_effect=end):
+            result = run_batch(1, callbacks, lambda *_: None, ops, enable_nsfw=False, max_mail_retry=3)
+
+        self.assertEqual(result.uncertain_count, 1)
+        self.assertEqual(result.fail_count, 1)
+        self.assertEqual(state["code_calls"], 1)
+        self.assertEqual(state["restarts"], 0)
+        self.assertEqual(len(lease["begins"]), 1)
+        self.assertEqual(len(lease["releases"]), 1)
+
+    def test_unmarked_code_wait_retry_does_not_assume_safe_replay(self):
+        state = {"browser": False, "restarts": 0, "code_calls": 0}
+        ops = self._ops(state)
+
+        def fail_without_internal_marker(_email, _token):
+            state["code_calls"] += 1
+            raise RetryNeeded("no reliable code-acquired marker")
+
+        ops.fill_code_and_submit = fail_without_internal_marker
+        callbacks = RegistrationCallbacks(log=lambda _: None, cancelled=lambda: False)
+        lease, begin, end = self._lease_spy()
+        with patch("registration_flow.begin_registration_slot", side_effect=begin), \
+             patch("registration_flow.end_registration_slot", side_effect=end):
+            result = run_batch(1, callbacks, lambda *_: None, ops, enable_nsfw=False, max_mail_retry=3)
+
+        self.assertEqual(result.fail_count, 1)
+        self.assertEqual(result.uncertain_count, 0)
+        self.assertEqual(state["code_calls"], 1)
+        self.assertEqual(state["restarts"], 0)
+        self.assertEqual(len(lease["begins"]), 1)
+        self.assertEqual(len(lease["releases"]), 1)
+
     def test_each_processed_account_gets_its_own_slot(self):
         state = {"browser": False, "restarts": 0, "code_calls": 99}
         callbacks = RegistrationCallbacks(log=lambda _message: None, cancelled=lambda: False)
