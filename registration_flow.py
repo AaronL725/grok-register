@@ -28,6 +28,7 @@ STAGE_BROWSER_START = "browser_start"
 STAGE_PAGE_OPEN = "page_open"
 STAGE_EMAIL_SUBMIT = "email_submit"
 STAGE_CODE_WAIT = "code_wait"
+STAGE_CODE_RECEIVED = "code_received"
 STAGE_CODE_SUBMIT = "code_submit"
 STAGE_PROFILE_SUBMIT = "profile_submit"
 STAGE_SSO_WAIT = "sso_wait"
@@ -72,7 +73,7 @@ def registration_retry_disposition(stage, error=None):
         return FATAL if _is_non_retryable_pre_submit_error(error) else SAFE_NEW_LEASE
     if stage == STAGE_CODE_WAIT:
         return SAME_LEASE_RECOVERY
-    if stage in (STAGE_EMAIL_SUBMIT, STAGE_CODE_SUBMIT, STAGE_PROFILE_SUBMIT, STAGE_SSO_WAIT):
+    if stage in (STAGE_EMAIL_SUBMIT, STAGE_CODE_RECEIVED, STAGE_CODE_SUBMIT, STAGE_PROFILE_SUBMIT, STAGE_SSO_WAIT):
         return OUTCOME_UNCERTAIN
     if stage in (STAGE_ACCOUNT_CONFIRMED, STAGE_POSTPROCESS):
         return NO_RETRY
