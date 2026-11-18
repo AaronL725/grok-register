@@ -102,7 +102,8 @@ Fallback 只发生在新 attempt 开始前，不会在注册过程中切换 IP�
 | 阶段 | 处理方式 |
 | --- | --- |
 | `lease_acquire` / `browser_start` / `page_open` | **SAFE_NEW_LEASE**：尚未提交邮箱，可释放租约并有限重试 |
-| `code_wait` | **SAME_LEASE_RECOVERY**：仅在确认未获取验证码时，保留租约并更换邮箱重试 |
+| `code_wait` | **SAME_LEASE_RECOVERY**：仅在尚未获取验证码时，保留租约并更换邮箱重试 |
+| `code_received` | **OUTCOME_UNCERTAIN**：验证码已获取，但尚未开始填写；不自动更换邮箱或代理重放 |
 | `email_submit` / `code_submit` / `profile_submit` / `sso_wait` | **OUTCOME_UNCERTAIN**：不自动切换邮箱或代理重放注册 |
 | `account_confirmed` / `postprocess` | **NO_RETRY**：已确认的账号不重新注册 |
 
