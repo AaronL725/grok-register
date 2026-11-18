@@ -231,16 +231,21 @@ def register_one_account(callbacks, ops, enable_nsfw=True, max_mail_retry=3):
             code = ops.fill_code_and_submit(email, dev_token)
             mail_ok = True
             break
-        except VerificationCodeUnavailable as exc:
+        except (VerificationCodeUnavailable, ops.retry_exception) as exc:
+            # Only an explicitly unavailable code or a retryable failure
+            # while the browser still marks code_wait is safe to recover.
+            if not isinstance(exc, VerificationCodeUnavailable) and (
+                not ops.internal_stage_markers or current_registration_stage() != STAGE_CODE_WAIT
+            ):
+                raise
             if mail_try < max_mail_retry:
-                callbacks.log(f"[!] 本邮箱在等待阶段未取到验证码，保持当前代理租约并更换邮箱重试: {exc}")
-                # Keep the code_wait disposition while recovering. If browser
-                # restart itself fails, the outer retry engine must not treat
-                # this as a safe point for acquiring a different proxy lease.
+                callbacks.log(f"[!] 验证码等待阶段失败，保持当前代理租约并更换邮箱重试: {exc}")
                 _set_registration_stage(STAGE_CODE_WAIT)
                 ops.restart_browser()
                 ops.sleep(1)
                 continue
+            if isinstance(exc, ops.retry_exception):
+                raise VerificationCodeUnavailable(f"验证码等待阶段重试次数已耗尽: {exc}") from exc
             raise
     if not mail_ok:
         raise RuntimeError("验证码阶段失败，已达到最大重试次数")
@@ -573,7 +578,15 @@ def _run_batch_managed(settings, callbacks, observer, ops):
                 if disposition == FATAL:
                     attempt_status = "failed"
                     raise
-                if disposition != SAFE_NEW_LEASE:
+                if disposition == SAME_LEASE_RECOVERY:
+                    # The inner mail loop owns same-lease retries. Reaching
+                    # here means recovery failed; never restart with a new lease.
+                    attempt_status = "failed"
+                    result.fail_count += 1
+                    result.processed_count += 1
+                    retry_count_for_slot = 0
+                    callbacks.log(f"[-] 验证码阶段同租约恢复失败，跳过当前账号: {exc}")
+                elif disposition != SAFE_NEW_LEASE:
                     attempt_status = "uncertain"
                     _record_uncertain(result, callbacks, stage, exc)
                     retry_count_for_slot = 0
