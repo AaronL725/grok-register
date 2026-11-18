@@ -102,7 +102,8 @@ Fallback is applied only before a new attempt, never in the middle of a registra
 | Stage | Handling |
 | --- | --- |
 | `lease_acquire` / `browser_start` / `page_open` | **SAFE_NEW_LEASE**: before email submission, the Lease may be released and the attempt retried within limits |
-| `code_wait` | **SAME_LEASE_RECOVERY**: only if no code was obtained, retry with a new email while retaining the Lease |
+| `code_wait` | **SAME_LEASE_RECOVERY**: while polling and before a code is obtained, retry with a new email while retaining the Lease |
+| `code_received` | **OUTCOME_UNCERTAIN**: a code was obtained but OTP entry has not started; do not replay with another email or proxy |
 | `email_submit` / `code_submit` / `profile_submit` / `sso_wait` | **OUTCOME_UNCERTAIN**: do not replay registration through another email or proxy |
 | `account_confirmed` / `postprocess` | **NO_RETRY**: do not re-register an already confirmed account |
 
